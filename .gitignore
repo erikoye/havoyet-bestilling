@@ -1,0 +1,7 @@
+flask.log
+orders_cache.json
+admin_state.json
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

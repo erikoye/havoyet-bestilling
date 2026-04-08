@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: havoyet-bestilling
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: SHOPIFY_SHOP
+        value: havoyet.myshopify.com
+      - key: SHOPIFY_TOKEN
+        value: ""
+      - key: SHOPIFY_API_VERSION
+        value: "2024-01"
+      - key: POLL_INTERVAL
+        value: "300"

@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Havøyet — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary:    #0d9488;
+      --primary-dk: #0f766e;
+      --bg:         #f1f5f9;
+      --dark:       #0f172a;
+      --surface:    #ffffff;
+      --border:     #e2e8f0;
+      --muted:      #64748b;
+      --c-red:      #ef4444;
+      --c-orange:   #f59e0b;
+      --c-green:    #22c55e;
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--dark);
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--dark);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo-area { display: flex; align-items: center; gap: 12px; }
+    .logo-text { font-family: 'Montserrat', sans-serif; font-weight: 900; font-size: 22px; letter-spacing: 2px; color: #fff; }
+    .page-crumb { color: #475569; font-size: 13px; font-family: 'DM Mono', monospace; }
+
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    .live-indicator { display: flex; align-items: center; gap: 6px; font-size: 12px; font-family: 'DM Mono', monospace; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-green); animation: pulse 2s infinite; }
+    .live-dot.offline { background: #475569; animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .live-label { color: #94a3b8; }
+
+    .back-btn {
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: 'DM Mono', monospace;
+      transition: color .15s;
+    }
+    .back-btn:hover { color: #fff; }
+
+    main { max-width: 900px; margin: 0 auto; padding: 36px 24px 80px; }
+
+    h1.page-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--dark);
+      margin-bottom: 6px;
+    }
+    .page-sub { color: var(--muted); font-size: 14px; margin-bottom: 36px; }
+
+    /* ── SECTIONS ── */
+    .section { margin-bottom: 32px; }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: var(--muted);
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+    }
+
+    /* ── MELDING ── */
+    .melding-area {
+      width: 100%;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      resize: none;
+      min-height: 90px;
+      transition: border-color .15s;
+      outline: none;
+      color: var(--dark);
+    }
+    .melding-area:focus { border-color: var(--primary); }
+
+    .melding-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 10px;
+    }
+    .melding-ts {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: 'DM Sans', sans-serif;
+      cursor: pointer;
+      transition: all .15s;
+      border: none;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-dk); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--primary); color: var(--primary); }
+    .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 6px; }
+    .btn-danger { background: #fee2e2; color: var(--c-red); border: none; }
+    .btn-danger:hover { background: var(--c-red); color: #fff; }
+
+    /* ── TILGJENGELIGHET ── */
+    .avail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+
+    .avail-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: all .15s;
+      user-select: none;
+    }
+    .avail-item:hover { border-color: #94a3b8; }
+    .avail-item.green  { border-color: var(--c-green); background: #f0fdf4; }
+    .avail-item.orange { border-color: var(--c-orange); background: #fffbeb; }
+    .avail-item.red    { border-color: var(--c-red); background: #fef2f2; }
+
+    .avail-name { font-size: 14px; font-weight: 500; }
+    .avail-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+    .avail-item.green  .avail-badge { background: #dcfce7; color: #15803d; }
+    .avail-item.orange .avail-badge { background: #fef3c7; color: #b45309; }
+    .avail-item.red    .avail-badge { background: #fee2e2; color: #dc2626; }
+
+    /* ── VARSEL ── */
+    .varsel-list { display: flex; flex-direction: column; gap: 8px; }
+    .varsel-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .varsel-input {
+      flex: 1;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 12px;
+      outline: none;
+      transition: border-color .15s;
+      color: var(--dark);
+    }
+    .varsel-input:focus { border-color: var(--primary); }
+    .varsel-type {
+      font-size: 12px;
+      padding: 5px 10px;
+      border-radius: 6px;
+      border: 1.5px solid var(--border);
+      background: #fff;
+      color: var(--dark);
+      cursor: pointer;
+      font-family: 'DM Sans', sans-serif;
+      outline: none;
+    }
+
+    /* ── ORDRE STATUS ── */
+    .ordre-scroll {
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .ordre-status-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .ordre-status-row:last-child { border-bottom: none; }
+    .ost-id { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); width: 60px; flex-shrink: 0; }
+    .ost-name { font-size: 14px; font-weight: 500; flex: 1; }
+    .ost-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 99px;
+    }
+    .ost-badge.new  { background: #dbeafe; color: #1d4ed8; }
+    .ost-badge.progress { background: #fef3c7; color: #b45309; }
+    .ost-badge.done { background: #dcfce7; color: #15803d; }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      background: var(--dark);
+      color: #fff;
+      font-size: 13px;
+      padding: 10px 18px;
+      border-radius: 8px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: all .2s;
+      pointer-events: none;
+      z-index: 999;
+      font-family: 'DM Sans', sans-serif;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+
+    /* ── SHOPIFY STATUS ── */
+    .shopify-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .shopify-bar .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .shopify-bar.ok .dot    { background: var(--c-green); }
+    .shopify-bar.err .dot   { background: var(--c-red); }
+    .shopify-bar.pend .dot  { background: var(--c-orange); }
+    .shopify-bar strong { color: var(--dark); }
+
+    /* ── TOUCH & MOBIL ── */
+    button, a { touch-action: manipulation; }
+    button { -webkit-tap-highlight-color: transparent; }
+
+    @media (max-width: 700px) {
+      header { padding: 0 14px; height: 50px; }
+      main { padding: 16px 14px 40px; }
+      .section-header { flex-wrap: wrap; gap: 8px; }
+      .avail-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .avail-item { padding: 10px 10px; font-size: 13px; min-height: 44px; }
+      .btn { min-height: 42px; font-size: 13px; }
+      .card { padding: 14px; }
+      textarea { font-size: 15px; }
+      input[type="text"], input[type="date"] { font-size: 15px; min-height: 42px; }
+    }
+
+    @media (max-height: 500px) and (orientation: landscape) {
+      header { height: 44px; }
+      main { padding: 10px 16px 30px; }
+      .section { margin-bottom: 20px; }
+    }
+
+    @media (min-width: 768px) and (max-width: 1100px) {
+      .avail-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo-area">
+    <a href="index.html" class="back-btn">← Tilbake</a>
+    <div style="width:1px;height:24px;background:#334155;"></div>
+    <span class="logo-text">Havøyet</span>
+    <span class="page-crumb">/ admin</span>
+  </div>
+  <div class="header-right">
+    <a href="butikk.html" style="display:inline-flex;align-items:center;gap:6px;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:6px 12px;color:#94a3b8;text-decoration:none;font-size:12px;font-family:'DM Sans',sans-serif;font-weight:500;transition:all .15s;" onmouseover="this.style.borderColor='#0d9488';this.style.color='#fff'" onmouseout="this.style.borderColor='#334155';this.style.color='#94a3b8'">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Butikkvisning
+    </a>
+    <span style="font-family:'DM Mono',monospace;font-size:13px;color:#94a3b8;" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<main>
+  <h1 class="page-title">Adminpanel</h1>
+  <p class="page-sub">Info du sender her vises direkte i butikkvisningen.</p>
+
+  <!-- SHOPIFY STATUS -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Shopify-tilkobling</span>
+      <button class="btn btn-ghost btn-sm" onclick="syncShopify()">↻ Synk nå</button>
+    </div>
+    <div id="shopifyBar" class="shopify-bar pend">
+      <div class="dot"></div>
+      <span id="shopifyMsg">Kobler til backend...</span>
+    </div>
+    <div class="card" id="flaskHelpCard" style="background:#f8fafc;display:none;">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+        Dobbeltklikk <strong>Start Flask.command</strong> i Bestillingsside-mappen for å starte serveren. Eller kjør i Terminal:
+      </div>
+      <code style="display:block;background:var(--dark);color:#7dd3fc;padding:10px 14px;border-radius:8px;font-family:'DM Mono',monospace;font-size:12px;line-height:1.7;">
+        pip3 install flask flask-cors requests<br>
+        cd "/Users/eriko/Desktop/Havøyet AS/Claud Cowork/Bestillingsside"<br>
+        python3 app.py
+      </code>
+    </div>
+  </div>
+
+  <!-- DAGLIG MELDING -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Daglig melding til butikk</span>
+      <span class="melding-ts" id="meldingTs">Ikke publisert</span>
+    </div>
+    <div class="card">
+      <textarea class="melding-area" id="meldingText" placeholder="Skriv en melding til butikkpersonalet her — f.eks. 'Laks ankommer klokken 14.'" maxlength="400"></textarea>
+      <div class="melding-meta">
+        <span style="font-size:12px;color:var(--muted);" id="charCount">0 / 400</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost btn-sm" onclick="clearMelding()">Slett</button>
+          <button class="btn btn-primary btn-sm" onclick="publishMelding()">Publiser melding</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VARETILGJENGELIGHET -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Varetilgjengelighet</span>
+      <span style="font-size:12px;color:var(--muted);">Klikk for å endre status</span>
+    </div>
+    <div class="card">
+      <div class="avail-grid" id="availGrid"></div>
+    </div>
+  </div>
+
+  <!-- VARSLER -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Aktive varsler</span>
+      <button class="btn btn-ghost btn-sm" onclick="addVarsel()">+ Legg til</button>
+    </div>
+    <div class="card">
+      <div class="varsel-list" id="varselList"></div>
+    </div>
+  </div>
+
+  <!-- ORDRE FRA SHOPIFY -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Ordre fra Shopify</span>
+      <button class="btn btn-ghost btn-sm" onclick="syncShopify()">↻ Oppdater</button>
+    </div>
+    <div class="card">
+      <div class="ordre-scroll">
+        <div class="ordre-status-row" id="ordreStatusPlaceholder" style="color:var(--muted);font-size:14px;padding:20px 0;justify-content:center;">
+          Ingen ordre hentet ennå. Koble til Shopify.
+        </div>
+        <div id="ordreStatusList"></div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ── STATE ──────────────────────────────────────────────────────────────────
+const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5001' : window.location.origin;
+const STORAGE_KEY = 'havoyetAdmin';
+
+const FISH_LIST = [
+  'Atlanterhavslaks', 'Fjordørret', 'Torsk', 'Sei', 'Hyse',
+  'Kveite', 'Rødspette', 'Makrell', 'Sild', 'Uer',
+  'Steinbit', 'Blåkveite', 'Kongekrabbe', 'Hummer', 'Reker'
+];
+
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch(e) { return {}; }
+}
+
+function saveState(s) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  // Broadcast til butikk.html åpen i samme nettleser
+  try { new BroadcastChannel('havoyetSync').postMessage({ type: 'update', data: s }); } catch(e) {}
+  // Push til Flask-backend så butikk.html på Pi kan hente det
+  fetch(`${FLASK_BASE}/api/admin/state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(s)
+  }).catch(() => {}); // stille feil om backend ikke er oppe
+}
+
+let STATE = loadState();
+
+// Initialiser tilgjengelighet hvis tom
+if (!STATE.avail) {
+  STATE.avail = {};
+  FISH_LIST.forEach(f => STATE.avail[f] = 'green');
+}
+if (!STATE.varsler) STATE.varsler = [];
+if (!STATE.melding) STATE.melding = { text: '', ts: null };
+if (!STATE.shopifyDomain) STATE.shopifyDomain = '';
+if (!STATE.shopifyOrders) STATE.shopifyOrders = [];
+
+// ── KLOKKE ──────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    now.toTimeString().slice(0, 8);
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── TOAST ───────────────────────────────────────────────────────────────────
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ── MELDING ─────────────────────────────────────────────────────────────────
+const meldingText = document.getElementById('meldingText');
+meldingText.addEventListener('input', () => {
+  document.getElementById('charCount').textContent = `${meldingText.value.length} / 400`;
+});
+
+function loadMelding() {
+  if (STATE.melding.text) {
+    meldingText.value = STATE.melding.text;
+    document.getElementById('charCount').textContent = `${meldingText.value.length} / 400`;
+  }
+  if (STATE.melding.ts) {
+    const d = new Date(STATE.melding.ts);
+    document.getElementById('meldingTs').textContent =
+      'Publisert ' + d.toLocaleTimeString('nb', { hour: '2-digit', minute: '2-digit' });
+  }
+}
+
+function publishMelding() {
+  STATE.melding = { text: meldingText.value.trim(), ts: Date.now() };
+  saveState(STATE);
+  const d = new Date(STATE.melding.ts);
+  document.getElementById('meldingTs').textContent =
+    'Publisert ' + d.toLocaleTimeString('nb', { hour: '2-digit', minute: '2-digit' });
+  toast('Melding publisert ✓');
+}
+
+function clearMelding() {
+  meldingText.value = '';
+  STATE.melding = { text: '', ts: null };
+  saveState(STATE);
+  document.getElementById('meldingTs').textContent = 'Ikke publisert';
+  document.getElementById('charCount').textContent = '0 / 400';
+}
+
+// ── TILGJENGELIGHET ──────────────────────────────────────────────────────────
+const STATUS_LABELS = { green: 'Tilgjengelig', orange: 'Usikkert', red: 'Ikke mulig' };
+const STATUS_ORDER  = ['green', 'orange', 'red'];
+
+function nextStatus(current) {
+  const i = STATUS_ORDER.indexOf(current);
+  return STATUS_ORDER[(i + 1) % STATUS_ORDER.length];
+}
+
+function renderAvail() {
+  const grid = document.getElementById('availGrid');
+  grid.innerHTML = '';
+  FISH_LIST.forEach(fish => {
+    const status = STATE.avail[fish] || 'green';
+    const div = document.createElement('div');
+    div.className = `avail-item ${status}`;
+    div.innerHTML = `
+      <span class="avail-name">${fish}</span>
+      <span class="avail-badge">${STATUS_LABELS[status]}</span>
+    `;
+    div.onclick = () => {
+      STATE.avail[fish] = nextStatus(status);
+      saveState(STATE);
+      renderAvail();
+      toast(`${fish}: ${STATUS_LABELS[STATE.avail[fish]]}`);
+    };
+    grid.appendChild(div);
+  });
+}
+
+// ── VARSLER ──────────────────────────────────────────────────────────────────
+function renderVarsler() {
+  const list = document.getElementById('varselList');
+  if (STATE.varsler.length === 0) {
+    list.innerHTML = '<span style="font-size:14px;color:var(--muted);">Ingen aktive varsler.</span>';
+    return;
+  }
+  list.innerHTML = '';
+  STATE.varsler.forEach((v, i) => {
+    const row = document.createElement('div');
+    row.className = 'varsel-row';
+    row.innerHTML = `
+      <select class="varsel-type" onchange="updateVarselType(${i}, this.value)">
+        <option value="info" ${v.type==='info'?'selected':''}>ℹ Info</option>
+        <option value="warn" ${v.type==='warn'?'selected':''}>⚠ Advarsel</option>
+        <option value="ok"   ${v.type==='ok'  ?'selected':''}>✓ OK</option>
+      </select>
+      <input class="varsel-input" value="${v.text}" placeholder="Varselmelding..."
+        oninput="updateVarselText(${i}, this.value)" />
+      <button class="btn btn-danger btn-sm" onclick="removeVarsel(${i})">✕</button>
+    `;
+    list.appendChild(row);
+  });
+}
+
+function addVarsel() {
+  STATE.varsler.push({ type: 'info', text: '' });
+  saveState(STATE);
+  renderVarsler();
+}
+
+function removeVarsel(i) {
+  STATE.varsler.splice(i, 1);
+  saveState(STATE);
+  renderVarsler();
+  toast('Varsel slettet');
+}
+
+function updateVarselText(i, val) {
+  STATE.varsler[i].text = val;
+  saveState(STATE);
+}
+
+function updateVarselType(i, val) {
+  STATE.varsler[i].type = val;
+  saveState(STATE);
+}
+
+// ── SHOPIFY VIA FLASK-BACKEND ─────────────────────────────────────────────────
+async function syncShopify() {
+  setShopifyBar('pend', 'Synkroniserer med Shopify...');
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/sync`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+
+    if (data.error) throw new Error(data.error);
+
+    const orders = data.count > 0 ? await loadOrders() : [];
+    renderShopifyOrders(orders);
+    const tid = data.last_sync ? new Date(data.last_sync).toLocaleTimeString('nb', {hour:'2-digit',minute:'2-digit'}) : '';
+    setShopifyBar('ok', `Koblet til Shopify — ${data.count} ordre hentet kl. ${tid}`);
+    toast(`${data.count} ordre hentet fra Shopify ✓`);
+
+    // Synk admin-tilstand til Flask så butikk.html kan hente den
+    syncAdminStateToFlask();
+
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.message.includes('Failed to fetch') || err.name === 'TypeError') {
+      setShopifyBar('err', 'Flask ikke kjørende – dobbeltklikk «Start Flask.command» i Bestillingsside-mappen');
+    } else {
+      setShopifyBar('err', `Feil fra backend: ${err.message}`);
+    }
+  }
+}
+
+async function loadOrders() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return data.orders || [];
+  } catch { return []; }
+}
+
+async function syncAdminStateToFlask() {
+  try {
+    await fetch(`${FLASK_BASE}/api/admin/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(STATE),
+      signal: AbortSignal.timeout(3000)
+    });
+  } catch { /* backend ikke oppe */ }
+}
+
+async function checkBackendStatus() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/status`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) throw new Error();
+    const data = await r.json();
+    const tid = data.last_sync ? new Date(data.last_sync).toLocaleTimeString('nb', {hour:'2-digit',minute:'2-digit'}) : null;
+
+    if (data.error) {
+      setShopifyBar('err', `Backend oppe, men Shopify-feil: ${data.error}`);
+    } else if (tid) {
+      setShopifyBar('ok', `Backend koblet — ${data.count} ordre, sist synk kl. ${tid}`);
+      const orders = await loadOrders();
+      renderShopifyOrders(orders);
+    } else {
+      setShopifyBar('pend', `Backend oppe — klikk «Synk nå» for å hente ordre`);
+    }
+  } catch {
+    setShopifyBar('err', 'Flask ikke kjørende – dobbeltklikk «Start Flask.command» i Bestillingsside-mappen');
+  }
+}
+
+function setShopifyBar(status, msg) {
+  const bar = document.getElementById('shopifyBar');
+  bar.className = `shopify-bar ${status}`;
+  document.getElementById('shopifyMsg').textContent = msg;
+  const help = document.getElementById('flaskHelpCard');
+  if (help) help.style.display = status === 'err' ? 'block' : 'none';
+}
+
+function renderShopifyOrders(orders) {
+  const list = document.getElementById('ordreStatusList');
+  const placeholder = document.getElementById('ordreStatusPlaceholder');
+
+  if (!orders || orders.length === 0) {
+    placeholder.style.display = '';
+    list.innerHTML = '';
+    return;
+  }
+  placeholder.style.display = 'none';
+  list.innerHTML = '';
+
+  orders.forEach(o => {
+    const name = o.customer
+      ? `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim()
+      : o.shipping_address
+        ? `${o.shipping_address.first_name || ''} ${o.shipping_address.last_name || ''}`.trim()
+        : 'Ukjent';
+
+    let statusCls = 'new';
+    let statusTxt = 'Ny';
+    if (o.fulfillment_status === 'fulfilled') { statusCls = 'done'; statusTxt = 'Levert'; }
+    else if (o.fulfillment_status === 'partial') { statusCls = 'progress'; statusTxt = 'Delvis'; }
+    else if (o.financial_status === 'paid') { statusCls = 'progress'; statusTxt = 'Betalt'; }
+
+    const row = document.createElement('div');
+    row.className = 'ordre-status-row';
+    row.innerHTML = `
+      <span class="ost-id">${o.name}</span>
+      <span class="ost-name">${name}</span>
+      <span style="font-size:12px;color:var(--muted);flex:1;">${o.line_items ? o.line_items.length + ' varer' : ''}</span>
+      <span class="ost-badge ${statusCls}">${statusTxt}</span>
+    `;
+    list.appendChild(row);
+  });
+}
+
+// ── INIT ─────────────────────────────────────────────────────────────────────
+loadMelding();
+renderAvail();
+renderVarsler();
+checkBackendStatus();
+
+// Synk endringer til Flask hver gang state oppdateres (override saveState)
+const _origSaveState = saveState;
+
+// Poll backend hvert 5 min
+setInterval(checkBackendStatus, 5 * 60 * 1000);
+</script>
+</body>
+</html>

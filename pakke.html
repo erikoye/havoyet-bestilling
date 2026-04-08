@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Pakke &amp; Merk &mdash; Havøyet AS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary:    #0d9488;
+      --primary-dk: #0f766e;
+      --bg:         #f1f5f9;
+      --dark:       #0f172a;
+      --surface:    #ffffff;
+      --border:     #e2e8f0;
+      --muted:      #64748b;
+      --c-red:      #ef4444;
+      --c-orange:   #f59e0b;
+      --c-green:    #22c55e;
+      --avail-ok:   #16a34a;
+      --avail-unsure:#d97706;
+      --avail-no:   #dc2626;
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--dark);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── TOPBAR ── */
+    header {
+      background: var(--dark);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 56px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      z-index: 200;
+    }
+
+    .header-left { display: flex; align-items: center; gap: 14px; }
+
+    .back-btn {
+      display: flex; align-items: center; gap: 6px;
+      color: #94a3b8; text-decoration: none; font-size: 13px; font-weight: 500;
+      padding: 6px 10px; border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .back-btn:hover { color: #fff; background: #1e293b; }
+
+    .divider { width: 1px; height: 20px; background: #334155; }
+
+    .clock { font-family: 'DM Mono', monospace; font-size: 12px; color: #94a3b8; }
+
+    /* ── LAYOUT ── */
+    main { flex: 1; max-width: 900px; margin: 0 auto; width: 100%; padding: 28px 24px 100px; }
+
+    /* ══════════════════════════════════════════
+       VIEW 1 — ORDRELISTE
+    ══════════════════════════════════════════ */
+
+    .list-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .list-title { font-size: 22px; font-weight: 600; color: var(--dark); }
+    .list-count {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 3px 10px;
+    }
+
+    /* Sort bar */
+    .sort-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+
+    .sort-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-right: 4px;
+    }
+
+    .sort-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: 'DM Sans', sans-serif;
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+
+    .sort-btn:hover { border-color: var(--primary); color: var(--primary-dk); }
+
+    .sort-btn.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .sort-icon { width: 14px; height: 14px; flex-shrink: 0; }
+
+    .sort-arrow { font-size: 10px; opacity: 0.7; }
+
+    /* Order list */
+    .order-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .order-row {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .order-row:hover {
+      border-color: var(--primary);
+      box-shadow: 0 2px 12px rgba(13,148,136,0.10);
+      transform: translateY(-1px);
+    }
+
+    /* Priority stripe */
+    .order-row.conf-red    { border-left: 4px solid var(--c-red); }
+    .order-row.conf-orange { border-left: 4px solid var(--c-orange); }
+    .order-row.conf-green  { border-left: 4px solid var(--c-green); }
+
+    .or-date {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 52px;
+      flex-shrink: 0;
+    }
+
+    .or-date-day {
+      font-family: 'DM Mono', monospace;
+      font-size: 22px;
+      font-weight: 500;
+      color: var(--dark);
+      line-height: 1;
+    }
+
+    .or-date-month {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .or-date-today .or-date-day { color: var(--primary); }
+    .or-date-today .or-date-month { color: var(--primary); }
+
+    .or-divider { width: 1px; height: 40px; background: var(--border); flex-shrink: 0; }
+
+    .or-main { flex: 1; min-width: 0; }
+
+    .or-customer {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--dark);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .or-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .or-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-family: 'DM Mono', monospace;
+      color: var(--muted);
+    }
+
+    .or-slot-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 500;
+    }
+
+    .or-slot-chip.a { background: #eff6ff; color: #2563eb; }
+    .or-slot-chip.b { background: #faf5ff; color: #7c3aed; }
+
+    .or-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      flex-shrink: 0;
+      min-width: 100px;
+    }
+
+    .or-conf-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .or-bar-bg {
+      width: 90px;
+      height: 5px;
+      background: #e2e8f0;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .or-bar { height: 100%; border-radius: 3px; }
+    .or-bar.red    { background: var(--c-red); }
+    .or-bar.orange { background: var(--c-orange); }
+    .or-bar.green  { background: var(--c-green); }
+
+    .or-items-count {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .btn-pakk {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn-pakk:hover { background: var(--primary-dk); }
+
+    .today-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      background: var(--primary);
+      color: #fff;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .unseen-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--primary); flex-shrink: 0;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center; padding: 60px 24px; color: var(--muted);
+    }
+    .empty-state h2 { font-size: 16px; margin-bottom: 8px; }
+    .empty-state p  { font-size: 13px; }
+
+    /* ══════════════════════════════════════════
+       VIEW 2 — PAKKESKJEMA
+    ══════════════════════════════════════════ */
+    #viewDetail { display: none; }
+
+    .detail-back {
+      display: inline-flex; align-items: center; gap: 7px;
+      color: var(--primary); font-size: 13px; font-weight: 600;
+      background: none; border: none; cursor: pointer; padding: 0;
+      margin-bottom: 20px;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .detail-back:hover { text-decoration: underline; }
+
+    /* Order header */
+    .order-header {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .order-header-left { display: flex; flex-direction: column; gap: 4px; }
+    .order-customer { font-size: 20px; font-weight: 600; color: var(--dark); }
+    .order-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+
+    .meta-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-family: 'DM Mono', monospace; font-size: 11px;
+      background: #f8fafc; border: 1px solid var(--border);
+      border-radius: 5px; padding: 3px 8px; color: var(--muted);
+    }
+
+    .progress-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 120px; }
+    .progress-label { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
+    .progress-bar-bg { width: 120px; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+    .progress-bar-fill { height: 100%; border-radius: 3px; background: var(--c-green); transition: width 0.4s; }
+
+    .section-label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--muted); margin-bottom: 10px;
+    }
+
+    /* Item cards */
+    .items-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 28px; }
+
+    .item-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .item-card.status-ok     { border-left: 4px solid var(--avail-ok); }
+    .item-card.status-unsure { border-left: 4px solid var(--avail-unsure); }
+    .item-card.status-no     { border-left: 4px solid var(--avail-no); }
+
+    .item-top {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px; gap: 12px; flex-wrap: wrap;
+    }
+
+    .item-name { font-size: 15px; font-weight: 600; color: var(--dark); flex: 1; min-width: 140px; }
+    .item-qty  { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); flex-shrink: 0; }
+
+    /* Availability toggle */
+    .avail-toggle { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+
+    .avail-btn {
+      padding: 7px 14px; font-size: 12px; font-weight: 600;
+      font-family: 'DM Sans', sans-serif;
+      border: none; background: #f8fafc; color: var(--muted);
+      cursor: pointer; transition: background 0.15s, color 0.15s;
+      border-right: 1px solid var(--border); white-space: nowrap;
+    }
+
+    .avail-btn:last-child { border-right: none; }
+    .avail-btn:hover { background: #f1f5f9; }
+    .avail-btn.active-ok     { background: #f0fdf4; color: var(--avail-ok); }
+    .avail-btn.active-unsure { background: #fffbeb; color: var(--avail-unsure); }
+    .avail-btn.active-no     { background: #fef2f2; color: var(--avail-no); }
+
+    /* Input fields */
+    .item-fields { display: none; padding: 0 18px 16px; gap: 14px; flex-wrap: wrap; }
+    .item-fields.visible { display: flex; }
+
+    .field-group { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 140px; }
+    .field-group label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+    .field-input {
+      height: 40px; border: 1px solid var(--border); border-radius: 8px;
+      padding: 0 12px; font-size: 14px; font-family: 'DM Mono', monospace;
+      color: var(--dark); background: #f8fafc; transition: border-color 0.15s, background 0.15s; width: 100%;
+    }
+    .field-input:focus { outline: none; border-color: var(--primary); background: #fff; }
+    .field-input.filled { background: #fff; border-color: #99f6e4; }
+
+    .field-suffix { position: relative; }
+    .field-suffix .field-input { padding-right: 40px; }
+    .field-suffix-label {
+      position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+      font-family: 'DM Mono', monospace; font-size: 12px; color: #94a3b8; pointer-events: none;
+    }
+
+    .field-check { display: flex; align-items: center; gap: 5px; font-size: 11px; font-family: 'DM Mono', monospace; margin-top: 3px; height: 16px; }
+    .field-check.ok    { color: var(--avail-ok); }
+    .field-check.empty { color: transparent; }
+
+    /* Replacement section */
+    .replacement-section { display: none; padding: 0 18px 18px; flex-direction: column; gap: 12px; }
+    .replacement-section.visible { display: flex; }
+
+    .replacement-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .replacement-title  { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+    .search-row { display: flex; gap: 8px; }
+    .search-input {
+      flex: 1; height: 38px; border: 1px solid var(--border); border-radius: 8px;
+      padding: 0 12px; font-size: 13px; font-family: 'DM Sans', sans-serif;
+      color: var(--dark); background: #f8fafc; transition: border-color 0.15s;
+    }
+    .search-input:focus { outline: none; border-color: var(--primary); background: #fff; }
+    .search-input::placeholder { color: #94a3b8; }
+
+    .search-results { display: none; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; max-height: 180px; overflow-y: auto; }
+    .search-results.visible { display: block; }
+
+    .result-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    .result-item:last-child { border-bottom: none; }
+    .result-item:hover { background: #f1f5f9; }
+    .result-item.selected { background: #f0fdfb; }
+
+    .result-check {
+      width: 18px; height: 18px; border: 2px solid #cbd5e1; border-radius: 4px;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .result-item.selected .result-check { border-color: var(--primary); background: var(--primary); }
+    .result-name   { font-size: 13px; font-weight: 500; color: var(--dark); }
+    .result-detail { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; margin-left: auto; flex-shrink: 0; }
+
+    .selected-replacements { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    .replacement-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #f0fdfb; border: 1px solid #99f6e4; border-radius: 20px;
+      padding: 4px 10px 4px 12px; font-size: 12px; font-weight: 500; color: var(--primary-dk);
+    }
+
+    .chip-remove {
+      background: none; border: none; cursor: pointer;
+      color: #94a3b8; font-size: 14px; padding: 0; line-height: 1;
+      transition: color 0.1s;
+    }
+    .chip-remove:hover { color: var(--c-red); }
+
+    /* ── STICKY FOOTER ── */
+    .bottom-toolbar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--surface); border-top: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      z-index: 100;
+    }
+
+    .toolbar-left { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
+    .toolbar-right { display: flex; gap: 8px; }
+
+    .btn-ghost {
+      background: none; border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 18px; font-size: 13px; font-family: 'DM Sans', sans-serif;
+      font-weight: 500; color: var(--dark); cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .btn-ghost:hover { border-color: var(--primary); color: var(--primary); }
+
+    .btn-print {
+      background: var(--dark); color: #fff; border: none; border-radius: 8px;
+      padding: 10px 20px; font-size: 13px; font-family: 'DM Sans', sans-serif; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; gap: 8px;
+      transition: background 0.15s;
+    }
+    .btn-print:hover { background: #1e293b; }
+    .btn-print:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── TOAST ── */
+    .toast {
+      position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%) translateY(10px);
+      background: var(--dark); color: #fff; font-size: 13px; font-weight: 500;
+      padding: 10px 20px; border-radius: 8px; opacity: 0;
+      transition: opacity 0.2s, transform 0.2s; pointer-events: none; white-space: nowrap; z-index: 300;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* Footer bar (list view) */
+    .list-footer {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--surface); border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 24px; z-index: 100;
+    }
+    .list-footer span { font-family: 'DM Mono', monospace; font-size: 11px; color: #94a3b8; }
+    .printer-status { display: flex; align-items: center; gap: 6px; font-family: 'DM Mono', monospace; font-size: 11px; color: #94a3b8; }
+    .printer-dot    { width: 7px; height: 7px; border-radius: 50%; background: var(--c-green); }
+
+    /* ── TOUCH & MOBIL ── */
+    button, a { touch-action: manipulation; }
+    button { -webkit-tap-highlight-color: transparent; }
+
+    @media (max-width: 700px) {
+      header { padding: 0 14px; height: 50px; }
+      main { padding: 14px 12px 100px; }
+
+      /* Ordreliste */
+      .list-header { padding: 14px 0 10px; }
+      .sort-bar { gap: 6px; padding: 8px 0; overflow-x: auto; flex-wrap: nowrap; }
+      .sort-btn { font-size: 11px; padding: 5px 10px; white-space: nowrap; }
+
+      .order-row { padding: 12px; gap: 10px; min-height: 64px; }
+      .or-date { min-width: 36px; }
+      .or-date-day { font-size: 22px; }
+      .or-date-month { font-size: 10px; }
+      .or-customer { font-size: 14px; }
+      .or-right { display: none; }
+      .btn-pakk { padding: 8px 14px; font-size: 13px; min-height: 40px; }
+
+      /* Detaljvisning */
+      .order-header { flex-direction: column; gap: 10px; }
+      .progress-wrap { width: 100%; align-items: flex-start; }
+      .item-card { padding: 14px; }
+      .item-top { flex-wrap: wrap; gap: 8px; }
+      .avail-toggle { flex-wrap: wrap; gap: 6px; }
+      .avail-toggle button { min-height: 38px; font-size: 12px; }
+      .fields-row { flex-direction: column; }
+
+      /* Toolbar */
+      .bottom-toolbar { padding: 10px 14px; gap: 8px; }
+      .toolbar-left { font-size: 11px; }
+      .btn-ghost, .btn-print { min-height: 42px; font-size: 13px; }
+    }
+
+    @media (max-height: 500px) and (orientation: landscape) {
+      header { height: 44px; }
+      main { padding: 10px 16px 90px; }
+      .sort-bar { padding: 6px 0; }
+      .bottom-toolbar { padding: 8px 16px; }
+    }
+
+    @media (min-width: 768px) and (max-width: 1100px) {
+      main { max-width: 100%; padding: 20px 28px 100px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a href="index.html" class="back-btn" id="headerBack">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Tilbake
+    </a>
+    <div class="divider"></div>
+    <span style="font-family:'Montserrat',sans-serif;font-weight:900;font-size:22px;letter-spacing:2px;color:#ffffff;">Havøyet</span>
+    <span style="color:#475569;font-size:13px;font-family:'DM Mono',monospace;font-weight:400">/ pakke &amp; merk</span>
+  </div>
+  <div class="header-right">
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div id="flaskBanner" style="display:none;padding:10px 20px;font-size:13px;font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:10px"></div>
+
+<main>
+
+  <!-- ── VIEW 1: ORDRELISTE ── -->
+  <div id="viewList">
+    <div class="list-header">
+      <div style="display:flex;align-items:center;gap:10px">
+        <h1 class="list-title">Upakkede bestillinger</h1>
+        <span class="list-count" id="listCount">–</span>
+      </div>
+    </div>
+
+    <!-- Sort bar -->
+    <div class="sort-bar">
+      <span class="sort-label">Sorter:</span>
+
+      <button class="sort-btn active" id="sortDato" onclick="setSort('dato')">
+        <svg class="sort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        Dato
+        <span class="sort-arrow">↑</span>
+      </button>
+
+      <button class="sort-btn" id="sortPri" onclick="setSort('prioritet')">
+        <svg class="sort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        Prioritet
+      </button>
+
+      <button class="sort-btn" id="sortAlf" onclick="setSort('alfabetisk')">
+        <svg class="sort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>
+        </svg>
+        A – Å
+      </button>
+
+      <button class="sort-btn" id="sortVarer" onclick="setSort('varer')">
+        <svg class="sort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/>
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+        </svg>
+        Antall varer
+      </button>
+    </div>
+
+    <div class="order-list" id="orderList"></div>
+  </div>
+
+  <!-- ── VIEW 2: PAKKESKJEMA ── -->
+  <div id="viewDetail">
+    <button class="detail-back" onclick="showList()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Tilbake til listen
+    </button>
+
+    <div id="detailContent"></div>
+  </div>
+
+</main>
+
+<!-- List footer -->
+<div class="list-footer" id="listFooter">
+  <span>Havøyet AS &mdash; Intern ordrebehandling &mdash; v0.1.0</span>
+  <div class="printer-status"><div class="printer-dot"></div>QL-1100c tilkoblet</div>
+  <span>Pi 5 &mdash; Bergen</span>
+</div>
+
+<!-- Detail toolbar -->
+<div class="bottom-toolbar" id="detailToolbar" style="display:none">
+  <span class="toolbar-left" id="toolbarStatus">–</span>
+  <div class="toolbar-right">
+    <button class="btn-ghost" id="btnSave">Lagre utkast</button>
+    <button class="btn-print" id="btnPrint" disabled>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 6 2 18 2 18 9"/>
+        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+        <rect x="6" y="14" width="12" height="8"/>
+      </svg>
+      Skriv ut etiketter
+    </button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── FISKESØK-DATABASE ──────────────────────
+const FISH_DB = [
+  { id:'f01', name:'Atlanterhavslaks, hel',  category:'Laks',     unit:'kg' },
+  { id:'f02', name:'Laks, filet',            category:'Laks',     unit:'kg' },
+  { id:'f03', name:'Laks, røkt',             category:'Laks',     unit:'stk' },
+  { id:'f04', name:'Ørret, hel',             category:'Ørret',    unit:'kg' },
+  { id:'f05', name:'Ørret, filet',           category:'Ørret',    unit:'kg' },
+  { id:'f06', name:'Torsk, hel',             category:'Torsk',    unit:'kg' },
+  { id:'f07', name:'Torsk, loins',           category:'Torsk',    unit:'kg' },
+  { id:'f08', name:'Torsk, filet',           category:'Torsk',    unit:'kg' },
+  { id:'f09', name:'Sei, hel',               category:'Sei',      unit:'kg' },
+  { id:'f10', name:'Sei, filet',             category:'Sei',      unit:'kg' },
+  { id:'f11', name:'Kveite, hel',            category:'Kveite',   unit:'kg' },
+  { id:'f12', name:'Kveite, steak',          category:'Kveite',   unit:'kg' },
+  { id:'f13', name:'Hyse, filet',            category:'Hyse',     unit:'kg' },
+  { id:'f14', name:'Reker, ferske',          category:'Skalldyr', unit:'kg' },
+  { id:'f15', name:'Reker, kokte',           category:'Skalldyr', unit:'kg' },
+  { id:'f16', name:'Kongekrabbe, hel',       category:'Skalldyr', unit:'stk' },
+  { id:'f17', name:'Kongekrabbe, klør',      category:'Skalldyr', unit:'kg' },
+  { id:'f18', name:'Krabbe, hel kokt',       category:'Skalldyr', unit:'stk' },
+  { id:'f19', name:'Hummer, hel',            category:'Skalldyr', unit:'stk' },
+  { id:'f20', name:'Blåskjell, nett 1 kg',  category:'Skalldyr', unit:'nett' },
+  { id:'f21', name:'Østers, boks 12 stk',   category:'Skalldyr', unit:'boks' },
+  { id:'f22', name:'Kamskjell, rå',          category:'Skalldyr', unit:'stk' },
+  { id:'f23', name:'Steinbit, filet',        category:'Hvitfisk', unit:'kg' },
+  { id:'f24', name:'Breiflabb, hale',        category:'Hvitfisk', unit:'kg' },
+  { id:'f25', name:'Makrell, hel',           category:'Pelagisk', unit:'kg' },
+  { id:'f26', name:'Sild, gravet',           category:'Pelagisk', unit:'kg' },
+  { id:'f27', name:'Uer, hel',               category:'Hvitfisk', unit:'kg' },
+  { id:'f28', name:'Lange, filet',           category:'Hvitfisk', unit:'kg' },
+  { id:'f29', name:'Piggvar, filet',         category:'Flatfisk', unit:'kg' },
+  { id:'f30', name:'Rødspette, filet',       category:'Flatfisk', unit:'kg' },
+  { id:'f31', name:'Sjøtunge, filet',        category:'Flatfisk', unit:'kg' },
+  { id:'f32', name:'Laks, hel',             category:'Laks',     unit:'kg' },
+];
+
+// ─── DATA ───────────────────────────────────
+const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5001' : window.location.origin;
+const _T = new Date(); _T.setHours(0,0,0,0);
+function isoDate(d){return d.toISOString().slice(0,10);}
+function dayOffset(n){const d=new Date(_T);d.setDate(d.getDate()+n);return isoDate(d);}
+const todayISO = isoDate(_T);
+
+let ORDERS = [];
+
+// ─── STATE ──────────────────────────────────
+const STATE = {};
+
+function initState(orders) {
+  orders.forEach(o => {
+    if (!STATE[o.id]) {
+      STATE[o.id] = o.items.map(() => ({ weight:'', expiry:'', avail:null, replacements:[] }));
+    }
+  });
+}
+
+// Multipliser vekt i variant-streng med antall
+// f.eks. "200 g" × 2 → "400 g", "500 g / Med skinn" × 2 → "1 kg / Med skinn"
+function multiplyWeight(variant, qty) {
+  if (!variant || qty <= 1) return variant;
+  return variant.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/i, (match, num, unit) => {
+    const n   = parseFloat(num.replace(',', '.'));
+    const grams = unit.toLowerCase() === 'kg' ? n * 1000 : n;
+    const total = grams * qty;
+    if (total >= 1000 && total % 1000 === 0) return `${total / 1000} kg`;
+    if (total >= 1000) return `${(total / 1000).toFixed(1).replace('.0','')} kg`;
+    return `${total} g`;
+  });
+}
+
+// Normaliser Shopify-ordre til pakke.html sitt format
+function normalizeOrder(o) {
+  return {
+    id:       o.id,
+    customer: o.customer,
+    phone:    o.phone || '',
+    delivery: o.delivery || todayISO,
+    slot:     o.slot || 'a',
+    seen:     o.seen || false,
+    status:   o.status || 'NEW',
+    items:    (o.items || []).map(i => {
+      const qty = i.quantity || 1;
+      const variant = multiplyWeight(i.variant, qty);
+      return {
+        name: variant ? `${i.name} (${variant})` : i.name,
+        qty,
+      };
+    }),
+  };
+}
+
+function setBanner(ok, msg) {
+  const b = document.getElementById('flaskBanner');
+  b.style.display = 'flex';
+  b.style.background = ok ? '#dcfce7' : '#fef3c7';
+  b.style.borderBottom = ok ? '1px solid #86efac' : '1px solid #fcd34d';
+  b.style.color = ok ? '#166534' : '#92400e';
+  b.innerHTML = `<span style="font-size:16px">${ok ? '🟢' : '🟡'}</span> ${msg}`;
+}
+
+async function loadFromFlask() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) throw new Error();
+    const data = await r.json();
+    if (data.orders && data.orders.length > 0) {
+      ORDERS = data.orders.map(normalizeOrder);
+      initState(ORDERS);
+      restoreState();
+      localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
+      setBanner(true, `Koblet til Shopify – ${ORDERS.length} bestilling${ORDERS.length !== 1 ? 'er' : ''} hentet`);
+
+      const params = new URLSearchParams(location.search);
+      const targetId = params.get('ordre');
+      if (targetId) {
+        const o = ORDERS.find(x => x.id === targetId);
+        if (o) { currentOrderId = targetId; renderDetail(); return; }
+      }
+      renderList();
+      return;
+    }
+  } catch(e) { /* backend ikke oppe */ }
+
+  // Fallback: bruk sist kjente bestillinger fra localStorage
+  const cached = localStorage.getItem('havøyet_orders');
+  if (cached) {
+    try {
+      const data = JSON.parse(cached);
+      ORDERS = data.map(normalizeOrder);
+      initState(ORDERS);
+      restoreState();
+      setBanner(false, `Flask ikke tilgjengelig – viser sist lagrede bestillinger. Start app.py for å oppdatere.`);
+    } catch(e) {}
+  } else {
+    setBanner(false, `Flask ikke kjørende. Start app.py for å hente Shopify-bestillinger.`);
+  }
+  renderList();
+}
+
+let currentOrderId  = null;
+let currentSortKey  = 'dato';
+let sortDir         = {};  // per sort key: 1=asc, -1=desc
+
+// ─── PRIORITET ──────────────────────────────
+function confPct(o) {
+  // For list view: we count items with weight+expiry set in STATE
+  const s = STATE[o.id] || [];
+  const confirmed = s.filter(i => i.weight && i.expiry && i.avail === 'ok').length;
+  return o.items.length ? Math.round(confirmed / o.items.length * 100) : 0;
+}
+function confClass(o) { const p=confPct(o); return p===100?'green':p>=33?'orange':'red'; }
+
+// ─── SORT ───────────────────────────────────
+function setSort(key) {
+  if (currentSortKey === key) {
+    sortDir[key] = (sortDir[key]||1) * -1;
+  } else {
+    currentSortKey = key;
+    sortDir[key] = sortDir[key] || 1;
+  }
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  const map = {dato:'sortDato',prioritet:'sortPri',alfabetisk:'sortAlf',varer:'sortVarer'};
+  const btn = document.getElementById(map[key]);
+  if (btn) {
+    btn.classList.add('active');
+    const arrow = btn.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = (sortDir[key]||1) === 1 ? '↑' : '↓';
+  }
+  renderList();
+}
+
+function getSorted() {
+  const dir = sortDir[currentSortKey] || 1;
+  return [...ORDERS].sort((a, b) => {
+    if (currentSortKey === 'dato') {
+      const cmp = a.delivery.localeCompare(b.delivery);
+      // Secondary: slot a before b
+      if (cmp !== 0) return cmp * dir;
+      return a.slot.localeCompare(b.slot);
+    }
+    if (currentSortKey === 'prioritet') {
+      // Lowest % first (most urgent)
+      return (confPct(a) - confPct(b)) * dir;
+    }
+    if (currentSortKey === 'alfabetisk') {
+      return a.customer.localeCompare(b.customer, 'nb') * dir;
+    }
+    if (currentSortKey === 'varer') {
+      return (b.items.length - a.items.length) * dir;
+    }
+    return 0;
+  });
+}
+
+// ─── RENDER LIST ────────────────────────────
+const MONTHS_SHORT = ['jan','feb','mar','apr','mai','jun','jul','aug','sep','okt','nov','des'];
+
+function renderList() {
+  const orders  = getSorted();
+  const listEl  = document.getElementById('orderList');
+  const countEl = document.getElementById('listCount');
+  countEl.textContent = orders.length + ' ordre';
+
+  if (orders.length === 0) {
+    listEl.innerHTML = `<div class="empty-state"><h2>Ingen bestillinger funnet</h2><p>Sørg for at Flask kjører:<br><code style="background:#f1f5f9;padding:4px 8px;border-radius:4px;font-size:12px">python3 app.py</code></p></div>`;
+    return;
+  }
+
+  listEl.innerHTML = orders.map(o => {
+    const cls   = confClass(o);
+    const pct   = confPct(o);
+    const d     = new Date(o.delivery + 'T00:00:00');
+    const isToday = o.delivery === todayISO;
+    const dayNum  = d.getDate();
+    const month   = MONTHS_SHORT[d.getMonth()];
+    const slot    = o.slot === 'a' ? '13–15' : '15–18';
+    const dot     = !o.seen ? `<div class="unseen-dot" title="Ikke åpnet"></div>` : '';
+    const todayBadge = isToday ? `<span class="today-badge">i dag</span>` : '';
+    const stateForOrder = STATE[o.id] || [];
+    const confirmed = stateForOrder.filter(i=>i.weight&&i.expiry&&i.avail==='ok').length;
+
+    return `<div class="order-row conf-${cls}" onclick="openOrder('${o.id}')">
+      <div class="or-date ${isToday?'or-date-today':''}">
+        <div class="or-date-day">${dayNum}</div>
+        <div class="or-date-month">${month}</div>
+      </div>
+      <div class="or-divider"></div>
+      <div class="or-main">
+        <div class="or-customer">
+          ${dot}
+          ${o.customer}
+          ${todayBadge}
+        </div>
+        <div class="or-meta">
+          <span class="or-chip">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg>
+            ${o.items.length} vare${o.items.length!==1?'r':''}
+          </span>
+          <span class="or-chip">${o.id}</span>
+          <span class="or-slot-chip ${o.slot}">${slot}</span>
+        </div>
+      </div>
+      <div class="or-right">
+        <div class="or-conf-label">${confirmed}/${o.items.length} bekreftet</div>
+        <div class="or-bar-bg"><div class="or-bar ${cls}" style="width:${pct}%"></div></div>
+      </div>
+      <button class="btn-pakk" onclick="event.stopPropagation();openOrder('${o.id}')">Pakk →</button>
+    </div>`;
+  }).join('');
+}
+
+// ─── SHOW / HIDE VIEWS ──────────────────────
+function showList() {
+  document.getElementById('viewList').style.display   = 'block';
+  document.getElementById('viewDetail').style.display = 'none';
+  document.getElementById('listFooter').style.display = 'flex';
+  document.getElementById('detailToolbar').style.display = 'none';
+  document.getElementById('headerBack').href = 'index.html';
+  currentOrderId = null;
+  renderList();
+}
+
+function openOrder(id) {
+  currentOrderId = id;
+  document.getElementById('viewList').style.display   = 'none';
+  document.getElementById('viewDetail').style.display = 'block';
+  document.getElementById('listFooter').style.display = 'none';
+  document.getElementById('detailToolbar').style.display = 'flex';
+  renderDetail();
+  updateToolbar();
+}
+
+// ─── RENDER DETAIL ──────────────────────────
+function renderDetail() {
+  const o = ORDERS.find(x => x.id === currentOrderId);
+  if (!o) return;
+  const s = STATE[o.id];
+
+  const d = new Date(o.delivery + 'T00:00:00');
+  const dateStr = d.toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long' });
+  const slotStr = o.slot === 'a' ? '13:00 – 15:00' : '15:00 – 18:00';
+  const confirmed = s.filter(i => i.weight && i.expiry && i.avail === 'ok').length;
+  const total     = o.items.length;
+  const pct       = total ? Math.round(confirmed/total*100) : 0;
+
+  document.getElementById('detailContent').innerHTML = `
+    <div class="order-header">
+      <div class="order-header-left">
+        <div class="order-customer">${o.customer}</div>
+        <div class="order-meta">
+          <span class="meta-chip">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            ${dateStr}
+          </span>
+          <span class="meta-chip">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            ${slotStr}
+          </span>
+          <span class="meta-chip" style="font-family:'DM Mono',monospace">${o.id}</span>
+          ${o.phone ? `<a href="tel:${o.phone}" class="meta-chip" style="text-decoration:none">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.37 2 2 0 0 1 3.6 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.56a16 16 0 0 0 6 6l.92-.92a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            ${o.phone}
+          </a>` : ''}
+        </div>
+      </div>
+      <div class="progress-wrap">
+        <span class="progress-label">${confirmed}/${total} bekreftet</span>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="detailProgressBar" style="width:${pct}%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Varer (${total})</div>
+    <div class="items-list" id="itemsList">
+      ${o.items.map((item, i) => renderItemCard(item, i, s[i])).join('')}
+    </div>
+  `;
+}
+
+function renderItemCard(item, i, s) {
+  const statusClass = s.avail ? `status-${s.avail}` : '';
+  const weightOk    = s.weight && s.weight.trim() !== '';
+  const expiryOk    = s.expiry && s.expiry.trim() !== '';
+  const fieldsVisible = s.avail === 'ok' ? 'visible' : '';
+  const replVisible   = (s.avail === 'unsure' || s.avail === 'no') ? 'visible' : '';
+
+  const chipClass = val => {
+    if (s.avail !== val) return 'avail-btn';
+    return `avail-btn active-${val === 'ok' ? 'ok' : val === 'unsure' ? 'unsure' : 'no'}`;
+  };
+
+  const selectedChips = s.replacements.map(fid => {
+    const f = FISH_DB.find(x => x.id === fid);
+    if (!f) return '';
+    return `<span class="replacement-chip">${f.name}<button class="chip-remove" onclick="removeReplacement('${currentOrderId}',${i},'${fid}')">✕</button></span>`;
+  }).join('');
+
+  return `
+  <div class="item-card ${statusClass}" id="card-${i}">
+    <div class="item-top">
+      <div class="item-name">${item.name}</div>
+      <div class="avail-toggle">
+        <button class="${chipClass('ok')}"     onclick="setAvail('${currentOrderId}',${i},'ok')">Tilgjengelig</button>
+        <button class="${chipClass('unsure')}" onclick="setAvail('${currentOrderId}',${i},'unsure')">Usikkert</button>
+        <button class="${chipClass('no')}"     onclick="setAvail('${currentOrderId}',${i},'no')">Ikke mulig</button>
+      </div>
+    </div>
+
+    <div class="item-fields ${fieldsVisible}" id="fields-${i}">
+      <div class="field-group">
+        <label>Vekt</label>
+        <div class="field-suffix">
+          <input class="field-input${weightOk?' filled':''}" id="weight-${i}" type="number" min="1"
+            placeholder="0" value="${s.weight}"
+            oninput="onFieldChange('${currentOrderId}',${i},'weight',this.value)"/>
+          <span class="field-suffix-label">g</span>
+        </div>
+        <div class="field-check ${weightOk?'ok':'empty'}">
+          ${weightOk?`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Lagret`:''}
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Holdbarhetsdato</label>
+        <input class="field-input${expiryOk?' filled':''}" id="expiry-${i}" type="date"
+          value="${s.expiry}" oninput="onFieldChange('${currentOrderId}',${i},'expiry',this.value)"/>
+        <div class="field-check ${expiryOk?'ok':'empty'}">
+          ${expiryOk?`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Lagret`:''}
+        </div>
+      </div>
+    </div>
+
+    <div class="replacement-section ${replVisible}" id="repl-${i}">
+      <div class="replacement-header">
+        <span class="replacement-title">
+          ${s.avail==='no'?'🔴 Ikke tilgjengelig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
+        </span>
+      </div>
+      <div class="search-row">
+        <input class="search-input" id="search-${i}" type="text"
+          placeholder="Søk på fisk eller skalldyr…"
+          oninput="onSearch('${currentOrderId}',${i},this.value)" autocomplete="off"/>
+      </div>
+      <div class="search-results" id="results-${i}"></div>
+      <div class="selected-replacements" id="chips-${i}">${selectedChips}</div>
+    </div>
+  </div>`;
+}
+
+// ─── PERSIST STATE ───────────────────────────
+function saveState() {
+  try { localStorage.setItem('havøyet_state', JSON.stringify(STATE)); } catch(e) {}
+}
+function restoreState() {
+  try {
+    const raw = localStorage.getItem('havøyet_state');
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    Object.keys(saved).forEach(id => { if (STATE[id]) STATE[id] = saved[id]; });
+  } catch(e) {}
+}
+
+// ─── STATE HANDLERS ──────────────────────────
+function setAvail(orderId, i, val) {
+  const s = STATE[orderId][i];
+  s.avail = val;
+  if (val === 'ok') { s.replacements = []; }
+  else              { s.weight = ''; s.expiry = ''; }
+  saveState();
+  renderDetail();
+  updateToolbar();
+  if (val !== 'ok') setTimeout(() => { const el = document.getElementById('search-'+i); if(el) el.focus(); }, 50);
+}
+
+function onFieldChange(orderId, i, field, val) {
+  STATE[orderId][i][field] = val;
+  const inputEl = document.getElementById((field==='weight'?'weight':'expiry')+'-'+i);
+  if (inputEl) inputEl.classList.toggle('filled', val && val.trim() !== '');
+  // Update progress bar
+  const o = ORDERS.find(x=>x.id===orderId);
+  const s = STATE[orderId];
+  const confirmed = s.filter(x=>x.weight&&x.expiry&&x.avail==='ok').length;
+  const pct = o.items.length ? Math.round(confirmed/o.items.length*100) : 0;
+  const bar = document.getElementById('detailProgressBar');
+  if (bar) bar.style.width = pct + '%';
+  saveState();
+  updateToolbar();
+}
+
+function onSearch(orderId, i, query) {
+  const q = query.toLowerCase().trim();
+  const resultsEl = document.getElementById('results-'+i);
+  if (!q) { resultsEl.innerHTML=''; resultsEl.classList.remove('visible'); return; }
+  const matches = FISH_DB.filter(f => f.name.toLowerCase().includes(q) || f.category.toLowerCase().includes(q));
+  if (!matches.length) {
+    resultsEl.innerHTML=`<div style="padding:12px 14px;font-size:13px;color:var(--muted)">Ingen treff på «${query}»</div>`;
+    resultsEl.classList.add('visible'); return;
+  }
+  const selected = STATE[orderId][i].replacements;
+  resultsEl.innerHTML = matches.map(f => {
+    const isSel = selected.includes(f.id);
+    return `<div class="result-item ${isSel?'selected':''}" onclick="toggleReplacement('${orderId}',${i},'${f.id}')">
+      <div class="result-check">${isSel?`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`:''}</div>
+      <span class="result-name">${f.name}</span>
+      <span class="result-detail">${f.category} · ${f.unit}</span>
+    </div>`;
+  }).join('');
+  resultsEl.classList.add('visible');
+}
+
+function toggleReplacement(orderId, i, fishId) {
+  const s = STATE[orderId][i];
+  s.replacements = s.replacements.includes(fishId)
+    ? s.replacements.filter(id=>id!==fishId)
+    : [...s.replacements, fishId];
+  const q = document.getElementById('search-'+i)?.value || '';
+  onSearch(orderId, i, q);
+  updateChips(orderId, i);
+}
+
+function removeReplacement(orderId, i, fishId) {
+  STATE[orderId][i].replacements = STATE[orderId][i].replacements.filter(id=>id!==fishId);
+  updateChips(orderId, i);
+}
+
+function updateChips(orderId, i) {
+  const chipsEl = document.getElementById('chips-'+i);
+  if (!chipsEl) return;
+  chipsEl.innerHTML = STATE[orderId][i].replacements.map(fid => {
+    const f = FISH_DB.find(x=>x.id===fid);
+    if (!f) return '';
+    return `<span class="replacement-chip">${f.name}<button class="chip-remove" onclick="removeReplacement('${orderId}',${i},'${fid}')">✕</button></span>`;
+  }).join('');
+}
+
+// ─── TOOLBAR ────────────────────────────────
+function updateToolbar() {
+  const o = ORDERS.find(x=>x.id===currentOrderId);
+  if (!o) return;
+  const s = STATE[currentOrderId];
+  const total     = o.items.length;
+  const handled   = s.filter(x=>x.avail!==null).length;
+  const confirmed = s.filter(x=>x.weight&&x.expiry&&x.avail==='ok').length;
+  document.getElementById('toolbarStatus').textContent =
+    `${handled}/${total} varer behandlet  ·  ${confirmed} klar for etikett`;
+  document.getElementById('btnPrint').disabled = confirmed === 0;
+}
+
+// ─── PRINT & SAVE ───────────────────────────
+document.getElementById('btnPrint').addEventListener('click', () => {
+  const o = ORDERS.find(x=>x.id===currentOrderId);
+  const s = STATE[currentOrderId];
+  const ready = o.items.filter((_,i)=>s[i].avail==='ok'&&s[i].weight&&s[i].expiry).length;
+  if (!ready) return;
+  showToast(`Sender ${ready} etikett${ready>1?'er':''} til QL-1100c…`);
+  setTimeout(()=>showToast('✓ Etiketter skrevet ut'), 1800);
+});
+
+document.getElementById('btnSave').addEventListener('click', () => {
+  saveState();
+  showToast('Lagret ✓');
+  setTimeout(() => showList(), 800);
+});
+
+function showToast(msg) {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2400);
+}
+
+// ─── KLOKKE ─────────────────────────────────
+function pad(n){return String(n).padStart(2,'0');}
+function updateClock(){const n=new Date();document.getElementById('clock').textContent=pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());}
+updateClock(); setInterval(updateClock,1000);
+
+// ─── INIT ────────────────────────────────────
+loadFromFlask();
+</script>
+</body>
+</html>

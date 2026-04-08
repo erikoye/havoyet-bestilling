@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Havøyet — Butikkvisning</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary:  #0d9488;
+      --bg:       #f1f5f9;
+      --dark:     #0f172a;
+      --surface:  #ffffff;
+      --border:   #e2e8f0;
+      --muted:    #64748b;
+      --c-red:    #ef4444;
+      --c-orange: #f59e0b;
+      --c-green:  #22c55e;
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--dark);
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--dark);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      height: 64px;
+    }
+    .logo-area { display: flex; align-items: center; gap: 14px; }
+    .logo-text { font-family: 'Montserrat', sans-serif; font-weight: 900; font-size: 22px; letter-spacing: 2px; color: #fff; }
+    .page-crumb { color: #475569; font-size: 13px; font-family: 'DM Mono', monospace; }
+
+    .header-right { display: flex; align-items: center; gap: 20px; }
+    .clock { font-family: 'DM Mono', monospace; font-size: 18px; color: #fff; font-weight: 500; letter-spacing: 1px; }
+    .sync-info { font-family: 'DM Mono', monospace; font-size: 11px; color: #475569; }
+
+    .live-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--c-green);
+      display: inline-block;
+      animation: pulse 2s infinite;
+      margin-right: 4px;
+    }
+    .live-dot.offline { background: #475569; animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }
+
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 24px 60px; }
+
+    /* ── MELDING ── */
+    .melding-banner {
+      background: var(--dark);
+      color: #fff;
+      border-radius: 12px;
+      padding: 18px 24px;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      display: none;
+    }
+    .melding-banner.active { display: flex; }
+    .melding-icon { font-size: 22px; flex-shrink: 0; margin-top: 2px; }
+    .melding-text { font-size: 15px; line-height: 1.5; }
+    .melding-ts { font-size: 11px; color: #64748b; margin-top: 4px; font-family: 'DM Mono', monospace; }
+
+    /* ── VARSLER ── */
+    .varsel-area { margin-bottom: 24px; display: flex; flex-direction: column; gap: 8px; }
+    .varsel-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .varsel-chip.info  { background: #dbeafe; color: #1d4ed8; }
+    .varsel-chip.warn  { background: #fef3c7; color: #92400e; }
+    .varsel-chip.ok    { background: #dcfce7; color: #15803d; }
+
+    /* ── GRID ── */
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 700px) { .content-grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+    }
+
+    .card-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+
+    /* ── TILGJENGELIGHET ── */
+    .avail-list { display: flex; flex-direction: column; gap: 6px; }
+    .avail-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-radius: 7px;
+      background: #f8fafc;
+    }
+    .avail-row.orange { background: #fffbeb; }
+    .avail-row.red    { background: #fef2f2; }
+    .avail-row.green  { background: #f0fdf4; }
+    .avail-row-name { font-size: 14px; }
+    .avail-row-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 9px;
+      border-radius: 99px;
+    }
+    .avail-row.green  .avail-row-badge { background: #dcfce7; color: #15803d; }
+    .avail-row.orange .avail-row-badge { background: #fef3c7; color: #b45309; }
+    .avail-row.red    .avail-row-badge { background: #fee2e2; color: #dc2626; }
+
+    /* ── ORDRE ── */
+    .ordre-list { display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; }
+    .ordre-card {
+      border-left: 4px solid var(--border);
+      background: #f8fafc;
+      border-radius: 0 8px 8px 0;
+      padding: 11px 14px;
+    }
+    .ordre-card.red    { border-left-color: var(--c-red); background: #fff5f5; }
+    .ordre-card.orange { border-left-color: var(--c-orange); background: #fffdf0; }
+    .ordre-card.green  { border-left-color: var(--c-green); background: #f0fdf4; }
+
+    .oc-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+    .oc-name { font-size: 14px; font-weight: 600; }
+    .oc-id   { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
+    .oc-meta { font-size: 12px; color: var(--muted); }
+    .oc-slot {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 99px;
+      background: #e0f2fe;
+      color: #0369a1;
+    }
+
+    .oc-bar-wrap { margin-top: 7px; background: #e2e8f0; border-radius: 99px; height: 4px; }
+    .oc-bar { height: 4px; border-radius: 99px; transition: width .3s; }
+    .oc-bar.red    { background: var(--c-red); }
+    .oc-bar.orange { background: var(--c-orange); }
+    .oc-bar.green  { background: var(--c-green); }
+
+    /* ── STATISTIKK ── */
+    .stat-row { display: flex; gap: 12px; margin-bottom: 20px; }
+    .stat-box {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      text-align: center;
+    }
+    .stat-num { font-size: 28px; font-weight: 700; color: var(--dark); }
+    .stat-lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-top: 2px; }
+
+    /* ── OFFLINE / FEIL ── */
+    .error-bar {
+      background: #fee2e2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      color: #dc2626;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .error-bar.show { display: block; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo-area">
+    <span class="logo-text">Havøyet</span>
+    <span class="page-crumb">/ butikk</span>
+  </div>
+  <div class="header-right">
+    <span id="syncInfo" class="sync-info">
+      <span class="live-dot" id="liveDot"></span>oppdaterer...
+    </span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- MELDING FRA ADMIN -->
+  <div class="melding-banner" id="meldingBanner">
+    <div class="melding-icon">📢</div>
+    <div>
+      <div class="melding-text" id="meldingText"></div>
+      <div class="melding-ts" id="meldingTs"></div>
+    </div>
+  </div>
+
+  <!-- VARSLER -->
+  <div class="varsel-area" id="varselArea"></div>
+
+  <!-- STATISTIKK -->
+  <div class="stat-row">
+    <div class="stat-box">
+      <div class="stat-num" id="statTotal">—</div>
+      <div class="stat-lbl">Totalt i dag</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" style="color:var(--c-red)" id="statRed">—</div>
+      <div class="stat-lbl">Mangler info</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-num" style="color:var(--c-green)" id="statGreen">—</div>
+      <div class="stat-lbl">Klare</div>
+    </div>
+  </div>
+
+  <div id="errorBar" class="error-bar"></div>
+
+  <div class="content-grid">
+    <!-- TILGJENGELIGHET -->
+    <div class="card">
+      <div class="card-title">Varetilgjengelighet</div>
+      <div class="avail-list" id="availList">
+        <div style="color:var(--muted);font-size:14px;">Laster...</div>
+      </div>
+    </div>
+
+    <!-- DAGENS ORDRE -->
+    <div class="card">
+      <div class="card-title">Dagens leveranser</div>
+      <div class="ordre-list" id="ordreList">
+        <div style="color:var(--muted);font-size:14px;">Laster...</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5001' : window.location.origin;
+const STORAGE_KEY = 'havoyetAdmin';
+const POLL_MS     = 15_000;  // 15 sekunder
+
+const STATUS_LABELS = { green: 'Tilgjengelig', orange: 'Usikkert', red: 'Ikke mulig' };
+const VARSEL_ICONS  = { info: 'ℹ️', warn: '⚠️', ok: '✓' };
+
+// ── KLOKKE ────────────────────────────────────────────────────────────────────
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toTimeString().slice(0, 8);
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── TODAY ─────────────────────────────────────────────────────────────────────
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// ── HENT ADMIN-TILSTAND ───────────────────────────────────────────────────────
+async function fetchAdminState() {
+  // Prøv Flask-backend først, fall tilbake på localStorage
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/admin/state`, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) return await r.json();
+  } catch (e) { /* offline */ }
+
+  // Fallback: localStorage (fungerer om admin.html er åpen i samme nettleser)
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+  } catch (e) { return {}; }
+}
+
+// ── HENT ORDRE ────────────────────────────────────────────────────────────────
+async function fetchOrders() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch (e) {
+    return { orders: [], error: e.message, last_sync: null };
+  }
+}
+
+// ── RENDER MELDING ────────────────────────────────────────────────────────────
+function renderMelding(state) {
+  const banner = document.getElementById('meldingBanner');
+  const melding = state.melding || {};
+  if (melding.text && melding.text.trim()) {
+    banner.classList.add('active');
+    document.getElementById('meldingText').textContent = melding.text;
+    if (melding.ts) {
+      const d = new Date(melding.ts);
+      document.getElementById('meldingTs').textContent =
+        'Publisert ' + d.toLocaleDateString('nb', { weekday: 'long', day: 'numeric', month: 'long' })
+        + ' kl. ' + d.toLocaleTimeString('nb', { hour: '2-digit', minute: '2-digit' });
+    }
+  } else {
+    banner.classList.remove('active');
+  }
+}
+
+// ── RENDER VARSLER ────────────────────────────────────────────────────────────
+function renderVarsler(state) {
+  const area = document.getElementById('varselArea');
+  const varsler = (state.varsler || []).filter(v => v.text && v.text.trim());
+  area.innerHTML = '';
+  varsler.forEach(v => {
+    const chip = document.createElement('div');
+    chip.className = `varsel-chip ${v.type || 'info'}`;
+    chip.textContent = `${VARSEL_ICONS[v.type] || 'ℹ️'} ${v.text}`;
+    area.appendChild(chip);
+  });
+}
+
+// ── RENDER TILGJENGELIGHET ────────────────────────────────────────────────────
+function renderAvail(state) {
+  const list = document.getElementById('availList');
+  const avail = state.avail || {};
+  const entries = Object.entries(avail);
+  if (entries.length === 0) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:14px;">Ingen data fra admin ennå.</div>';
+    return;
+  }
+  // Vis ikke-tilgjengelig øverst
+  const sorted = [...entries].sort((a, b) => {
+    const order = { red: 0, orange: 1, green: 2 };
+    return (order[a[1]] ?? 3) - (order[b[1]] ?? 3);
+  });
+  list.innerHTML = '';
+  sorted.forEach(([fish, status]) => {
+    const row = document.createElement('div');
+    row.className = `avail-row ${status}`;
+    row.innerHTML = `
+      <span class="avail-row-name">${fish}</span>
+      <span class="avail-row-badge">${STATUS_LABELS[status] || status}</span>
+    `;
+    list.appendChild(row);
+  });
+}
+
+// ── RENDER ORDRE ──────────────────────────────────────────────────────────────
+function confPct(order) {
+  const items = order.items || [];
+  if (items.length === 0) return 0;
+  const confirmed = items.filter(i => i.weight !== null && i.expiry !== null).length;
+  return Math.round(confirmed / items.length * 100);
+}
+
+function confClass(order) {
+  const p = confPct(order);
+  return p === 100 ? 'green' : p >= 33 ? 'orange' : 'red';
+}
+
+function renderOrdre(data) {
+  const list = document.getElementById('ordreList');
+  const orders = (data.orders || []).filter(o => o.delivery === todayISO());
+
+  let total = orders.length;
+  let grn = orders.filter(o => confClass(o) === 'green').length;
+  let red = orders.filter(o => confClass(o) === 'red').length;
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statGreen').textContent = grn;
+  document.getElementById('statRed').textContent   = red;
+
+  if (orders.length === 0) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:14px;padding:10px 0;">Ingen leveranser i dag.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  orders.forEach(o => {
+    const cls  = confClass(o);
+    const pct  = confPct(o);
+    const slot = o.slot === 'a' ? '13–15' : o.slot === 'b' ? '15–18' : o.slot || '—';
+
+    const card = document.createElement('div');
+    card.className = `ordre-card ${cls}`;
+    card.innerHTML = `
+      <div class="oc-top">
+        <span class="oc-name">${o.customer}</span>
+        <span class="oc-slot">${slot}</span>
+      </div>
+      <div class="oc-meta">
+        <span class="oc-id">${o.id}</span>
+        · ${(o.items || []).length} varer
+        · ${pct}% bekreftet
+      </div>
+      <div class="oc-bar-wrap">
+        <div class="oc-bar ${cls}" style="width:${pct}%"></div>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+// ── SYNC-STATUS ───────────────────────────────────────────────────────────────
+function setSyncStatus(ok, msg) {
+  const dot  = document.getElementById('liveDot');
+  const info = document.getElementById('syncInfo');
+  dot.className = 'live-dot' + (ok ? '' : ' offline');
+  info.innerHTML = `<span class="live-dot ${ok ? '' : 'offline'}"></span>${msg}`;
+}
+
+function showError(msg) {
+  const bar = document.getElementById('errorBar');
+  if (msg) { bar.textContent = msg; bar.classList.add('show'); }
+  else      { bar.classList.remove('show'); }
+}
+
+// ── HOVED-POLL ────────────────────────────────────────────────────────────────
+async function refresh() {
+  const [state, ordreData] = await Promise.all([fetchAdminState(), fetchOrders()]);
+
+  renderMelding(state);
+  renderVarsler(state);
+  renderAvail(state);
+  renderOrdre(ordreData);
+
+  if (ordreData.error) {
+    setSyncStatus(false, 'Ikke koblet til backend');
+    showError(`Kan ikke nå Flask-backend (${FLASK_BASE}). Start app.py på Pi.`);
+  } else {
+    setSyncStatus(true, ordreData.last_sync
+      ? 'Sist oppdatert ' + new Date(ordreData.last_sync).toLocaleTimeString('nb', { hour: '2-digit', minute: '2-digit' })
+      : 'Tilkoblet');
+    showError(null);
+  }
+}
+
+// BroadcastChannel — sanntidsoppdatering når admin.html er åpen i samme nettleser
+try {
+  const ch = new BroadcastChannel('havoyetSync');
+  ch.onmessage = () => refresh();
+} catch (e) {}
+
+refresh();
+setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>

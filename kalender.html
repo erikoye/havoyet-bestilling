@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Kalendervisning &mdash; Havøyet AS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary:    #0d9488;
+      --primary-dk: #0f766e;
+      --bg:         #f1f5f9;
+      --dark:       #0f172a;
+      --surface:    #ffffff;
+      --border:     #e2e8f0;
+      --muted:      #64748b;
+      --c-red:      #ef4444;
+      --c-orange:   #f59e0b;
+      --c-green:    #22c55e;
+
+      --slot-a-bg:  #eff6ff;
+      --slot-a-fg:  #2563eb;
+      --slot-b-bg:  #faf5ff;
+      --slot-b-fg:  #7c3aed;
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--dark);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── TOPBAR ── */
+    header {
+      background: var(--dark);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 56px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      z-index: 200;
+    }
+
+    .header-left { display: flex; align-items: center; gap: 16px; }
+
+    .back-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 10px;
+      border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .back-btn:hover { color: #fff; background: #1e293b; }
+
+    .divider { width: 1px; height: 20px; background: #334155; }
+
+    .logo-name {
+      font-family: 'DM Mono', monospace;
+      font-size: 14px;
+      font-weight: 500;
+      color: #fff;
+    }
+
+    .logo-name span { color: var(--primary); }
+
+    .header-center {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .week-nav-btn {
+      width: 30px;
+      height: 30px;
+      border: 1px solid #334155;
+      background: none;
+      border-radius: 6px;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .week-nav-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+    .week-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      color: #cbd5e1;
+      min-width: 170px;
+      text-align: center;
+    }
+
+    .today-btn {
+      border: 1px solid #334155;
+      background: none;
+      border-radius: 6px;
+      color: #94a3b8;
+      font-size: 12px;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 500;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .today-btn:hover { border-color: var(--primary); color: var(--primary); }
+    .clock { font-family: 'DM Mono', monospace; font-size: 12px; color: #94a3b8; }
+
+    /* ── LEGEND BAR ── */
+    .legend-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 24px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .legend-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .legend-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    .legend-swatch.red    { background: var(--c-red); }
+    .legend-swatch.orange { background: var(--c-orange); }
+    .legend-swatch.green  { background: var(--c-green); }
+
+    .legend-sep { width: 1px; height: 16px; background: var(--border); }
+
+    .slot-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 500;
+    }
+
+    .slot-chip.a { background: var(--slot-a-bg); color: var(--slot-a-fg); }
+    .slot-chip.b { background: var(--slot-b-bg); color: var(--slot-b-fg); }
+
+    .legend-count {
+      margin-left: auto;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ── CALENDAR GRID ── */
+    .cal-wrapper {
+      flex: 1;
+      overflow-x: auto;
+      padding: 0 24px 80px;
+    }
+
+    .cal-grid {
+      display: grid;
+      grid-template-columns: 56px repeat(7, 1fr);
+      min-width: 860px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-top: 20px;
+    }
+
+    .cal-corner {
+      background: #f8fafc;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 8px;
+    }
+
+    .day-header {
+      background: #f8fafc;
+      border-bottom: 1px solid var(--border);
+      padding: 12px 12px 10px;
+      text-align: center;
+    }
+
+    .day-header:not(:last-child) { border-right: 1px solid var(--border); }
+
+    .day-name {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .day-num {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--dark);
+      line-height: 1;
+      font-family: 'DM Mono', monospace;
+    }
+
+    .day-header.today .day-name { color: var(--primary); }
+
+    .day-header.today .day-num {
+      background: var(--primary);
+      color: #fff;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto;
+      font-size: 18px;
+    }
+
+    .day-total {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      border-radius: 10px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      font-weight: 500;
+      margin-top: 4px;
+      padding: 0 5px;
+    }
+
+    .day-total.has-orders { background: var(--primary); color: #fff; }
+    .day-total.no-orders  { background: transparent; color: transparent; }
+
+    /* Slot rows */
+    .slot-label {
+      border-right: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+      padding: 10px 8px 0;
+    }
+
+    .slot-label span {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: #94a3b8;
+      white-space: nowrap;
+    }
+
+    .day-slot {
+      min-height: 130px;
+      padding: 8px;
+      vertical-align: top;
+      position: relative;
+    }
+
+    .day-slot:not(:last-child) { border-right: 1px solid var(--border); }
+
+    .slot-a .day-slot {
+      border-bottom: 1px solid var(--border);
+      background: #fafcff;
+    }
+
+    .slot-b .day-slot { background: #fdfaff; }
+
+    .slot-a .slot-label { background: #fafcff; border-bottom: 1px solid var(--border); }
+    .slot-b .slot-label { background: #fdfaff; }
+
+    /* ── ORDER CARDS ── */
+    .order-card {
+      border-radius: 7px;
+      padding: 8px 10px;
+      margin-bottom: 5px;
+      cursor: pointer;
+      position: relative;
+      border-left: 3px solid transparent;
+      transition: filter 0.12s, transform 0.1s;
+      overflow: hidden;
+    }
+
+    .order-card:hover { filter: brightness(0.96); transform: translateY(-1px); }
+
+    /* Red: < 33% confirmed */
+    .order-card.conf-red {
+      background: #fef2f2;
+      border-left-color: var(--c-red);
+    }
+
+    /* Orange: 33–99% confirmed */
+    .order-card.conf-orange {
+      background: #fffbeb;
+      border-left-color: var(--c-orange);
+    }
+
+    /* Green: 100% confirmed */
+    .order-card.conf-green {
+      background: #f0fdf4;
+      border-left-color: var(--c-green);
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 3px;
+      gap: 4px;
+    }
+
+    .card-customer {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--dark);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-id {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    /* Progress bar */
+    .card-progress-wrap {
+      height: 4px;
+      background: #e2e8f0;
+      border-radius: 2px;
+      margin: 5px 0 5px;
+      overflow: hidden;
+    }
+
+    .card-progress-bar {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.3s;
+    }
+
+    .conf-red    .card-progress-bar { background: var(--c-red); }
+    .conf-orange .card-progress-bar { background: var(--c-orange); }
+    .conf-green  .card-progress-bar { background: var(--c-green); }
+
+    .card-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-conf-label {
+      font-size: 10px;
+      font-family: 'DM Mono', monospace;
+      color: var(--muted);
+    }
+
+    .card-slot {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 10px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 500;
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    .card-slot.a { background: var(--slot-a-bg); color: var(--slot-a-fg); }
+    .card-slot.b { background: var(--slot-b-bg); color: var(--slot-b-fg); }
+
+    .empty-slot {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-height: 80px;
+      color: #cbd5e1;
+      font-size: 11px;
+    }
+
+    /* ── FOOTER ── */
+    .footer-bar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 24px;
+      flex-shrink: 0;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+    }
+
+    .footer-bar span {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .printer-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .printer-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-green); }
+
+    /* ── MODAL ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15,23,42,0.5);
+      z-index: 300;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border-radius: 14px;
+      width: 460px;
+      max-width: 95vw;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      overflow: hidden;
+    }
+
+    .modal-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .modal-title { font-size: 16px; font-weight: 600; }
+    .modal-id { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 18px;
+      padding: 2px;
+      line-height: 1;
+    }
+
+    .modal-close:hover { color: var(--dark); }
+
+    .modal-body { padding: 20px 24px; }
+
+    .modal-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .modal-row:last-child { border-bottom: none; }
+    .modal-row-label { color: var(--muted); font-weight: 500; }
+    .modal-row-val { font-weight: 500; }
+
+    /* Confirmation summary block */
+    .conf-block {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-top: 16px;
+    }
+
+    .conf-block-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .conf-block-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--dark);
+    }
+
+    .conf-pct {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .conf-pct.red    { color: var(--c-red); }
+    .conf-pct.orange { color: #d97706; }
+    .conf-pct.green  { color: #16a34a; }
+
+    .conf-bar-wrap {
+      height: 6px;
+      background: #e2e8f0;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+
+    .conf-bar {
+      height: 100%;
+      border-radius: 3px;
+    }
+
+    .conf-bar.red    { background: var(--c-red); }
+    .conf-bar.orange { background: var(--c-orange); }
+    .conf-bar.green  { background: var(--c-green); }
+
+    .items-list { display: flex; flex-direction: column; gap: 5px; }
+
+    .item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      padding: 5px 8px;
+      border-radius: 5px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+
+    .item-name { color: var(--dark); font-weight: 500; }
+
+    .item-status {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-family: 'DM Mono', monospace;
+    }
+
+    .item-status.ok      { color: #16a34a; }
+    .item-status.missing { color: #94a3b8; }
+
+    .modal-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      flex: 1;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 13px;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn-primary:hover { background: var(--primary-dk); }
+
+    .btn-ghost {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 500;
+      color: var(--dark);
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    .btn-ghost:hover { border-color: var(--primary); color: var(--primary); }
+
+    /* ── TOUCH & MOBIL ── */
+    button, a { touch-action: manipulation; }
+    button { -webkit-tap-highlight-color: transparent; }
+
+    @media (max-width: 700px) {
+      header { padding: 0 12px; height: 50px; }
+      .clock { display: none; }
+      .week-nav-btn { width: 38px; height: 38px; }
+      .week-label { font-size: 11px; min-width: 130px; }
+      .legend-bar { padding: 6px 14px; gap: 10px; }
+      .legend-title { display: none; }
+      .legend-sep { display: none; }
+      .cal-wrapper { padding: 0 12px 60px; }
+      .cal-grid { min-width: 700px; }
+      .day-name { font-size: 10px; }
+      .day-num { font-size: 18px; }
+    }
+
+    @media (max-height: 500px) and (orientation: landscape) {
+      header { height: 44px; }
+      .legend-bar { padding: 4px 16px; }
+      .cal-wrapper { padding: 0 16px 50px; }
+    }
+
+    /* iPad liggende: vis hele uken fint */
+    @media (min-width: 768px) and (max-width: 1100px) {
+      .cal-grid { min-width: 100%; }
+      .cal-wrapper { padding: 0 20px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a href="index.html" class="back-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Tilbake
+    </a>
+    <div class="divider"></div>
+    <span style="font-family:'Montserrat',sans-serif;font-weight:900;font-size:22px;letter-spacing:2px;color:#ffffff;">Havøyet</span>
+    <span style="color:#475569;font-size:13px;font-family:'DM Mono',monospace;font-weight:400">/ kalender</span>
+  </div>
+
+  <div class="header-center">
+    <button class="week-nav-btn" id="prevWeek">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    </button>
+    <span class="week-label" id="weekLabel">–</span>
+    <button class="week-nav-btn" id="nextWeek">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    </button>
+    <button class="today-btn" id="todayBtn">I dag</button>
+  </div>
+
+  <div class="header-right">
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<!-- Legend -->
+<div class="legend-bar">
+  <span class="legend-title">Bekreftelsesgrad</span>
+  <div class="legend-item">
+    <div class="legend-swatch red"></div>
+    &lt; 33 % bekreftet
+  </div>
+  <div class="legend-item">
+    <div class="legend-swatch orange"></div>
+    33 – 99 % bekreftet
+  </div>
+  <div class="legend-item">
+    <div class="legend-swatch green"></div>
+    100 % bekreftet
+  </div>
+  <div class="legend-sep"></div>
+  <span class="legend-title">Leveringsvindu</span>
+  <span class="slot-chip a">13 – 15</span>
+  <span class="slot-chip b">15 – 18</span>
+  <div class="legend-count" id="weekCount">– ordre denne uken</div>
+</div>
+
+<!-- Calendar -->
+<div class="cal-wrapper">
+  <div class="cal-grid" id="calGrid"></div>
+</div>
+
+<!-- Footer -->
+<div class="footer-bar">
+  <span>Havøyet AS &mdash; Intern ordrebehandling &mdash; v0.1.0</span>
+  <div class="printer-status">
+    <div class="printer-dot"></div>
+    QL-1100c tilkoblet
+  </div>
+  <span>Pi 5 &mdash; Bergen</span>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modalTitle">–</div>
+        <div class="modal-id" id="modalId">–</div>
+      </div>
+      <button class="modal-close" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer">
+      <button class="btn-ghost" id="modalCloseBtn">Lukk</button>
+      <button class="btn-primary" id="modalPackBtn">Pakk denne ordren →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+const TODAY = new Date();
+TODAY.setHours(0, 0, 0, 0);
+
+function isoDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function dayOffset(n) {
+  const d = new Date(TODAY);
+  d.setDate(d.getDate() + n);
+  return isoDate(d);
+}
+
+// ─────────────────────────────────────────────
+// PRIORITY LOGIC
+// En vare er bekreftet når den har både vekt (gram) og holdbarhetsdato.
+// < 33%  → rød
+// 33–99% → oransje
+// 100%   → grønn
+// ─────────────────────────────────────────────
+function confirmationClass(order) {
+  const total = order.items.length;
+  if (total === 0) return 'red';
+  const confirmed = order.items.filter(i => i.weight !== null && i.expiry !== null).length;
+  const pct = confirmed / total;
+  if (pct === 1)    return 'green';
+  if (pct >= 0.33)  return 'orange';
+  return 'red';
+}
+
+function confirmationPct(order) {
+  const total = order.items.length;
+  if (total === 0) return 0;
+  const confirmed = order.items.filter(i => i.weight !== null && i.expiry !== null).length;
+  return Math.round((confirmed / total) * 100);
+}
+
+function confirmedCount(order) {
+  return order.items.filter(i => i.weight !== null && i.expiry !== null).length;
+}
+
+// ─────────────────────────────────────────────
+// DATA — hentes fra Flask
+// ─────────────────────────────────────────────
+const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5001' : window.location.origin;
+let ORDERS = [];
+
+function normalizeOrder(o) {
+  return {
+    id:       o.id,
+    customer: o.customer,
+    delivery: o.delivery || isoDate(TODAY),
+    slot:     o.slot || 'a',
+    items:    (o.items || []).map(i => ({
+      name:   i.variant ? `${i.name} (${i.variant})` : i.name,
+      weight: i.weight ?? null,
+      expiry: i.expiry ?? null,
+    })),
+  };
+}
+
+async function loadFromFlask() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) throw new Error();
+    const data = await r.json();
+    if (data.orders && data.orders.length > 0) {
+      ORDERS = data.orders.map(normalizeOrder);
+    }
+  } catch(e) { /* backend ikke oppe — vis tom kalender */ }
+  buildCalendar();
+}
+
+// ─────────────────────────────────────────────
+// CALENDAR
+// ─────────────────────────────────────────────
+let weekOffset = 0;
+
+function getWeekStart(offset) {
+  const d = new Date(TODAY);
+  const day = d.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  d.setDate(d.getDate() + diff + offset * 7);
+  return d;
+}
+
+function buildCalendar() {
+  const monday = getWeekStart(weekOffset);
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d;
+  });
+
+  const fmt = d => d.toLocaleDateString('nb-NO', { day: 'numeric', month: 'short' });
+  document.getElementById('weekLabel').textContent =
+    fmt(days[0]) + ' – ' + fmt(days[6]) + ' ' + days[6].getFullYear();
+
+  const weekDates = new Set(days.map(isoDate));
+  const count = ORDERS.filter(o => weekDates.has(o.delivery)).length;
+  document.getElementById('weekCount').textContent = count + ' ordre denne uken';
+
+  const DAY_NAMES = ['Man','Tir','Ons','Tor','Fre','Lør','Søn'];
+  let html = '';
+
+  // Corner
+  html += `<div class="cal-corner"></div>`;
+
+  // Day headers
+  days.forEach((d, i) => {
+    const iso  = isoDate(d);
+    const isToday = iso === isoDate(TODAY);
+    const total = ORDERS.filter(o => o.delivery === iso).length;
+    html += `<div class="day-header ${isToday ? 'today' : ''}">
+      <div class="day-name">${DAY_NAMES[i]}</div>
+      <div class="day-num">${d.getDate()}</div>
+      <div class="day-total ${total > 0 ? 'has-orders' : 'no-orders'}">${total || '&nbsp;'}</div>
+    </div>`;
+  });
+
+  // Slot A (13–15)
+  html += `<div class="slot-label slot-a"><span>13–15</span></div>`;
+  days.forEach(d => {
+    const iso = isoDate(d);
+    const orders = ORDERS.filter(o => o.delivery === iso && o.slot === 'a');
+    html += `<div class="day-slot slot-a">`;
+    html += orders.length ? orders.map(renderCard).join('') : `<div class="empty-slot">–</div>`;
+    html += `</div>`;
+  });
+
+  // Slot B (15–18)
+  html += `<div class="slot-label slot-b"><span>15–18</span></div>`;
+  days.forEach(d => {
+    const iso = isoDate(d);
+    const orders = ORDERS.filter(o => o.delivery === iso && o.slot === 'b');
+    html += `<div class="day-slot slot-b">`;
+    html += orders.length ? orders.map(renderCard).join('') : `<div class="empty-slot">–</div>`;
+    html += `</div>`;
+  });
+
+  document.getElementById('calGrid').innerHTML = html;
+
+  document.querySelectorAll('.order-card').forEach(card => {
+    card.addEventListener('click', () => openModal(card.dataset.id));
+  });
+}
+
+function renderCard(o) {
+  const cls  = confirmationClass(o);
+  const pct  = confirmationPct(o);
+  const conf = confirmedCount(o);
+  const total = o.items.length;
+  const slotLabel = o.slot === 'a' ? '13–15' : '15–18';
+
+  return `<div class="order-card conf-${cls}" data-id="${o.id}" title="${o.customer} – ${o.id}">
+    <div class="card-top">
+      <div class="card-customer">${o.customer}</div>
+      <div class="card-id">${o.id}</div>
+    </div>
+    <div class="card-progress-wrap">
+      <div class="card-progress-bar" style="width:${pct}%"></div>
+    </div>
+    <div class="card-bottom">
+      <span class="card-conf-label">${conf}/${total} bekreftet</span>
+      <span class="card-slot ${o.slot}">${slotLabel}</span>
+    </div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// MODAL
+// ─────────────────────────────────────────────
+function openModal(id) {
+  const o = ORDERS.find(ord => ord.id === id);
+  if (!o) return;
+
+  document.getElementById('modalTitle').textContent = o.customer;
+  document.getElementById('modalId').textContent = o.id;
+
+  const deliveryDate = new Date(o.delivery + 'T00:00:00');
+  const dateStr = deliveryDate.toLocaleDateString('nb-NO', { weekday: 'long', day: 'numeric', month: 'long' });
+  const cls   = confirmationClass(o);
+  const pct   = confirmationPct(o);
+  const conf  = confirmedCount(o);
+  const total = o.items.length;
+
+  const pctLabel = cls === 'green'
+    ? '100 % – klar for pakking'
+    : cls === 'orange'
+      ? pct + ' % – mangler bekreftelse'
+      : pct + ' % – krever handling';
+
+  const itemRows = o.items.map(item => {
+    const ok = item.weight !== null && item.expiry !== null;
+    const detail = ok
+      ? `${item.weight} g &nbsp;·&nbsp; ${new Date(item.expiry + 'T00:00:00').toLocaleDateString('nb-NO', { day:'numeric', month:'short' })}`
+      : 'Vekt og dato mangler';
+    return `<div class="item-row">
+      <span class="item-name">${item.name}</span>
+      <span class="item-status ${ok ? 'ok' : 'missing'}">
+        ${ok
+          ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+          : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`
+        }
+        ${detail}
+      </span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('modalBody').innerHTML = `
+    <div class="modal-row">
+      <span class="modal-row-label">Levering</span>
+      <span class="modal-row-val">${dateStr}</span>
+    </div>
+    <div class="modal-row">
+      <span class="modal-row-label">Leveringsvindu</span>
+      <span class="modal-row-val">${o.slot === 'a' ? '13:00 – 15:00' : '15:00 – 18:00'}</span>
+    </div>
+    <div class="conf-block">
+      <div class="conf-block-header">
+        <span class="conf-block-title">Varer bekreftet (${conf}/${total})</span>
+        <span class="conf-pct ${cls}">${pctLabel}</span>
+      </div>
+      <div class="conf-bar-wrap">
+        <div class="conf-bar ${cls}" style="width:${pct}%"></div>
+      </div>
+      <div class="items-list">${itemRows}</div>
+    </div>
+  `;
+
+  document.getElementById('modalPackBtn').onclick = () => {
+    window.location.href = 'pakke.html?ordre=' + encodeURIComponent(o.id);
+  };
+
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+document.getElementById('modalClose').onclick    = closeModal;
+document.getElementById('modalCloseBtn').onclick = closeModal;
+document.getElementById('modalOverlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modalOverlay')) closeModal();
+});
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+
+// ─────────────────────────────────────────────
+// NAV + CLOCK
+// ─────────────────────────────────────────────
+document.getElementById('prevWeek').onclick = () => { weekOffset--; buildCalendar(); };
+document.getElementById('nextWeek').onclick = () => { weekOffset++; buildCalendar(); };
+document.getElementById('todayBtn').onclick  = () => { weekOffset = 0; buildCalendar(); };
+
+function pad(n) { return String(n).padStart(2, '0'); }
+function updateClock() {
+  const n = new Date();
+  document.getElementById('clock').textContent =
+    pad(n.getHours()) + ':' + pad(n.getMinutes()) + ':' + pad(n.getSeconds());
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+loadFromFlask();
+</script>
+</body>
+</html>
