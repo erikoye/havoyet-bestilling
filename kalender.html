@@ -102,7 +102,7 @@
     .week-nav-btn:hover { border-color: var(--primary); color: var(--primary); }
 
     /* ── BUTIKKVELGER ── */
-    .store-sw-btn { padding: 6px 14px; font-size: 12px; font-weight: 600; font-family: 'DM Sans', sans-serif; border: 1px solid #334155; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; transition: border-color 0.15s, color 0.15s, background 0.15s; }
+    .store-sw-btn { padding: 5px 12px; font-size: 12px; font-weight: 600; font-family: 'DM Sans', sans-serif; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--muted); cursor: pointer; transition: border-color 0.15s, color 0.15s, background 0.15s; }
     .store-sw-btn:hover { border-color: var(--primary); color: var(--primary); }
     .store-sw-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 
@@ -688,9 +688,7 @@
     <button class="today-btn" id="todayBtn">I dag</button>
   </div>
 
-  <div class="header-right" style="display:flex;align-items:center;gap:8px;">
-    <button class="store-sw-btn" id="swHavoyet" onclick="setActiveStore('havoyet')">Havøyet</button>
-    <button class="store-sw-btn" id="swNesttun" onclick="setActiveStore('nesttun')">Nesttun Fisk &amp; Vilt</button>
+  <div class="header-right">
     <span class="clock" id="clock">--:--:--</span>
   </div>
 </header>
@@ -715,6 +713,9 @@
   <span class="slot-chip a">13 – 15</span>
   <span class="slot-chip b">15 – 18</span>
   <div class="legend-count" id="weekCount">– ordre denne uken</div>
+  <div class="legend-sep"></div>
+  <button class="store-sw-btn" id="swHavoyet" onclick="setActiveStore('havoyet')">Havøyet</button>
+  <button class="store-sw-btn" id="swNesttun" onclick="setActiveStore('nesttun')">Nesttun Fisk &amp; Vilt</button>
 </div>
 
 <!-- Calendar -->
