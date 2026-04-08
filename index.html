@@ -181,6 +181,12 @@
     .nav-arrow { margin-left: auto; flex-shrink: 0; color: #cbd5e1; }
     .nav-card:hover .nav-arrow { color: var(--primary); }
 
+    /* ── BUTIKKVELGER ── */
+    .store-switcher { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 24px; width: fit-content; }
+    .store-sw-btn { padding: 8px 18px; font-size: 13px; font-weight: 600; font-family: 'DM Sans', sans-serif; border: none; background: var(--surface); color: var(--muted); cursor: pointer; transition: background 0.15s, color 0.15s; }
+    .store-sw-btn:first-child { border-right: 1px solid var(--border); }
+    .store-sw-btn.active { background: var(--primary); color: #fff; }
+
     /* ── ORDERS TABLE ── */
     .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
     .section-title  { font-size: 16px; font-weight: 600; color: var(--dark); }
@@ -212,6 +218,8 @@
     tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
     tbody tr:last-child { border-bottom: none; }
     tbody tr:hover { background: #f8fafc; }
+    tbody tr.ordre-rad { cursor: pointer; }
+    tbody tr.ordre-rad:hover { background: #f0fdfb; }
     td { padding: 13px 16px; color: var(--dark); }
 
     .order-id { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
@@ -509,6 +517,12 @@
     </div>
   </div>
 
+  <!-- BUTIKKVELGER -->
+  <div class="store-switcher">
+    <button class="store-sw-btn" id="swHavoyet" onclick="setActiveStore('havoyet')">Havøyet</button>
+    <button class="store-sw-btn" id="swNesttun" onclick="setActiveStore('nesttun')">Nesttun Fisk &amp; Vilt</button>
+  </div>
+
   <!-- STATS -->
   <div class="stats">
     <div class="stat-card unseen" onclick="openDrawer('unseen')">
@@ -600,8 +614,7 @@
         <th>Levering</th>
         <th>Vindu</th>
         <th>Bekreftet</th>
-        <th></th>
-      </tr>
+        </tr>
     </thead>
     <tbody id="ordreTabell"></tbody>
   </table>
@@ -728,6 +741,27 @@ const MOCK_ORDERS = [
 let ORDERS = MOCK_ORDERS;
 let fromLive = false;
 
+// ─── BUTIKKFILTER ─────────────────────────────
+function activeStore() {
+  return localStorage.getItem('hv_active_store') || 'havoyet';
+}
+function storeFilter(o) {
+  const s = activeStore();
+  if (s === 'nesttun') return o.store === 'Nesttun Fisk & Vilt';
+  return !o.store || o.store === 'Havøyet';
+}
+function setActiveStore(s) {
+  localStorage.setItem('hv_active_store', s);
+  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
+  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
+  renderAll();
+}
+function initStoreSwitcher() {
+  const s = activeStore();
+  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
+  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
+}
+
 // ─── PRIORITET ───────────────────────────────
 function confPct(o){
   if(!o.items||!o.items.length) return 0;
@@ -740,11 +774,12 @@ function confCount(o){ return (o.items||[]).filter(i=>i.weight!==null&&i.expiry!
 function slotCount(arr,s){ return arr.filter(o=>o.slot===s).length; }
 
 function renderAll(){
+  const visible = ORDERS.filter(storeFilter);
   const sets = {
-    unseen: ORDERS.filter(o=>!o.seen),
-    today:  ORDERS.filter(o=>o.delivery===todayISO),
-    tmrw:   ORDERS.filter(o=>o.delivery===tmrwISO),
-    urgent: ORDERS.filter(o=>confClass(o)==='red'),
+    unseen: visible.filter(o=>!o.seen),
+    today:  visible.filter(o=>o.delivery===todayISO),
+    tmrw:   visible.filter(o=>o.delivery===tmrwISO),
+    urgent: visible.filter(o=>confClass(o)==='red'),
   };
 
   document.getElementById('stat-unseen').textContent = sets.unseen.length;
@@ -759,7 +794,7 @@ function renderAll(){
     sets.tmrw.length===0?'Ingen leveranser i morgen':
     slotCount(sets.tmrw,'a')+' × 13–15   '+slotCount(sets.tmrw,'b')+' × 15–18';
 
-  const sorted=[...ORDERS].filter(o=>o.delivery>=todayISO)
+  const sorted=visible.filter(o=>o.delivery>=todayISO)
     .sort((a,b)=>a.delivery.localeCompare(b.delivery));
 
   document.getElementById('ordreTabell').innerHTML=sorted.slice(0,10).map(o=>{
@@ -767,7 +802,7 @@ function renderAll(){
     const slotLabel=o.slot==='a'?'13–15':'15–18';
     const dot=!o.seen?`<span class="unseen-dot" title="Ikke åpnet"></span>`:'';
     const label=cls==='green'?'Klar':`${conf}/${total} varer`;
-    return `<tr>
+    return `<tr class="ordre-rad" onclick="location.href='pakke.html?ordre=${encodeURIComponent(o.id)}'" title="Åpne bestilling">
       <td class="order-id">${o.id}</td>
       <td class="customer-name">${dot}${o.customer}</td>
       <td class="delivery-date">${formatDate(o.delivery)}</td>
@@ -776,7 +811,6 @@ function renderAll(){
         <span class="conf-badge ${cls}"><span class="dot"></span>${label}</span>
         <div class="mini-bar-wrap"><div class="mini-bar ${cls}" style="width:${pct}%"></div></div>
       </td>
-      <td><button class="btn-action" onclick="location.href='pakke.html?ordre=${encodeURIComponent(o.id)}'">Pakk</button></td>
     </tr>`;
   }).join('');
 
@@ -873,6 +907,7 @@ function updateClock(){const n=new Date();document.getElementById('clock').textC
 updateClock(); setInterval(updateClock,1000);
 
 // ─── OPPSTART ─────────────────────────────────
+initStoreSwitcher();
 renderAll();          // vis mock-data umiddelbart
 loadFromFlask();      // erstatt med live-data om Flask er oppe
 setInterval(loadFromFlask, 5 * 60 * 1000);  // poll hvert 5 min

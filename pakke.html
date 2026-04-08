@@ -134,6 +134,12 @@
 
     .sort-icon { width: 14px; height: 14px; flex-shrink: 0; }
 
+    /* ── BUTIKKVELGER ── */
+    .store-sw-sep { width: 1px; background: var(--border); margin: 0 6px; align-self: stretch; }
+    .store-sw-btn { display: flex; align-items: center; gap: 6px; padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 13px; font-weight: 500; font-family: 'DM Sans', sans-serif; color: var(--muted); cursor: pointer; transition: border-color 0.15s, color 0.15s, background 0.15s; }
+    .store-sw-btn:hover { border-color: var(--primary); color: var(--primary-dk); }
+    .store-sw-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
     .sort-arrow { font-size: 10px; opacity: 0.7; }
 
     /* Order list */
@@ -645,6 +651,10 @@
         </svg>
         Antall varer
       </button>
+
+      <div class="store-sw-sep"></div>
+      <button class="store-sw-btn" id="swHavoyet" onclick="setActiveStore('havoyet')">Havøyet</button>
+      <button class="store-sw-btn" id="swNesttun" onclick="setActiveStore('nesttun')">Nesttun Fisk &amp; Vilt</button>
     </div>
 
     <div class="order-list" id="orderList"></div>
@@ -746,18 +756,24 @@ function initState(orders) {
   });
 }
 
-// Multipliser vekt i variant-streng med antall
-// f.eks. "200 g" × 2 → "400 g", "500 g / Med skinn" × 2 → "1 kg / Med skinn"
+// Multipliser mengde i variant-streng med antall
+// f.eks. "200 g" × 2 → "400 g", "1 stk" × 4 → "4 stk", "500 g / Med skinn" × 2 → "1 kg / Med skinn"
 function multiplyWeight(variant, qty) {
   if (!variant || qty <= 1) return variant;
-  return variant.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/i, (match, num, unit) => {
-    const n   = parseFloat(num.replace(',', '.'));
+  // Håndter stk (stykk)
+  let result = variant.replace(/(\d+(?:[.,]\d+)?)\s*(stk)\b/i, (match, num, unit) => {
+    return `${Math.round(parseFloat(num.replace(',', '.')) * qty)} ${unit}`;
+  });
+  // Håndter g og kg
+  result = result.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/i, (match, num, unit) => {
+    const n     = parseFloat(num.replace(',', '.'));
     const grams = unit.toLowerCase() === 'kg' ? n * 1000 : n;
     const total = grams * qty;
     if (total >= 1000 && total % 1000 === 0) return `${total / 1000} kg`;
-    if (total >= 1000) return `${(total / 1000).toFixed(1).replace('.0','')} kg`;
+    if (total >= 1000) return `${(total / 1000).toFixed(1).replace('.0', '')} kg`;
     return `${total} g`;
   });
+  return result;
 }
 
 // Normaliser Shopify-ordre til pakke.html sitt format
@@ -861,9 +877,30 @@ function setSort(key) {
   renderList();
 }
 
+// ─── BUTIKKFILTER ─────────────────────────────
+function activeStore() {
+  return localStorage.getItem('hv_active_store') || 'havoyet';
+}
+function storeFilter(o) {
+  const s = activeStore();
+  if (s === 'nesttun') return o.store === 'Nesttun Fisk & Vilt';
+  return !o.store || o.store === 'Havøyet';
+}
+function setActiveStore(s) {
+  localStorage.setItem('hv_active_store', s);
+  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
+  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
+  renderList();
+}
+function initStoreSwitcher() {
+  const s = activeStore();
+  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
+  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
+}
+
 function getSorted() {
   const dir = sortDir[currentSortKey] || 1;
-  return [...ORDERS].sort((a, b) => {
+  return [...ORDERS].filter(storeFilter).sort((a, b) => {
     if (currentSortKey === 'dato') {
       const cmp = a.delivery.localeCompare(b.delivery);
       // Secondary: slot a before b
@@ -1206,6 +1243,7 @@ function updateClock(){const n=new Date();document.getElementById('clock').textC
 updateClock(); setInterval(updateClock,1000);
 
 // ─── INIT ────────────────────────────────────
+initStoreSwitcher();
 loadFromFlask();
 </script>
 </body>

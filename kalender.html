@@ -101,6 +101,11 @@
 
     .week-nav-btn:hover { border-color: var(--primary); color: var(--primary); }
 
+    /* ── BUTIKKVELGER ── */
+    .store-sw-btn { padding: 6px 14px; font-size: 12px; font-weight: 600; font-family: 'DM Sans', sans-serif; border: 1px solid #334155; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; transition: border-color 0.15s, color 0.15s, background 0.15s; }
+    .store-sw-btn:hover { border-color: var(--primary); color: var(--primary); }
+    .store-sw-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
     .week-label {
       font-family: 'DM Mono', monospace;
       font-size: 13px;
@@ -683,7 +688,9 @@
     <button class="today-btn" id="todayBtn">I dag</button>
   </div>
 
-  <div class="header-right">
+  <div class="header-right" style="display:flex;align-items:center;gap:8px;">
+    <button class="store-sw-btn" id="swHavoyet" onclick="setActiveStore('havoyet')">Havøyet</button>
+    <button class="store-sw-btn" id="swNesttun" onclick="setActiveStore('nesttun')">Nesttun Fisk &amp; Vilt</button>
     <span class="clock" id="clock">--:--:--</span>
   </div>
 </header>
@@ -794,17 +801,41 @@ function confirmedCount(order) {
 const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5001' : window.location.origin;
 let ORDERS = [];
 
+// Multipliser mengde i variant-streng med antall
+// f.eks. "200 g" × 2 → "400 g", "1 stk" × 4 → "4 stk", "500 g / Med skinn" × 2 → "1 kg / Med skinn"
+function multiplyWeight(variant, qty) {
+  if (!variant || qty <= 1) return variant;
+  // Håndter stk (stykk)
+  let result = variant.replace(/(\d+(?:[.,]\d+)?)\s*(stk)\b/i, (match, num, unit) => {
+    return `${Math.round(parseFloat(num.replace(',', '.')) * qty)} ${unit}`;
+  });
+  // Håndter g og kg
+  result = result.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/i, (match, num, unit) => {
+    const n     = parseFloat(num.replace(',', '.'));
+    const grams = unit.toLowerCase() === 'kg' ? n * 1000 : n;
+    const total = grams * qty;
+    if (total >= 1000 && total % 1000 === 0) return `${total / 1000} kg`;
+    if (total >= 1000) return `${(total / 1000).toFixed(1).replace('.0', '')} kg`;
+    return `${total} g`;
+  });
+  return result;
+}
+
 function normalizeOrder(o) {
   return {
     id:       o.id,
     customer: o.customer,
     delivery: o.delivery || isoDate(TODAY),
     slot:     o.slot || 'a',
-    items:    (o.items || []).map(i => ({
-      name:   i.variant ? `${i.name} (${i.variant})` : i.name,
-      weight: i.weight ?? null,
-      expiry: i.expiry ?? null,
-    })),
+    items:    (o.items || []).map(i => {
+      const qty     = i.quantity || 1;
+      const variant = multiplyWeight(i.variant, qty);
+      return {
+        name:   variant ? `${i.name} (${variant})` : i.name,
+        weight: i.weight ?? null,
+        expiry: i.expiry ?? null,
+      };
+    }),
   };
 }
 
@@ -845,8 +876,9 @@ function buildCalendar() {
   document.getElementById('weekLabel').textContent =
     fmt(days[0]) + ' – ' + fmt(days[6]) + ' ' + days[6].getFullYear();
 
+  const visible = ORDERS.filter(storeFilter);
   const weekDates = new Set(days.map(isoDate));
-  const count = ORDERS.filter(o => weekDates.has(o.delivery)).length;
+  const count = visible.filter(o => weekDates.has(o.delivery)).length;
   document.getElementById('weekCount').textContent = count + ' ordre denne uken';
 
   const DAY_NAMES = ['Man','Tir','Ons','Tor','Fre','Lør','Søn'];
@@ -859,7 +891,7 @@ function buildCalendar() {
   days.forEach((d, i) => {
     const iso  = isoDate(d);
     const isToday = iso === isoDate(TODAY);
-    const total = ORDERS.filter(o => o.delivery === iso).length;
+    const total = visible.filter(o => o.delivery === iso).length;
     html += `<div class="day-header ${isToday ? 'today' : ''}">
       <div class="day-name">${DAY_NAMES[i]}</div>
       <div class="day-num">${d.getDate()}</div>
@@ -871,7 +903,7 @@ function buildCalendar() {
   html += `<div class="slot-label slot-a"><span>13–15</span></div>`;
   days.forEach(d => {
     const iso = isoDate(d);
-    const orders = ORDERS.filter(o => o.delivery === iso && o.slot === 'a');
+    const orders = visible.filter(o => o.delivery === iso && o.slot === 'a');
     html += `<div class="day-slot slot-a">`;
     html += orders.length ? orders.map(renderCard).join('') : `<div class="empty-slot">–</div>`;
     html += `</div>`;
@@ -881,7 +913,7 @@ function buildCalendar() {
   html += `<div class="slot-label slot-b"><span>15–18</span></div>`;
   days.forEach(d => {
     const iso = isoDate(d);
-    const orders = ORDERS.filter(o => o.delivery === iso && o.slot === 'b');
+    const orders = visible.filter(o => o.delivery === iso && o.slot === 'b');
     html += `<div class="day-slot slot-b">`;
     html += orders.length ? orders.map(renderCard).join('') : `<div class="empty-slot">–</div>`;
     html += `</div>`;
@@ -1010,6 +1042,28 @@ function updateClock() {
 updateClock();
 setInterval(updateClock, 1000);
 
+// ─── BUTIKKFILTER ─────────────────────────────
+function activeStore() {
+  return localStorage.getItem('hv_active_store') || 'havoyet';
+}
+function storeFilter(o) {
+  const s = activeStore();
+  if (s === 'nesttun') return o.store === 'Nesttun Fisk & Vilt';
+  return !o.store || o.store === 'Havøyet';
+}
+function setActiveStore(s) {
+  localStorage.setItem('hv_active_store', s);
+  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
+  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
+  renderWeek();
+}
+function initStoreSwitcher() {
+  const s = activeStore();
+  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
+  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
+}
+
+initStoreSwitcher();
 loadFromFlask();
 </script>
 </body>
