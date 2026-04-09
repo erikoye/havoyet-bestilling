@@ -425,12 +425,22 @@
     .field-input:focus { outline: none; border-color: var(--primary); background: #fff; }
     .field-input.filled { background: #fff; border-color: #99f6e4; }
 
-    .field-suffix { position: relative; }
-    .field-suffix .field-input { padding-right: 40px; }
+    .field-suffix { display: flex; gap: 6px; align-items: center; }
+    .field-suffix .field-input { flex: 1; }
     .field-suffix-label {
-      position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
-      font-family: 'DM Mono', monospace; font-size: 12px; color: #94a3b8; pointer-events: none;
+      font-family: 'DM Mono', monospace; font-size: 12px; color: #94a3b8;
     }
+
+    /* Unit toggle */
+    .unit-toggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; height: 40px; }
+    .unit-btn { padding: 0 10px; font-size: 12px; font-weight: 600; font-family: 'DM Sans', sans-serif; border: none; background: #f8fafc; color: var(--muted); cursor: pointer; transition: background 0.15s, color 0.15s; }
+    .unit-btn + .unit-btn { border-left: 1px solid var(--border); }
+    .unit-btn.active { background: var(--primary); color: #fff; }
+
+    /* Order note */
+    .order-note-section { margin-top: 24px; }
+    .note-textarea { width: 100%; min-height: 80px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 13px; font-family: 'DM Sans', sans-serif; color: var(--dark); resize: vertical; outline: none; transition: border-color 0.15s; background: #fff; }
+    .note-textarea:focus { border-color: var(--primary); }
 
     .field-check { display: flex; align-items: center; gap: 5px; font-size: 11px; font-family: 'DM Mono', monospace; margin-top: 3px; height: 16px; }
     .field-check.ok    { color: var(--avail-ok); }
@@ -766,7 +776,7 @@ const STATE = {};
 function initState(orders) {
   orders.forEach(o => {
     if (!STATE[o.id]) {
-      STATE[o.id] = o.items.map(() => ({ weight:'', expiry:'', avail:null, replacements:[], confirmedReplacement:null }));
+      STATE[o.id] = o.items.map(() => ({ weight:'', expiry:'', weightUnit:'g', avail:null, replacements:[], confirmedReplacement:null }));
     }
   });
 }
@@ -829,7 +839,7 @@ async function loadFromFlask() {
     if (data.orders && data.orders.length > 0) {
       ORDERS = data.orders.map(normalizeOrder);
       initState(ORDERS);
-      restoreState();
+      restoreState(); restoreNotes();
       localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
       setBanner(true, `Koblet til Shopify – ${ORDERS.length} bestilling${ORDERS.length !== 1 ? 'er' : ''} hentet`);
 
@@ -851,7 +861,7 @@ async function loadFromFlask() {
       const data = JSON.parse(cached);
       ORDERS = data.map(normalizeOrder);
       initState(ORDERS);
-      restoreState();
+      restoreState(); restoreNotes();
       setBanner(false, `Flask ikke tilgjengelig – viser sist lagrede bestillinger. Start app.py for å oppdatere.`);
     } catch(e) {}
   } else {
@@ -1067,6 +1077,12 @@ function renderDetail() {
     <div class="items-list" id="itemsList">
       ${o.items.map((item, i) => renderItemCard(item, i, s[i])).join('')}
     </div>
+
+    <div class="order-note-section">
+      <div class="section-label">Kommentar</div>
+      <textarea class="note-textarea" id="orderNote" placeholder="Spesielle krav, allergier, merknad til pakking…"
+        oninput="onNoteChange('${o.id}',this.value)">${ORDER_NOTES[o.id] || ''}</textarea>
+    </div>
   `;
 }
 
@@ -1112,7 +1128,10 @@ function renderItemCard(item, i, s) {
           <input class="field-input${weightOk?' filled':''}" id="weight-${i}" type="number" min="1"
             placeholder="0" value="${s.weight}"
             oninput="onFieldChange('${currentOrderId}',${i},'weight',this.value)"/>
-          <span class="field-suffix-label">g</span>
+          <div class="unit-toggle">
+            <button class="unit-btn ${ (s.weightUnit||'g')==='g' ? 'active' : ''}" onclick="setWeightUnit('${currentOrderId}',${i},'g')">g</button>
+            <button class="unit-btn ${ (s.weightUnit||'g')==='stk' ? 'active' : ''}" onclick="setWeightUnit('${currentOrderId}',${i},'stk')">stk</button>
+          </div>
         </div>
         <div class="field-check ${weightOk?'ok':'empty'}">
           ${weightOk?`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Lagret`:''}
@@ -1146,6 +1165,8 @@ function renderItemCard(item, i, s) {
 }
 
 // ─── PERSIST STATE ───────────────────────────
+let ORDER_NOTES = {};
+
 function saveState() {
   try { localStorage.setItem('havøyet_state', JSON.stringify(STATE)); } catch(e) {}
 }
@@ -1154,8 +1175,27 @@ function restoreState() {
     const raw = localStorage.getItem('havøyet_state');
     if (!raw) return;
     const saved = JSON.parse(raw);
-    Object.keys(saved).forEach(id => { if (STATE[id]) STATE[id] = saved[id]; });
+    Object.keys(saved).forEach(id => {
+      if (STATE[id]) {
+        STATE[id] = saved[id];
+        // Bakoverkompatibilitet: sett weightUnit hvis mangler
+        STATE[id].forEach(item => { if (!item.weightUnit) item.weightUnit = 'g'; });
+      }
+    });
   } catch(e) {}
+}
+function saveNotes() {
+  try { localStorage.setItem('havøyet_notes', JSON.stringify(ORDER_NOTES)); } catch(e) {}
+}
+function restoreNotes() {
+  try {
+    const raw = localStorage.getItem('havøyet_notes');
+    if (raw) ORDER_NOTES = JSON.parse(raw);
+  } catch(e) {}
+}
+function onNoteChange(orderId, val) {
+  ORDER_NOTES[orderId] = val;
+  saveNotes();
 }
 
 // ─── STATE HANDLERS ──────────────────────────
@@ -1257,6 +1297,17 @@ function confirmReplacement(orderId, i, fishId) {
   s.confirmedReplacement = s.confirmedReplacement === fishId ? null : fishId;
   updateChips(orderId, i);
   saveState();
+}
+
+function setWeightUnit(orderId, i, unit) {
+  STATE[orderId][i].weightUnit = unit;
+  saveState();
+  // Oppdater toggle-knapper uten å re-rendre hele kortet
+  const card = document.getElementById('card-'+i);
+  if (!card) return;
+  card.querySelectorAll('.unit-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent.trim() === unit);
+  });
 }
 
 // ─── TOOLBAR ────────────────────────────────
