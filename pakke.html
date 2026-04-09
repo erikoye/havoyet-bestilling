@@ -488,6 +488,21 @@
     }
     .chip-remove:hover { color: var(--c-red); }
 
+    .chip-confirm {
+      background: none; border: none; cursor: pointer;
+      color: var(--primary); font-size: 11px; font-weight: 700;
+      padding: 0 2px 0 4px; line-height: 1; font-family: 'DM Sans', sans-serif;
+      transition: color 0.1s;
+    }
+    .chip-confirm:hover { color: var(--primary-dk); }
+
+    .replacement-chip.confirmed {
+      background: #dcfce7; border-color: #86efac; color: #15803d;
+    }
+    .replacement-chip.confirmed .chip-confirm { display: none; }
+    .item-name.replaced { color: var(--muted); text-decoration: line-through; font-size: 13px; font-weight: 400; }
+    .item-name-replacement { font-size: 15px; font-weight: 600; color: var(--primary-dk); }
+
     /* ── STICKY FOOTER ── */
     .bottom-toolbar {
       position: fixed; bottom: 0; left: 0; right: 0;
@@ -751,7 +766,7 @@ const STATE = {};
 function initState(orders) {
   orders.forEach(o => {
     if (!STATE[o.id]) {
-      STATE[o.id] = o.items.map(() => ({ weight:'', expiry:'', avail:null, replacements:[] }));
+      STATE[o.id] = o.items.map(() => ({ weight:'', expiry:'', avail:null, replacements:[], confirmedReplacement:null }));
     }
   });
 }
@@ -1070,13 +1085,19 @@ function renderItemCard(item, i, s) {
   const selectedChips = s.replacements.map(fid => {
     const f = FISH_DB.find(x => x.id === fid);
     if (!f) return '';
-    return `<span class="replacement-chip">${f.name}<button class="chip-remove" onclick="removeReplacement('${currentOrderId}',${i},'${fid}')">✕</button></span>`;
+    const isConfirmed = s.confirmedReplacement === fid;
+    return `<span class="replacement-chip ${isConfirmed ? 'confirmed' : ''}">
+      ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+      ${f.name}
+      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmReplacement('${currentOrderId}',${i},'${fid}')">Bekreft</button>` : ''}
+      <button class="chip-remove" onclick="removeReplacement('${currentOrderId}',${i},'${fid}')">✕</button>
+    </span>`;
   }).join('');
 
   return `
   <div class="item-card ${statusClass}" id="card-${i}">
     <div class="item-top">
-      <div class="item-name">${item.name}</div>
+      <div class="item-name" id="item-name-${i}">${s.confirmedReplacement ? (() => { const f=FISH_DB.find(x=>x.id===s.confirmedReplacement); return f ? `<span class="item-name replaced">${item.name}</span> <span class="item-name-replacement">${f.name}</span>` : item.name; })() : item.name}</div>
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setAvail('${currentOrderId}',${i},'ok')">Tilgjengelig</button>
         <button class="${chipClass('unsure')}" onclick="setAvail('${currentOrderId}',${i},'unsure')">Usikkert</button>
@@ -1203,11 +1224,39 @@ function removeReplacement(orderId, i, fishId) {
 function updateChips(orderId, i) {
   const chipsEl = document.getElementById('chips-'+i);
   if (!chipsEl) return;
-  chipsEl.innerHTML = STATE[orderId][i].replacements.map(fid => {
+  const s = STATE[orderId][i];
+  chipsEl.innerHTML = s.replacements.map(fid => {
     const f = FISH_DB.find(x=>x.id===fid);
     if (!f) return '';
-    return `<span class="replacement-chip">${f.name}<button class="chip-remove" onclick="removeReplacement('${orderId}',${i},'${fid}')">✕</button></span>`;
+    const isConfirmed = s.confirmedReplacement === fid;
+    return `<span class="replacement-chip ${isConfirmed ? 'confirmed' : ''}">
+      ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+      ${f.name}
+      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmReplacement('${orderId}',${i},'${fid}')">Bekreft</button>` : ''}
+      <button class="chip-remove" onclick="removeReplacement('${orderId}',${i},'${fid}')">✕</button>
+    </span>`;
   }).join('');
+
+  // Oppdater varenavn i kortets header
+  const nameEl = document.getElementById('item-name-'+i);
+  if (nameEl) {
+    const confirmed = s.confirmedReplacement ? FISH_DB.find(x=>x.id===s.confirmedReplacement) : null;
+    const order = ORDERS.find(x=>x.id===orderId);
+    const originalName = order ? order.items[i].name : '';
+    if (confirmed) {
+      nameEl.innerHTML = `<span class="item-name replaced">${originalName}</span> <span class="item-name-replacement">${confirmed.name}</span>`;
+    } else {
+      nameEl.innerHTML = originalName;
+    }
+  }
+}
+
+function confirmReplacement(orderId, i, fishId) {
+  const s = STATE[orderId][i];
+  // Klikk på allerede bekreftet = angre
+  s.confirmedReplacement = s.confirmedReplacement === fishId ? null : fishId;
+  updateChips(orderId, i);
+  saveState();
 }
 
 // ─── TOOLBAR ────────────────────────────────
