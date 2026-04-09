@@ -539,6 +539,33 @@
     }
     .btn-ghost:hover { border-color: var(--primary); color: var(--primary); }
 
+    .btn-delete {
+      background: none; border: 1px solid #fecaca; border-radius: 8px;
+      padding: 10px 16px; font-size: 13px; font-family: 'DM Sans', sans-serif;
+      font-weight: 500; color: #ef4444; cursor: pointer;
+      display: flex; align-items: center; gap: 6px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-delete:hover { background: #fef2f2; border-color: #ef4444; }
+
+    /* Angre-toast */
+    .undo-toast {
+      position: fixed; bottom: 80px; right: 24px; z-index: 400;
+      background: var(--dark); color: #fff; border-radius: 10px;
+      padding: 12px 16px; display: flex; align-items: center; gap: 12px;
+      font-size: 13px; font-family: 'DM Sans', sans-serif;
+      opacity: 0; transform: translateY(8px);
+      transition: opacity 0.2s, transform 0.2s; pointer-events: none;
+    }
+    .undo-toast.visible { opacity: 1; transform: translateY(0); pointer-events: all; }
+    .undo-btn {
+      background: var(--primary); color: #fff; border: none; border-radius: 6px;
+      padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+      font-family: 'DM Sans', sans-serif; white-space: nowrap;
+    }
+    .undo-btn:hover { background: var(--primary-dk); }
+    .undo-countdown { font-size: 11px; color: #94a3b8; min-width: 14px; }
+
     .btn-print {
       background: var(--dark); color: #fff; border: none; border-radius: 8px;
       padding: 10px 20px; font-size: 13px; font-family: 'DM Sans', sans-serif; font-weight: 600;
@@ -716,6 +743,10 @@
 <div class="bottom-toolbar" id="detailToolbar" style="display:none">
   <span class="toolbar-left" id="toolbarStatus">–</span>
   <div class="toolbar-right">
+    <button class="btn-delete" id="btnDelete" onclick="deleteOrder(currentOrderId)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Slett ordre
+    </button>
     <button class="btn-ghost" id="btnSave">Lagre utkast</button>
     <button class="btn-print" id="btnPrint" disabled>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -729,6 +760,11 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="undo-toast" id="undoToast">
+  Bestilling slettet
+  <span class="undo-countdown" id="undoCountdown">10</span>
+  <button class="undo-btn" onclick="undoDelete()">Angre</button>
+</div>
 
 <script>
 // ─── FISKESØK-DATABASE ──────────────────────
@@ -852,18 +888,79 @@ function filterHiddenOrders() {
   } catch(e) {}
 }
 
+let _lastDeleted = null;
+let _undoTimer = null;
+let _undoCountTimer = null;
+
 function deleteOrder(id) {
   if (!confirm('Slett denne bestillingen?')) return;
+
+  // Lagre for angre
+  _lastDeleted = {
+    order: ORDERS.find(o => o.id === id),
+    state: STATE[id] ? JSON.parse(JSON.stringify(STATE[id])) : null
+  };
+
+  // Fjern fra manuell liste
   try {
     const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
     localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual.filter(o => o.id !== id)));
   } catch(e) {}
+  // Legg til skjult liste
   try {
     const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
     if (!hidden.includes(id)) { hidden.push(id); localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden)); }
   } catch(e) {}
+
   ORDERS = ORDERS.filter(o => o.id !== id);
   currentOrderId = null;
+  renderList();
+  showUndoToast();
+}
+
+function showUndoToast() {
+  if (_undoTimer) { clearTimeout(_undoTimer); clearInterval(_undoCountTimer); }
+  const toast = document.getElementById('undoToast');
+  const cnt   = document.getElementById('undoCountdown');
+  let secs = 10;
+  cnt.textContent = secs;
+  toast.classList.add('visible');
+  _undoCountTimer = setInterval(() => {
+    secs--;
+    cnt.textContent = secs;
+    if (secs <= 0) { clearInterval(_undoCountTimer); }
+  }, 1000);
+  _undoTimer = setTimeout(() => {
+    toast.classList.remove('visible');
+    _lastDeleted = null;
+  }, 10000);
+}
+
+function undoDelete() {
+  if (!_lastDeleted) return;
+  clearTimeout(_undoTimer); clearInterval(_undoCountTimer);
+  _undoTimer = null; _undoCountTimer = null;
+
+  const { order, state } = _lastDeleted;
+  _lastDeleted = null;
+
+  // Fjern fra skjult liste
+  try {
+    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden.filter(id => id !== order.id)));
+  } catch(e) {}
+  // Legg tilbake i manuell liste hvis manuell ordre
+  if (order.id.startsWith('M-')) {
+    try {
+      const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+      if (!manual.find(o => o.id === order.id)) { manual.push(order); localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual)); }
+    } catch(e) {}
+  }
+
+  ORDERS.push(order);
+  if (state) STATE[order.id] = state;
+
+  document.getElementById('undoToast').classList.remove('visible');
   renderList();
 }
 
@@ -1110,10 +1207,6 @@ function renderDetail() {
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="detailProgressBar" style="width:${pct}%"></div>
         </div>
-        <button onclick="deleteOrder('${o.id}')" style="margin-top:6px;background:none;border:1px solid #fecaca;border-radius:6px;padding:5px 10px;font-size:12px;color:#ef4444;cursor:pointer;font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:5px;">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-          Slett bestilling
-        </button>
         </div>
       </div>
     </div>
