@@ -305,10 +305,24 @@
       background: #fafcff;
     }
 
-    .slot-b .day-slot { background: #fdfaff; }
+    .slot-b .day-slot { background: #fdfaff; border-bottom: 1px solid var(--border); }
 
     .slot-a .slot-label { background: #fafcff; border-bottom: 1px solid var(--border); }
-    .slot-b .slot-label { background: #fdfaff; }
+    .slot-b .slot-label { background: #fdfaff; border-bottom: 1px solid var(--border); }
+
+    .slot-other .day-slot { background: #f0fdfb; }
+    .slot-other .slot-label { background: #f0fdfb; }
+
+    .card-slot.other { background: #f0fdfb; color: var(--primary-dk); }
+
+    /* Rediger-felt i modal */
+    .edit-row { display: flex; gap: 10px; margin-top: 12px; }
+    .edit-group { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+    .edit-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .edit-input { height: 36px; border: 1px solid var(--border); border-radius: 7px; padding: 0 10px; font-size: 13px; font-family: 'DM Sans', sans-serif; color: var(--dark); outline: none; transition: border-color 0.15s; }
+    .edit-input:focus { border-color: var(--primary); }
+    .edit-save { margin-top: 8px; background: var(--primary); color: #fff; border: none; border-radius: 7px; padding: 8px 16px; font-size: 13px; font-weight: 600; font-family: 'DM Sans', sans-serif; cursor: pointer; transition: background 0.15s; }
+    .edit-save:hover { background: var(--primary-dk); }
 
     /* ── ORDER CARDS ── */
     .order-card {
@@ -845,6 +859,27 @@ function normalizeOrder(o) {
 // renderWeek er alias for buildCalendar (brukes av butikkbytte)
 function renderWeek() { buildCalendar(); }
 
+function saveOrderEdit(id) {
+  const newDate = document.getElementById('editDate')?.value;
+  const newSlot = document.getElementById('editSlot')?.value?.trim();
+  if (!newDate || !newSlot) return;
+
+  // Oppdater i ORDERS
+  const o = ORDERS.find(x => x.id === id);
+  if (o) { o.delivery = newDate; o.slot = newSlot; }
+
+  // Oppdater i localStorage
+  try {
+    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    const idx = manual.findIndex(x => x.id === id);
+    if (idx !== -1) { manual[idx].delivery = newDate; manual[idx].slot = newSlot; }
+    localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual));
+  } catch(e) {}
+
+  document.getElementById('modalOverlay').classList.remove('open');
+  buildCalendar();
+}
+
 function mergeManualOrders() {
   try {
     const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
@@ -949,6 +984,19 @@ function buildCalendar() {
     html += `</div>`;
   });
 
+  // Andre tidspunkt (Nesttun-timer og andre ikke-standard slots)
+  const hasOther = visible.some(o => o.slot !== 'a' && o.slot !== 'b' && weekDates.has(o.delivery));
+  if (hasOther) {
+    html += `<div class="slot-label slot-other"><span>Henting</span></div>`;
+    days.forEach(d => {
+      const iso = isoDate(d);
+      const orders = visible.filter(o => o.delivery === iso && o.slot !== 'a' && o.slot !== 'b');
+      html += `<div class="day-slot slot-other">`;
+      html += orders.length ? orders.map(renderCard).join('') : `<div class="empty-slot">–</div>`;
+      html += `</div>`;
+    });
+  }
+
   document.getElementById('calGrid').innerHTML = html;
 
   document.querySelectorAll('.order-card').forEach(card => {
@@ -961,7 +1009,9 @@ function renderCard(o) {
   const pct  = confirmationPct(o);
   const conf = confirmedCount(o);
   const total = o.items.length;
-  const slotLabel = o.slot === 'a' ? '13–15' : '15–18';
+  const isStd = o.slot === 'a' || o.slot === 'b';
+  const slotLabel = o.slot === 'a' ? '13–15' : o.slot === 'b' ? '15–18' : o.slot;
+  const slotClass = isStd ? o.slot : 'other';
 
   return `<div class="order-card conf-${cls}" data-id="${o.id}" title="${o.customer} – ${o.id}">
     <div class="card-top">
@@ -973,7 +1023,7 @@ function renderCard(o) {
     </div>
     <div class="card-bottom">
       <span class="card-conf-label">${conf}/${total} bekreftet</span>
-      <span class="card-slot ${o.slot}">${slotLabel}</span>
+      <span class="card-slot ${slotClass}">${slotLabel}</span>
     </div>
   </div>`;
 }
@@ -1018,15 +1068,31 @@ function openModal(id) {
     </div>`;
   }).join('');
 
+  const slotStr = o.slot === 'a' ? '13:00 – 15:00' : o.slot === 'b' ? '15:00 – 18:00' : o.slot;
+  const isManual = o.id && o.id.startsWith('M-');
+
   document.getElementById('modalBody').innerHTML = `
     <div class="modal-row">
       <span class="modal-row-label">Levering</span>
       <span class="modal-row-val">${dateStr}</span>
     </div>
     <div class="modal-row">
-      <span class="modal-row-label">Leveringsvindu</span>
-      <span class="modal-row-val">${o.slot === 'a' ? '13:00 – 15:00' : '15:00 – 18:00'}</span>
+      <span class="modal-row-label">Tidspunkt</span>
+      <span class="modal-row-val">${slotStr}</span>
     </div>
+    ${isManual ? `
+    <div class="edit-row">
+      <div class="edit-group">
+        <label class="edit-label">Endre dato</label>
+        <input class="edit-input" type="date" id="editDate" value="${o.delivery}" />
+      </div>
+      <div class="edit-group">
+        <label class="edit-label">Endre tidspunkt</label>
+        <input class="edit-input" type="text" id="editSlot" value="${o.slot}" placeholder="eks. a, b, 10:00" />
+      </div>
+    </div>
+    <button class="edit-save" onclick="saveOrderEdit('${o.id}')">Lagre endringer</button>
+    ` : ''}
     <div class="conf-block">
       <div class="conf-block-header">
         <span class="conf-block-title">Varer bekreftet (${conf}/${total})</span>
