@@ -442,6 +442,12 @@
     .note-textarea { width: 100%; min-height: 80px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-size: 13px; font-family: 'DM Sans', sans-serif; color: var(--dark); resize: vertical; outline: none; transition: border-color 0.15s; background: #fff; }
     .note-textarea:focus { border-color: var(--primary); }
 
+    /* Per-item comment */
+    .item-comment-row { padding: 0 18px 14px; }
+    .item-comment-input { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px; font-size: 12px; font-family: 'DM Sans', sans-serif; color: var(--dark); outline: none; transition: border-color 0.15s; background: #fafafa; resize: none; min-height: 34px; }
+    .item-comment-input:focus { border-color: var(--primary); background: #fff; }
+    .item-comment-input::placeholder { color: #94a3b8; }
+
     .field-check { display: flex; align-items: center; gap: 5px; font-size: 11px; font-family: 'DM Mono', monospace; margin-top: 3px; height: 16px; }
     .field-check.ok    { color: var(--avail-ok); }
     .field-check.empty { color: transparent; }
@@ -776,7 +782,7 @@ const STATE = {};
 function initState(orders) {
   orders.forEach(o => {
     if (!STATE[o.id]) {
-      STATE[o.id] = o.items.map(() => ({ weight:'', expiry:'', weightUnit:'g', avail:null, replacements:[], confirmedReplacement:null }));
+      STATE[o.id] = o.items.map(() => ({ weight:'', expiry:'', weightUnit:'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' }));
     }
   });
 }
@@ -1161,6 +1167,12 @@ function renderItemCard(item, i, s) {
       <div class="search-results" id="results-${i}"></div>
       <div class="selected-replacements" id="chips-${i}">${selectedChips}</div>
     </div>
+
+    <div class="item-comment-row">
+      <textarea class="item-comment-input" id="item-comment-${i}" rows="1"
+        placeholder="Merknad til denne varen…"
+        oninput="onItemComment('${currentOrderId}',${i},this.value)">${s.itemComment||''}</textarea>
+    </div>
   </div>`;
 }
 
@@ -1178,8 +1190,11 @@ function restoreState() {
     Object.keys(saved).forEach(id => {
       if (STATE[id]) {
         STATE[id] = saved[id];
-        // Bakoverkompatibilitet: sett weightUnit hvis mangler
-        STATE[id].forEach(item => { if (!item.weightUnit) item.weightUnit = 'g'; });
+        // Bakoverkompatibilitet
+        STATE[id].forEach(item => {
+          if (!item.weightUnit) item.weightUnit = 'g';
+          if (item.itemComment === undefined) item.itemComment = '';
+        });
       }
     });
   } catch(e) {}
@@ -1196,6 +1211,11 @@ function restoreNotes() {
 function onNoteChange(orderId, val) {
   ORDER_NOTES[orderId] = val;
   saveNotes();
+}
+
+function onItemComment(orderId, i, val) {
+  STATE[orderId][i].itemComment = val;
+  saveState();
 }
 
 // ─── STATE HANDLERS ──────────────────────────
