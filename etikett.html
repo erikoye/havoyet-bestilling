@@ -71,78 +71,176 @@
     }
 
     .label-card {
-      background: var(--surface); border-radius: 12px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      background: #0b0b0b; border-radius: 12px;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06);
       overflow: hidden; display: flex; flex-direction: column;
     }
     .label-card-header {
-      padding: 9px 14px; background: #f8fafc;
-      border-bottom: 1px solid var(--border);
-      font-size: 11px; color: var(--muted); font-weight: 500;
+      padding: 8px 14px; background: #111;
+      border-bottom: 1px solid #1f1f1f;
+      font-size: 11px; color: #4b5563; font-weight: 500;
     }
 
     /* ═══════════════════════════════════════
-       ETIKETT INNHOLD
-       Fysisk: 50 mm bred × 103 mm høy (stående)
+       PREMIUM ETIKETT — 50 mm × 103 mm
+       Mørk, eksklusiv Havøyet-design
     ═══════════════════════════════════════ */
     .label {
       width: 50mm;
       height: 103mm;
       overflow: hidden;
-      background: #fff;
-      font-family: Arial, Helvetica, sans-serif;
-      font-size: 5.8pt;
-      line-height: 1.35;
-      color: #000;
+      background: #0b0b0b;
+      font-family: 'DM Sans', Arial, sans-serif;
+      font-size: 5.4pt;
+      line-height: 1.4;
+      color: #c8cdd6;
       display: flex;
       flex-direction: column;
+      letter-spacing: 0.01em;
     }
 
-    /* ── LOGO-BANNER (mørk topp) ── */
-    .lbl-logo-band {
-      background: #0f172a;
+    /* ── LOGO-SEKSJON ── */
+    .lbl-logo-section {
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 2mm 3mm 1.8mm;
+      padding: 3mm 4mm 2.5mm;
       flex-shrink: 0;
     }
-    .lbl-logo-band img {
-      width: 38mm;
+    .lbl-logo-section img {
+      width: 36mm;
       height: auto;
       display: block;
     }
 
+    /* ── TYNN DIVIDER ── */
+    .lbl-hr {
+      border: none;
+      border-top: 0.3pt solid #2a2a2a;
+      margin: 0 3.5mm;
+      flex-shrink: 0;
+    }
+    .lbl-hr-teal {
+      border: none;
+      border-top: 0.5pt solid #0d9488;
+      margin: 0 3.5mm;
+      flex-shrink: 0;
+      opacity: 0.6;
+    }
+
     /* ── BODY ── */
     .lbl-body {
-      padding: 2mm 3mm 2mm;
+      padding: 1.8mm 3.5mm 2mm;
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      gap: 0;
     }
 
-    .lbl-hr { border: none; border-top: 0.4pt solid #000; margin: 1mm 0; }
+    /* Bestillings-linje øverst */
     .lbl-order {
-      text-align: center; font-size: 5.4pt; line-height: 1.5; margin-bottom: 0.5mm;
+      font-size: 4.8pt;
+      color: #4a5568;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 1.5mm;
+      text-align: center;
     }
+
+    /* Produktnavn */
     .lbl-product {
-      text-align: right; font-family: Arial Black, Arial, sans-serif;
-      font-size: 9.5pt; font-weight: 900; line-height: 1.15;
-      margin: 0.8mm 0 0.5mm;
+      font-family: 'Montserrat', Arial, sans-serif;
+      font-size: 10pt;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1.15;
+      margin-bottom: 0.8mm;
+      text-align: center;
     }
-    .lbl-row { margin-bottom: 0.6mm; font-size: 5.4pt; }
-    .lbl-key { font-weight: 700; }
-    .lbl-center { text-align: center; margin-bottom: 0.6mm; }
-    .lbl-nutr-title { font-weight: 700; font-size: 5.4pt; margin-bottom: 0.4mm; }
-    .lbl-nutr-table { width: 100%; font-size: 4.8pt; border-collapse: collapse; }
-    .lbl-nutr-table td { padding: 0.1mm 0; vertical-align: bottom; }
-    .lbl-nutr-table .n-name { width: 72%; }
-    .lbl-nutr-table .n-val  { text-align: right; white-space: nowrap; }
-    .lbl-nutr-table .n-sub  { padding-left: 2mm; }
+
+    /* Undertekst */
+    .lbl-subtitle {
+      font-size: 4.8pt;
+      color: #0d9488;
+      text-align: center;
+      letter-spacing: 0.05em;
+      margin-bottom: 1.8mm;
+      font-style: italic;
+    }
+
+    /* Info-rader */
+    .lbl-info-block { margin: 1.5mm 0; }
+    .lbl-info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 0.5mm 0;
+      font-size: 5.2pt;
+    }
+    .lbl-info-row .lbl-key {
+      color: #6b7280;
+      font-weight: 400;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 4.6pt;
+    }
+    .lbl-info-row .lbl-val {
+      color: #e2e8f0;
+      font-weight: 500;
+      text-align: right;
+    }
+
+    /* Ingredienser */
+    .lbl-ing-block { margin: 0.5mm 0 1mm; }
+    .lbl-ing-title {
+      font-size: 4.5pt;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 0.4mm;
+    }
+    .lbl-ing-text {
+      font-size: 4.7pt;
+      color: #9ca3af;
+      line-height: 1.45;
+    }
+    .lbl-ing-allergy {
+      font-size: 4.5pt;
+      color: #6b7280;
+      margin-top: 0.4mm;
+    }
+    .lbl-ing-allergy strong { color: #9ca3af; }
+
+    /* Næringstabell */
+    .lbl-nutr-title {
+      font-size: 4.5pt;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 0.5mm;
+    }
+    .lbl-nutr-table {
+      width: 100%;
+      font-size: 4.6pt;
+      border-collapse: collapse;
+    }
+    .lbl-nutr-table td { padding: 0.15mm 0; vertical-align: bottom; }
+    .lbl-nutr-table .n-name { width: 68%; color: #9ca3af; }
+    .lbl-nutr-table .n-val  { text-align: right; color: #d1d5db; white-space: nowrap; }
+    .lbl-nutr-table .n-sub  { padding-left: 2mm; color: #6b7280; }
+    .lbl-nutr-table tr.n-main td { color: #c8cdd6; }
+
+    /* Footer */
     .lbl-footer {
-      font-size: 4.3pt; margin-top: auto; padding-top: 1mm;
-      border-top: 0.4pt solid #000;
+      font-size: 4pt;
+      color: #374151;
+      margin-top: auto;
+      padding-top: 1mm;
+      text-align: center;
+      letter-spacing: 0.04em;
     }
 
     /* ── PRINT ── */
@@ -281,62 +379,86 @@ function fmtDate(iso) {
 }
 
 function nutrRow(label, val, sub) {
-  const dots = '··················';
-  const cls = sub ? ' class="n-sub"' : '';
-  return `<tr><td class="n-name"${cls}>${label}<span style="color:#aaa;letter-spacing:0.5px"> ${dots}</span></td><td class="n-val">${val}</td></tr>`;
+  const subCls = sub ? ' class="n-sub"' : ' class="n-main"';
+  const rowCls = sub ? '' : ' class="n-main"';
+  return `<tr${rowCls}><td class="n-name${sub?' n-sub':''}">${label}</td><td class="n-val">${val}</td></tr>`;
+}
+
+// Lookup the FAO capture area from product name
+function faoArea(name) {
+  const n = name.toLowerCase();
+  if (n.includes('atlanterhav') || n.includes('torsk') || n.includes('sei') || n.includes('kveite') || n.includes('blåkveite') || n.includes('hyse') || n.includes('laks') || n.includes('ørret')) return 'Nordøst-Atlanteren (FAO\u00a027)';
+  if (n.includes('krabbe') || n.includes('reker') || n.includes('hummer')) return 'Nordøst-Atlanteren (FAO\u00a027)';
+  return 'Nordøst-Atlanteren (FAO\u00a027)';
 }
 
 function buildLabel(order, name, weight, expiry) {
   const n  = lookupNutr(name);
   const cleanName = name.replace(/\s*\([^)]*\)/g,'').trim();
   const ordNum = order.id.startsWith('#') ? order.id : '#' + order.id.replace(/^M-/,'');
+  const area = faoArea(cleanName);
 
   const sugarRow = n.sugar != null
-    ? nutrRow('– herav sukkerarter', `${fmtN(n.sugar)} g`, true)
+    ? nutrRow('– herav sukkerarter', `${fmtN(n.sugar)}\u00a0g`, true)
     : '';
 
   return `<div class="label">
-  <div class="lbl-logo-band">
+
+  <div class="lbl-logo-section">
     <img src="Color logo - no background.png" alt="Havøyet">
   </div>
+
+  <div class="lbl-hr-teal"></div>
+
   <div class="lbl-body">
-    <div class="lbl-order">
-      Bestilling ${ordNum} &nbsp;·&nbsp; <strong>${order.customer}</strong>${order.phone ? '&nbsp;·&nbsp;'+order.phone : ''}
-    </div>
-    <hr class="lbl-hr">
+
+    <div class="lbl-order">Bestilling\u00a0${ordNum} &nbsp;·&nbsp; ${order.customer}</div>
+
     <div class="lbl-product">${cleanName}</div>
-    <hr class="lbl-hr">
-    <div class="lbl-row"><span class="lbl-key">INGREDIENSER:</span> ${n.ing}</div>
-    <div class="lbl-row" style="margin-top:0.4mm"><span class="lbl-key">Allergener:</span> ${n.all}</div>
-    <hr class="lbl-hr">
-    <div style="display:flex;gap:2mm;margin-bottom:0.6mm">
-      <div style="flex:1;text-align:center">
-        <div class="lbl-key" style="font-size:5pt">NETTOINNHOLD</div>
-        <div style="font-size:7pt;font-weight:700">${weight ? weight + ' g' : '–'}</div>
+    <div class="lbl-subtitle">Fanget i havet\u00a0– ${area}</div>
+
+    <div class="lbl-hr"></div>
+
+    <div class="lbl-info-block">
+      <div class="lbl-info-row">
+        <span class="lbl-key">Nettovekt</span>
+        <span class="lbl-val">${weight ? weight + '\u00a0g' : '–'}</span>
       </div>
-      <div style="width:0.4pt;background:#000;flex-shrink:0"></div>
-      <div style="flex:1;text-align:center">
-        <div class="lbl-key" style="font-size:5pt">HOLDBAR TIL</div>
-        <div style="font-size:7pt;font-weight:700">${fmtDate(expiry)}</div>
+      <div class="lbl-info-row">
+        <span class="lbl-key">Siste forbruksdag</span>
+        <span class="lbl-val">${fmtDate(expiry)}</span>
       </div>
-      <div style="width:0.4pt;background:#000;flex-shrink:0"></div>
-      <div style="flex:1;text-align:center">
-        <div class="lbl-key" style="font-size:5pt">OPPBEVARING</div>
-        <div style="font-size:5pt">${n.opb}</div>
+      <div class="lbl-info-row">
+        <span class="lbl-key">Oppbevares ved</span>
+        <span class="lbl-val">${n.opb}</span>
       </div>
     </div>
-    <hr class="lbl-hr">
-    <div class="lbl-nutr-title">NÆRINGSINNHOLD (per 100 g)</div>
+
+    <div class="lbl-hr"></div>
+
+    <div class="lbl-ing-block">
+      <div class="lbl-ing-title">Ingredienser</div>
+      <div class="lbl-ing-text">${n.ing}</div>
+      <div class="lbl-ing-allergy">Allergener: <strong>${n.all}</strong></div>
+    </div>
+
+    <div class="lbl-hr"></div>
+
+    <div class="lbl-nutr-title">Næringsinnhold per 100\u00a0g</div>
     <table class="lbl-nutr-table">
-      ${nutrRow('Energi', `${n.kj} kJ / ${n.kcal} kcal`)}
-      ${nutrRow('Fett', `${fmtN(n.fett)} g`)}
-      ${nutrRow('– herav mettede fettsyrer', `${fmtN(n.mf)} g`, true)}
-      ${nutrRow('Karbohydrater', `${fmtN(n.ko)} g`)}
+      ${nutrRow('Energi', `${n.kj}\u00a0kJ\u00a0/\u00a0${n.kcal}\u00a0kcal`)}
+      ${nutrRow('Fett', `${fmtN(n.fett)}\u00a0g`)}
+      ${nutrRow('– mettede fettsyrer', `${fmtN(n.mf)}\u00a0g`, true)}
+      ${nutrRow('Karbohydrater', `${fmtN(n.ko)}\u00a0g`)}
       ${sugarRow}
-      ${nutrRow('Protein', `${fmtN(n.prot)} g`)}
-      ${nutrRow('Salt', `${fmtN(n.salt)} g`)}
+      ${nutrRow('Protein', `${fmtN(n.prot)}\u00a0g`)}
+      ${nutrRow('Salt', `${fmtN(n.salt)}\u00a0g`)}
     </table>
-    <div class="lbl-footer">Havøyet AS · Nesttunvegen 96, 5221 Nesttun · havoyet.no</div>
+
+    <div class="lbl-footer">
+      Pakket av: Havøyet AS, Bergen &nbsp;·&nbsp; havoyet.no
+    </div>
+
   </div>
 </div>`;
 }
