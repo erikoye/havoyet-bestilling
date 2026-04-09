@@ -425,27 +425,6 @@ function buildLabel(order, name, weight, expiry) {
       </div>
     </div>
 
-    <div class="lbl-hr"></div>
-
-    <div class="lbl-ing-block">
-      <div class="lbl-ing-title">Ingredienser</div>
-      <div class="lbl-ing-text">${n.ing}</div>
-      <div class="lbl-ing-allergy">Allergener: <strong>${n.all}</strong></div>
-    </div>
-
-    <div class="lbl-hr"></div>
-
-    <div class="lbl-nutr-title">Næringsinnhold per 100\u00a0g</div>
-    <table class="lbl-nutr-table">
-      ${nutrRow('Energi', `${n.kj}\u00a0kJ\u00a0/\u00a0${n.kcal}\u00a0kcal`)}
-      ${nutrRow('Fett', `${fmtN(n.fett)}\u00a0g`)}
-      ${nutrRow('– mettede fettsyrer', `${fmtN(n.mf)}\u00a0g`, true)}
-      ${nutrRow('Karbohydrater', `${fmtN(n.ko)}\u00a0g`)}
-      ${sugarRow}
-      ${nutrRow('Protein', `${fmtN(n.prot)}\u00a0g`)}
-      ${nutrRow('Salt', `${fmtN(n.salt)}\u00a0g`)}
-    </table>
-
     <div class="lbl-footer">
       Pakket av: Havøyet AS, Bergen &nbsp;·&nbsp; havoyet.no
     </div>
