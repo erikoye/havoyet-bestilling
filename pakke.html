@@ -940,6 +940,13 @@ function filterHiddenOrders() {
   } catch(e) {}
 }
 
+function applyOverrides() {
+  try {
+    const ov = JSON.parse(localStorage.getItem('havøyet_order_overrides') || '{}');
+    ORDERS.forEach(o => { if (ov[o.id]) { o.delivery = ov[o.id].delivery; o.slot = ov[o.id].slot; } });
+  } catch(e) {}
+}
+
 let _lastDeleted = null;
 let _undoTimer = null;
 let _undoCountTimer = null;
@@ -1041,6 +1048,7 @@ async function loadFromFlask() {
       ORDERS = data.orders.map(normalizeOrder);
       mergeManualOrders();
       filterHiddenOrders();
+      applyOverrides();
       initState(ORDERS);
       restoreState(); restoreNotes();
       localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
@@ -1065,6 +1073,7 @@ async function loadFromFlask() {
       ORDERS = data.map(normalizeOrder);
       mergeManualOrders();
       filterHiddenOrders();
+      applyOverrides();
       initState(ORDERS);
       restoreState(); restoreNotes();
       setBanner(false, `Flask ikke tilgjengelig – viser sist lagrede bestillinger. Start app.py for å oppdatere.`);
@@ -1545,12 +1554,7 @@ function updateToolbar() {
 
 // ─── PRINT & SAVE ───────────────────────────
 document.getElementById('btnPrint').addEventListener('click', () => {
-  const o = ORDERS.find(x=>x.id===currentOrderId);
-  const s = STATE[currentOrderId];
-  const ready = o.items.filter((_,i)=>s[i].avail==='ok'&&s[i].weight&&s[i].expiry).length;
-  if (!ready) return;
-  showToast(`Sender ${ready} etikett${ready>1?'er':''} til QL-1100c…`);
-  setTimeout(()=>showToast('✓ Etiketter skrevet ut'), 1800);
+  window.location.href = 'etikett.html?ordre=' + encodeURIComponent(currentOrderId);
 });
 
 document.getElementById('btnSave').addEventListener('click', () => {
