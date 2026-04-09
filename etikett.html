@@ -71,32 +71,31 @@
     }
 
     .label-card {
-      background: #0b0b0b; border-radius: 12px;
-      box-shadow: 0 4px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06);
+      background: #fff; border-radius: 12px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
       overflow: hidden; display: flex; flex-direction: column;
     }
     .label-card-header {
-      padding: 8px 14px; background: #111;
-      border-bottom: 1px solid #1f1f1f;
-      font-size: 11px; color: #4b5563; font-weight: 500;
+      padding: 8px 14px; background: #f8fafc;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 11px; color: #94a3b8; font-weight: 500;
     }
 
     /* ═══════════════════════════════════════
        PREMIUM ETIKETT — 50 mm × 103 mm
-       Mørk, eksklusiv Havøyet-design
+       Hvit, minimalistisk, rent svart/hvitt
     ═══════════════════════════════════════ */
     .label {
       width: 50mm;
       height: 103mm;
       overflow: hidden;
-      background: #0b0b0b;
+      background: #fff;
       font-family: 'DM Sans', Arial, sans-serif;
       font-size: 5.4pt;
       line-height: 1.4;
-      color: #c8cdd6;
+      color: #111;
       display: flex;
       flex-direction: column;
-      letter-spacing: 0.01em;
     }
 
     /* ── LOGO-SEKSJON ── */
@@ -104,139 +103,131 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 3mm 4mm 2.5mm;
+      padding: 3mm 4mm 2mm;
       flex-shrink: 0;
     }
     .lbl-logo-section img {
-      width: 36mm;
+      width: 34mm;
       height: auto;
       display: block;
+      /* Gjør logoen 100% svart — alle piksler → svart, transparent forblir transparent */
+      filter: brightness(0);
     }
 
-    /* ── TYNN DIVIDER ── */
+    /* ── DIVIDER ── */
     .lbl-hr {
       border: none;
-      border-top: 0.3pt solid #2a2a2a;
-      margin: 0 3.5mm;
+      border-top: 0.4pt solid #111;
+      margin: 0 3mm;
       flex-shrink: 0;
     }
-    .lbl-hr-teal {
+    .lbl-hr-thin {
       border: none;
-      border-top: 0.5pt solid #0d9488;
-      margin: 0 3.5mm;
+      border-top: 0.3pt solid #ccc;
+      margin: 0 3mm;
       flex-shrink: 0;
-      opacity: 0.6;
     }
 
     /* ── BODY ── */
     .lbl-body {
-      padding: 1.8mm 3.5mm 2mm;
+      padding: 1.5mm 3.5mm 2mm;
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      gap: 0;
     }
 
-    /* Bestillings-linje øverst */
     .lbl-order {
-      font-size: 4.8pt;
-      color: #4a5568;
-      letter-spacing: 0.05em;
+      font-size: 4.6pt;
+      color: #888;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
-      margin-bottom: 1.5mm;
+      margin-bottom: 1.2mm;
       text-align: center;
     }
 
-    /* Produktnavn */
     .lbl-product {
       font-family: 'Montserrat', Arial, sans-serif;
-      font-size: 10pt;
+      font-size: 9.5pt;
       font-weight: 700;
-      color: #ffffff;
-      letter-spacing: 0.04em;
+      color: #000;
+      letter-spacing: 0.05em;
       text-transform: uppercase;
       line-height: 1.15;
-      margin-bottom: 0.8mm;
+      margin-bottom: 0.6mm;
       text-align: center;
     }
 
-    /* Undertekst */
     .lbl-subtitle {
-      font-size: 4.8pt;
-      color: #0d9488;
+      font-size: 4.6pt;
+      color: #555;
       text-align: center;
-      letter-spacing: 0.05em;
-      margin-bottom: 1.8mm;
+      letter-spacing: 0.03em;
+      margin-bottom: 1.6mm;
       font-style: italic;
     }
 
-    /* Info-rader */
-    .lbl-info-block { margin: 1.5mm 0; }
+    .lbl-info-block { margin: 1.2mm 0; }
     .lbl-info-row {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      padding: 0.5mm 0;
-      font-size: 5.2pt;
+      padding: 0.45mm 0;
     }
     .lbl-info-row .lbl-key {
-      color: #6b7280;
+      color: #888;
       font-weight: 400;
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      font-size: 4.6pt;
+      font-size: 4.4pt;
     }
     .lbl-info-row .lbl-val {
-      color: #e2e8f0;
-      font-weight: 500;
+      color: #000;
+      font-weight: 600;
+      font-size: 5.2pt;
       text-align: right;
     }
 
-    /* Ingredienser */
-    .lbl-ing-block { margin: 0.5mm 0 1mm; }
+    .lbl-ing-block { margin: 0.5mm 0 0.8mm; }
     .lbl-ing-title {
-      font-size: 4.5pt;
-      color: #6b7280;
+      font-size: 4.4pt;
+      color: #888;
       text-transform: uppercase;
       letter-spacing: 0.07em;
       margin-bottom: 0.4mm;
     }
     .lbl-ing-text {
-      font-size: 4.7pt;
-      color: #9ca3af;
+      font-size: 4.6pt;
+      color: #333;
       line-height: 1.45;
     }
     .lbl-ing-allergy {
-      font-size: 4.5pt;
-      color: #6b7280;
+      font-size: 4.4pt;
+      color: #555;
       margin-top: 0.4mm;
     }
-    .lbl-ing-allergy strong { color: #9ca3af; }
+    .lbl-ing-allergy strong { color: #000; font-weight: 700; }
 
-    /* Næringstabell */
     .lbl-nutr-title {
-      font-size: 4.5pt;
-      color: #6b7280;
+      font-size: 4.4pt;
+      color: #888;
       text-transform: uppercase;
       letter-spacing: 0.07em;
-      margin-bottom: 0.5mm;
+      margin-bottom: 0.4mm;
     }
     .lbl-nutr-table {
       width: 100%;
       font-size: 4.6pt;
       border-collapse: collapse;
     }
-    .lbl-nutr-table td { padding: 0.15mm 0; vertical-align: bottom; }
-    .lbl-nutr-table .n-name { width: 68%; color: #9ca3af; }
-    .lbl-nutr-table .n-val  { text-align: right; color: #d1d5db; white-space: nowrap; }
-    .lbl-nutr-table .n-sub  { padding-left: 2mm; color: #6b7280; }
-    .lbl-nutr-table tr.n-main td { color: #c8cdd6; }
+    .lbl-nutr-table td { padding: 0.12mm 0; vertical-align: bottom; }
+    .lbl-nutr-table .n-name { width: 68%; color: #333; }
+    .lbl-nutr-table .n-val  { text-align: right; color: #000; white-space: nowrap; font-weight: 500; }
+    .lbl-nutr-table .n-sub  { padding-left: 2mm; color: #666; font-size: 4.2pt; }
 
-    /* Footer */
     .lbl-footer {
-      font-size: 4pt;
-      color: #374151;
+      font-size: 3.9pt;
+      color: #999;
       margin-top: auto;
       padding-top: 1mm;
       text-align: center;
@@ -408,7 +399,7 @@ function buildLabel(order, name, weight, expiry) {
     <img src="Color logo - no background.png" alt="Havøyet">
   </div>
 
-  <div class="lbl-hr-teal"></div>
+  <div class="lbl-hr"></div>
 
   <div class="lbl-body">
 
