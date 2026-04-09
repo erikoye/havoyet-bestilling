@@ -822,7 +822,7 @@ async function loadFromFlask() {
       const targetId = params.get('ordre');
       if (targetId) {
         const o = ORDERS.find(x => x.id === targetId);
-        if (o) { currentOrderId = targetId; renderDetail(); return; }
+        if (o) { openOrder(targetId); return; }
       }
       renderList();
       return;
@@ -841,6 +841,14 @@ async function loadFromFlask() {
     } catch(e) {}
   } else {
     setBanner(false, `Flask ikke kjørende. Start app.py for å hente Shopify-bestillinger.`);
+  }
+
+  // Sjekk om en spesifikk ordre skal åpnes direkte
+  const params = new URLSearchParams(location.search);
+  const targetId = params.get('ordre');
+  if (targetId) {
+    const o = ORDERS.find(x => x.id === targetId);
+    if (o) { openOrder(targetId); return; }
   }
   renderList();
 }
