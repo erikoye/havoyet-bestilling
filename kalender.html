@@ -840,6 +840,14 @@ function normalizeOrder(o) {
   };
 }
 
+function mergeManualOrders() {
+  try {
+    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    const existingIds = new Set(ORDERS.map(o => o.id));
+    manual.forEach(o => { if (!existingIds.has(o.id)) ORDERS.push(o); });
+  } catch(e) {}
+}
+
 async function loadFromFlask() {
   try {
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
@@ -849,6 +857,7 @@ async function loadFromFlask() {
       ORDERS = data.orders.map(normalizeOrder);
     }
   } catch(e) { /* backend ikke oppe — vis tom kalender */ }
+  mergeManualOrders();
   buildCalendar();
 }
 

@@ -837,6 +837,14 @@ function setBanner(ok, msg) {
   b.innerHTML = `<span style="font-size:16px">${ok ? '🟢' : '🟡'}</span> ${msg}`;
 }
 
+function mergeManualOrders() {
+  try {
+    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    const existingIds = new Set(ORDERS.map(o => o.id));
+    manual.forEach(o => { if (!existingIds.has(o.id)) ORDERS.push(o); });
+  } catch(e) {}
+}
+
 async function loadFromFlask() {
   try {
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
@@ -844,6 +852,7 @@ async function loadFromFlask() {
     const data = await r.json();
     if (data.orders && data.orders.length > 0) {
       ORDERS = data.orders.map(normalizeOrder);
+      mergeManualOrders();
       initState(ORDERS);
       restoreState(); restoreNotes();
       localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
@@ -866,6 +875,7 @@ async function loadFromFlask() {
     try {
       const data = JSON.parse(cached);
       ORDERS = data.map(normalizeOrder);
+      mergeManualOrders();
       initState(ORDERS);
       restoreState(); restoreNotes();
       setBanner(false, `Flask ikke tilgjengelig – viser sist lagrede bestillinger. Start app.py for å oppdatere.`);
