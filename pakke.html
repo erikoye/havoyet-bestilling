@@ -548,6 +548,44 @@
     }
     .btn-delete:hover { background: #fef2f2; border-color: #ef4444; }
 
+    /* Slett-bekreftelse modal */
+    .confirm-overlay {
+      position: fixed; inset: 0; background: rgba(15,23,42,0.5);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 500; opacity: 0; pointer-events: none;
+      transition: opacity 0.15s;
+    }
+    .confirm-overlay.visible { opacity: 1; pointer-events: all; }
+    .confirm-modal {
+      background: var(--surface); border-radius: 14px;
+      padding: 28px 28px 22px; max-width: 380px; width: calc(100% - 48px);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+      transform: translateY(8px); transition: transform 0.15s;
+    }
+    .confirm-overlay.visible .confirm-modal { transform: translateY(0); }
+    .confirm-modal-icon {
+      width: 44px; height: 44px; border-radius: 50%;
+      background: #fef2f2; display: flex; align-items: center; justify-content: center;
+      margin-bottom: 14px;
+    }
+    .confirm-modal-title { font-size: 16px; font-weight: 600; color: var(--dark); margin-bottom: 6px; }
+    .confirm-modal-sub   { font-size: 13px; color: var(--muted); margin-bottom: 22px; line-height: 1.5; }
+    .confirm-modal-btns  { display: flex; gap: 8px; justify-content: flex-end; }
+    .confirm-cancel {
+      background: none; border: 1px solid var(--border); border-radius: 8px;
+      padding: 9px 18px; font-size: 13px; font-weight: 500;
+      font-family: 'DM Sans', sans-serif; color: var(--dark); cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .confirm-cancel:hover { border-color: var(--primary); color: var(--primary); }
+    .confirm-ok {
+      background: #ef4444; border: none; border-radius: 8px;
+      padding: 9px 18px; font-size: 13px; font-weight: 600;
+      font-family: 'DM Sans', sans-serif; color: #fff; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .confirm-ok:hover { background: #dc2626; }
+
     /* Angre-toast */
     .undo-toast {
       position: fixed; bottom: 80px; right: 24px; z-index: 400;
@@ -760,6 +798,20 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-modal">
+    <div class="confirm-modal-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+    </div>
+    <div class="confirm-modal-title">Slett bestilling?</div>
+    <div class="confirm-modal-sub" id="confirmModalSub">Bestillingen vil bli fjernet. Du kan angre i 10 sekunder etter sletting.</div>
+    <div class="confirm-modal-btns">
+      <button class="confirm-cancel" onclick="cancelDelete()">Avbryt</button>
+      <button class="confirm-ok" onclick="confirmDelete()">Bekreft sletting</button>
+    </div>
+  </div>
+</div>
+
 <div class="undo-toast" id="undoToast">
   Bestilling slettet
   <span class="undo-countdown" id="undoCountdown">10</span>
@@ -891,9 +943,26 @@ function filterHiddenOrders() {
 let _lastDeleted = null;
 let _undoTimer = null;
 let _undoCountTimer = null;
+let _pendingDeleteId = null;
 
 function deleteOrder(id) {
-  if (!confirm('Slett denne bestillingen?')) return;
+  _pendingDeleteId = id;
+  const o = ORDERS.find(x => x.id === id);
+  if (o) document.getElementById('confirmModalSub').textContent =
+    `«${o.customer}» vil bli fjernet. Du kan angre i 10 sekunder etter sletting.`;
+  document.getElementById('confirmOverlay').classList.add('visible');
+}
+
+function cancelDelete() {
+  _pendingDeleteId = null;
+  document.getElementById('confirmOverlay').classList.remove('visible');
+}
+
+function confirmDelete() {
+  const id = _pendingDeleteId;
+  _pendingDeleteId = null;
+  document.getElementById('confirmOverlay').classList.remove('visible');
+  if (!id) return;
 
   // Lagre for angre
   _lastDeleted = {
@@ -913,8 +982,7 @@ function deleteOrder(id) {
   } catch(e) {}
 
   ORDERS = ORDERS.filter(o => o.id !== id);
-  currentOrderId = null;
-  renderList();
+  showList();
   showUndoToast();
 }
 
