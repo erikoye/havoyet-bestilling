@@ -823,6 +823,14 @@ function formatDate(iso){
 }
 
 // ─── FLASK-HENTING ────────────────────────────
+function mergeManualOrders() {
+  try {
+    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    const existingIds = new Set(ORDERS.map(o => o.id));
+    manual.forEach(o => { if (!existingIds.has(o.id)) ORDERS.push(o); });
+  } catch(e) {}
+}
+
 async function loadFromFlask(){
   try {
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
@@ -839,6 +847,7 @@ async function loadFromFlask(){
     // Backend ikke oppe — bruk mock
     updateSyncBadge(false, null, 'Flask-backend ikke nådd (bruker demodata)');
   }
+  mergeManualOrders();
   renderAll();
 }
 
@@ -908,6 +917,7 @@ updateClock(); setInterval(updateClock,1000);
 
 // ─── OPPSTART ─────────────────────────────────
 initStoreSwitcher();
+mergeManualOrders();  // last manuelle bestillinger umiddelbart
 renderAll();          // vis mock-data umiddelbart
 loadFromFlask();      // erstatt med live-data om Flask er oppe
 setInterval(loadFromFlask, 5 * 60 * 1000);  // poll hvert 5 min
