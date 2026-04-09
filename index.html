@@ -767,12 +767,22 @@ function initStoreSwitcher() {
 }
 
 // ─── PRIORITET ───────────────────────────────
-function confPct(o){
-  if(!o.items||!o.items.length) return 0;
-  return Math.round(o.items.filter(i=>i.weight!==null&&i.expiry!==null).length/o.items.length*100);
+function getPackingState() {
+  try { return JSON.parse(localStorage.getItem('havøyet_state') || '{}'); } catch(e) { return {}; }
+}
+function confPct(o) {
+  if (!o.items || !o.items.length) return 0;
+  const s = getPackingState()[o.id];
+  if (s) return Math.round(s.filter(i => i.avail === 'ok' && i.weight && i.expiry).length / o.items.length * 100);
+  return Math.round(o.items.filter(i => i.weight != null && i.expiry != null).length / o.items.length * 100);
 }
 function confClass(o){ const p=confPct(o); return p===100?'green':p>=33?'orange':'red'; }
-function confCount(o){ return (o.items||[]).filter(i=>i.weight!==null&&i.expiry!==null).length; }
+function confCount(o) {
+  if (!o.items || !o.items.length) return 0;
+  const s = getPackingState()[o.id];
+  if (s) return s.filter(i => i.avail === 'ok' && i.weight && i.expiry).length;
+  return o.items.filter(i => i.weight != null && i.expiry != null).length;
+}
 
 // ─── RENDER ───────────────────────────────────
 function slotCount(arr,s){ return arr.filter(o=>o.slot===s).length; }
@@ -1069,7 +1079,7 @@ function saveNewOrder() {
       if (q && note)    label = `${n} (${q} – ${note})`;
       else if (q)       label = `${n} (${q})`;
       else if (note)    label = `${n} – ${note}`;
-      items.push({ name: label, qty: 1 });
+      items.push({ name: label, qty: 1, weight: null, expiry: null });
     }
   }
   if (items.length === 0) { alert('Legg til minst én vare.'); return; }
