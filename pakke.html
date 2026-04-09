@@ -845,6 +845,28 @@ function mergeManualOrders() {
   } catch(e) {}
 }
 
+function filterHiddenOrders() {
+  try {
+    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    if (hidden.length) ORDERS = ORDERS.filter(o => !hidden.includes(o.id));
+  } catch(e) {}
+}
+
+function deleteOrder(id) {
+  if (!confirm('Slett denne bestillingen?')) return;
+  try {
+    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual.filter(o => o.id !== id)));
+  } catch(e) {}
+  try {
+    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    if (!hidden.includes(id)) { hidden.push(id); localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden)); }
+  } catch(e) {}
+  ORDERS = ORDERS.filter(o => o.id !== id);
+  currentOrderId = null;
+  renderList();
+}
+
 async function loadFromFlask() {
   try {
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
@@ -853,6 +875,7 @@ async function loadFromFlask() {
     if (data.orders && data.orders.length > 0) {
       ORDERS = data.orders.map(normalizeOrder);
       mergeManualOrders();
+      filterHiddenOrders();
       initState(ORDERS);
       restoreState(); restoreNotes();
       localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
@@ -876,6 +899,7 @@ async function loadFromFlask() {
       const data = JSON.parse(cached);
       ORDERS = data.map(normalizeOrder);
       mergeManualOrders();
+      filterHiddenOrders();
       initState(ORDERS);
       restoreState(); restoreNotes();
       setBanner(false, `Flask ikke tilgjengelig – viser sist lagrede bestillinger. Start app.py for å oppdatere.`);
@@ -1085,6 +1109,11 @@ function renderDetail() {
         <span class="progress-label">${confirmed}/${total} bekreftet</span>
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="detailProgressBar" style="width:${pct}%"></div>
+        </div>
+        <button onclick="deleteOrder('${o.id}')" style="margin-top:6px;background:none;border:1px solid #fecaca;border-radius:6px;padding:5px 10px;font-size:12px;color:#ef4444;cursor:pointer;font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:5px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          Slett bestilling
+        </button>
         </div>
       </div>
     </div>

@@ -237,6 +237,10 @@
     .conf-badge.green  { background: #f0fdf4; color: #16a34a;          border: 1px solid #bbf7d0; }
 
     .unseen-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); display: inline-block; margin-right: 4px; }
+
+    .delete-btn { opacity: 0; background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; color: #94a3b8; transition: opacity 0.15s, color 0.15s, background 0.15s; }
+    .ordre-rad:hover .delete-btn { opacity: 1; }
+    .delete-btn:hover { color: #ef4444; background: #fef2f2; }
     .dot        { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
     .mini-bar-wrap { width: 60px; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden; display: inline-block; vertical-align: middle; margin-left: 6px; }
@@ -811,6 +815,11 @@ function renderAll(){
         <span class="conf-badge ${cls}"><span class="dot"></span>${label}</span>
         <div class="mini-bar-wrap"><div class="mini-bar ${cls}" style="width:${pct}%"></div></div>
       </td>
+      <td onclick="event.stopPropagation()">
+        <button class="delete-btn" onclick="deleteOrder('${o.id}')" title="Slett bestilling">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+        </button>
+      </td>
     </tr>`;
   }).join('');
 
@@ -831,6 +840,29 @@ function mergeManualOrders() {
   } catch(e) {}
 }
 
+function filterHiddenOrders() {
+  try {
+    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    if (hidden.length) ORDERS = ORDERS.filter(o => !hidden.includes(o.id));
+  } catch(e) {}
+}
+
+function deleteOrder(id) {
+  if (!confirm('Slett denne bestillingen?')) return;
+  // Fjern fra manuell liste
+  try {
+    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual.filter(o => o.id !== id)));
+  } catch(e) {}
+  // Legg til i skjult liste (for Shopify-ordre)
+  try {
+    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    if (!hidden.includes(id)) { hidden.push(id); localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden)); }
+  } catch(e) {}
+  ORDERS = ORDERS.filter(o => o.id !== id);
+  renderAll();
+}
+
 async function loadFromFlask(){
   try {
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
@@ -848,6 +880,7 @@ async function loadFromFlask(){
     updateSyncBadge(false, null, 'Flask-backend ikke nådd (bruker demodata)');
   }
   mergeManualOrders();
+  filterHiddenOrders();
   renderAll();
 }
 
@@ -917,7 +950,8 @@ updateClock(); setInterval(updateClock,1000);
 
 // ─── OPPSTART ─────────────────────────────────
 initStoreSwitcher();
-mergeManualOrders();  // last manuelle bestillinger umiddelbart
+mergeManualOrders();
+filterHiddenOrders();
 renderAll();          // vis mock-data umiddelbart
 loadFromFlask();      // erstatt med live-data om Flask er oppe
 setInterval(loadFromFlask, 5 * 60 * 1000);  // poll hvert 5 min

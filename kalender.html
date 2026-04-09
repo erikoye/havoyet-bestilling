@@ -848,6 +848,13 @@ function mergeManualOrders() {
   } catch(e) {}
 }
 
+function filterHiddenOrders() {
+  try {
+    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    if (hidden.length) ORDERS = ORDERS.filter(o => !hidden.includes(o.id));
+  } catch(e) {}
+}
+
 async function loadFromFlask() {
   try {
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
@@ -858,6 +865,7 @@ async function loadFromFlask() {
     }
   } catch(e) { /* backend ikke oppe — vis tom kalender */ }
   mergeManualOrders();
+  filterHiddenOrders();
   buildCalendar();
 }
 
