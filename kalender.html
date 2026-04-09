@@ -828,6 +828,8 @@ function normalizeOrder(o) {
     customer: o.customer,
     delivery: o.delivery || isoDate(TODAY),
     slot:     o.slot || 'a',
+    store:    o.store || null,
+    phone:    o.phone || null,
     items:    (o.items || []).map(i => {
       const qty     = i.quantity || 1;
       const variant = multiplyWeight(i.variant, qty);
@@ -839,6 +841,9 @@ function normalizeOrder(o) {
     }),
   };
 }
+
+// renderWeek er alias for buildCalendar (brukes av butikkbytte)
+function renderWeek() { buildCalendar(); }
 
 function mergeManualOrders() {
   try {
@@ -862,8 +867,15 @@ async function loadFromFlask() {
     const data = await r.json();
     if (data.orders && data.orders.length > 0) {
       ORDERS = data.orders.map(normalizeOrder);
+      localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
     }
-  } catch(e) { /* backend ikke oppe — vis tom kalender */ }
+  } catch(e) {
+    // Fallback: bruk sist kjente bestillinger fra localStorage
+    try {
+      const cached = localStorage.getItem('havøyet_orders');
+      if (cached) ORDERS = JSON.parse(cached).map(normalizeOrder);
+    } catch(e2) {}
+  }
   mergeManualOrders();
   filterHiddenOrders();
   buildCalendar();
