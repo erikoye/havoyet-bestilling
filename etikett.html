@@ -82,8 +82,8 @@
     }
 
     /* ═══════════════════════════════════════
-       PREMIUM ETIKETT — 50 mm × 103 mm
-       Hvit, minimalistisk, rent svart/hvitt
+       ETIKETT — 50 mm × 103 mm
+       Hvit, minimalistisk, svart/hvitt
     ═══════════════════════════════════════ */
     .label {
       width: 50mm;
@@ -91,147 +91,107 @@
       overflow: hidden;
       background: #fff;
       font-family: 'DM Sans', Arial, sans-serif;
-      font-size: 5.4pt;
-      line-height: 1.4;
-      color: #111;
+      color: #000;
       display: flex;
       flex-direction: column;
+      padding: 0;
     }
 
-    /* ── LOGO-SEKSJON ── */
+    /* Logo: ~20mm høy */
     .lbl-logo-section {
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 3mm 4mm 2mm;
+      padding: 2.5mm 4mm 2mm;
       flex-shrink: 0;
     }
     .lbl-logo-section img {
-      width: 34mm;
+      width: 36mm;
       height: auto;
       display: block;
-      /* Gjør logoen 100% svart — alle piksler → svart, transparent forblir transparent */
       filter: brightness(0);
     }
 
-    /* ── DIVIDER ── */
     .lbl-hr {
       border: none;
-      border-top: 0.4pt solid #111;
-      margin: 0 3mm;
-      flex-shrink: 0;
-    }
-    .lbl-hr-thin {
-      border: none;
-      border-top: 0.3pt solid #ccc;
+      border-top: 0.5pt solid #000;
       margin: 0 3mm;
       flex-shrink: 0;
     }
 
-    /* ── BODY ── */
-    .lbl-body {
-      padding: 1.5mm 3.5mm 2mm;
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    .lbl-order {
-      font-size: 4.6pt;
-      color: #888;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      margin-bottom: 1.2mm;
-      text-align: center;
-    }
-
+    /* Produktnavn: stort, bold, ikke uppercase */
     .lbl-product {
-      font-family: 'Montserrat', Arial, sans-serif;
-      font-size: 9.5pt;
+      font-family: 'DM Sans', Arial, sans-serif;
+      font-size: 11pt;
       font-weight: 700;
       color: #000;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      line-height: 1.15;
-      margin-bottom: 0.6mm;
-      text-align: center;
+      line-height: 1.2;
+      padding: 1.8mm 3.5mm 1.5mm;
+      flex-shrink: 0;
     }
 
-    .lbl-subtitle {
-      font-size: 4.6pt;
-      color: #555;
+    /* Bestillingsinfo: sentrert */
+    .lbl-order-block {
       text-align: center;
-      letter-spacing: 0.03em;
-      margin-bottom: 1.6mm;
-      font-style: italic;
+      font-size: 6pt;
+      line-height: 1.6;
+      padding: 1.5mm 3mm 1.5mm;
+      flex-shrink: 0;
     }
-
-    .lbl-info-block { margin: 1.2mm 0; }
-    .lbl-info-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      padding: 0.45mm 0;
-    }
-    .lbl-info-row .lbl-key {
-      color: #888;
-      font-weight: 400;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      font-size: 4.4pt;
-    }
-    .lbl-info-row .lbl-val {
-      color: #000;
+    .lbl-order-num {
+      font-size: 6pt;
       font-weight: 600;
-      font-size: 5.2pt;
-      text-align: right;
     }
-
-    .lbl-ing-block { margin: 0.5mm 0 0.8mm; }
-    .lbl-ing-title {
-      font-size: 4.4pt;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      margin-bottom: 0.4mm;
+    .lbl-order-name {
+      font-size: 6.5pt;
+      font-weight: 400;
     }
-    .lbl-ing-text {
-      font-size: 4.6pt;
-      color: #333;
-      line-height: 1.45;
-    }
-    .lbl-ing-allergy {
-      font-size: 4.4pt;
+    .lbl-order-addr {
+      font-size: 5.5pt;
       color: #555;
-      margin-top: 0.4mm;
     }
-    .lbl-ing-allergy strong { color: #000; font-weight: 700; }
 
-    .lbl-nutr-title {
-      font-size: 4.4pt;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      margin-bottom: 0.4mm;
+    /* Ingredienser */
+    .lbl-ing {
+      padding: 0 3.5mm 1mm;
+      font-size: 5.2pt;
+      line-height: 1.5;
+      flex-shrink: 0;
     }
-    .lbl-nutr-table {
-      width: 100%;
-      font-size: 4.6pt;
-      border-collapse: collapse;
-    }
-    .lbl-nutr-table td { padding: 0.12mm 0; vertical-align: bottom; }
-    .lbl-nutr-table .n-name { width: 68%; color: #333; }
-    .lbl-nutr-table .n-val  { text-align: right; color: #000; white-space: nowrap; font-weight: 500; }
-    .lbl-nutr-table .n-sub  { padding-left: 2mm; color: #666; font-size: 4.2pt; }
+    .lbl-ing strong { font-weight: 700; }
 
-    .lbl-footer {
-      font-size: 3.9pt;
-      color: #999;
-      margin-top: auto;
-      padding-top: 1mm;
+    /* Tre info-blokker: Vekt / Holdbarhetsdato / Oppbevaring */
+    .lbl-trio {
+      display: flex;
+      flex-direction: column;
+      padding: 0.5mm 3.5mm 0;
+      gap: 0;
+      flex-shrink: 0;
+    }
+    .lbl-trio-row {
       text-align: center;
-      letter-spacing: 0.04em;
+      padding: 1mm 0 0.3mm;
+    }
+    .lbl-trio-label {
+      font-size: 5.5pt;
+      font-weight: 700;
+      display: block;
+    }
+    .lbl-trio-val {
+      font-size: 5.5pt;
+      font-weight: 400;
+      display: block;
+    }
+
+    /* Footer */
+    .lbl-footer {
+      font-size: 4.5pt;
+      color: #555;
+      margin-top: auto;
+      padding: 1mm 3.5mm 2mm;
+      border-top: 0.4pt solid #ccc;
+      margin-left: 3mm;
+      margin-right: 3mm;
     }
 
     /* ── PRINT ── */
@@ -384,14 +344,14 @@ function faoArea(name) {
 }
 
 function buildLabel(order, name, weight, expiry) {
-  const n  = lookupNutr(name);
+  const n        = lookupNutr(name);
   const cleanName = name.replace(/\s*\([^)]*\)/g,'').trim();
-  const ordNum = order.id.startsWith('#') ? order.id : '#' + order.id.replace(/^M-/,'');
-  const area = faoArea(cleanName);
+  const ordNum   = order.id.startsWith('#') ? order.id : '#' + order.id.replace(/^M-/,'');
 
-  const sugarRow = n.sugar != null
-    ? nutrRow('– herav sukkerarter', `${fmtN(n.sugar)}\u00a0g`, true)
-    : '';
+  const addrLine = order.address
+    ? `<div class="lbl-order-addr">${order.address}</div>` : '';
+  const phoneLine = order.phone
+    ? `<div class="lbl-order-addr">${order.phone}</div>` : '';
 
   return `<div class="label">
 
@@ -401,35 +361,43 @@ function buildLabel(order, name, weight, expiry) {
 
   <div class="lbl-hr"></div>
 
-  <div class="lbl-body">
+  <div class="lbl-product">${cleanName}</div>
 
-    <div class="lbl-order">Bestilling\u00a0${ordNum} &nbsp;·&nbsp; ${order.customer}</div>
+  <div class="lbl-hr"></div>
 
-    <div class="lbl-product">${cleanName}</div>
-    <div class="lbl-subtitle">Fanget i havet\u00a0– ${area}</div>
-
-    <div class="lbl-hr"></div>
-
-    <div class="lbl-info-block">
-      <div class="lbl-info-row">
-        <span class="lbl-key">Nettovekt</span>
-        <span class="lbl-val">${weight ? weight + '\u00a0g' : '–'}</span>
-      </div>
-      <div class="lbl-info-row">
-        <span class="lbl-key">Siste forbruksdag</span>
-        <span class="lbl-val">${fmtDate(expiry)}</span>
-      </div>
-      <div class="lbl-info-row">
-        <span class="lbl-key">Oppbevares ved</span>
-        <span class="lbl-val">${n.opb}</span>
-      </div>
-    </div>
-
-    <div class="lbl-footer">
-      Pakket av: Havøyet AS, Bergen &nbsp;·&nbsp; havoyet.no
-    </div>
-
+  <div class="lbl-order-block">
+    <div class="lbl-order-num">Bestilling ${ordNum}</div>
+    <div class="lbl-order-name">${order.customer}</div>
+    ${addrLine}
+    ${phoneLine}
   </div>
+
+  <div class="lbl-hr"></div>
+
+  <div class="lbl-ing">
+    <strong>INGREDIENSER:</strong> ${n.ing}<br>
+    <strong>Allergener:</strong> ${n.all}
+  </div>
+
+  <div class="lbl-hr"></div>
+
+  <div class="lbl-trio">
+    <div class="lbl-trio-row">
+      <span class="lbl-trio-label">Vekt</span>
+      <span class="lbl-trio-val">${weight ? weight + ' g' : '–'}</span>
+    </div>
+    <div class="lbl-trio-row">
+      <span class="lbl-trio-label">Holdbarhetsdato:</span>
+      <span class="lbl-trio-val">${fmtDate(expiry)}</span>
+    </div>
+    <div class="lbl-trio-row">
+      <span class="lbl-trio-label">OPPBEVARING</span>
+      <span class="lbl-trio-val">${n.opb}</span>
+    </div>
+  </div>
+
+  <div class="lbl-footer">Havøyet AS, Nesttunvegen 96, 5221 Nesttun</div>
+
 </div>`;
 }
 
@@ -465,7 +433,12 @@ const labels    = [];
 
 function collectLabels(rawOrder) {
   const s = STATE[rawOrder.id] || [];
-  const order = { id: rawOrder.id, customer: rawOrder.customer, phone: rawOrder.phone || null };
+  const order = {
+    id: rawOrder.id,
+    customer: rawOrder.customer,
+    phone: rawOrder.phone || null,
+    address: rawOrder.address || rawOrder.shipping_address || null
+  };
   (rawOrder.items || []).forEach((item, i) => {
     const st = s[i] || {};
     if (st.avail === 'ok' && st.weight && st.expiry) {
