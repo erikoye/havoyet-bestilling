@@ -300,6 +300,67 @@ def api_admin_state():
     return jsonify(_admin_state)
 
 
+# ── CROSS-DEVICE SYNC ──────────────────────────────────────────────────────────
+_manual_orders = []
+_hidden_orders = []
+_overrides = {}
+_packing_state = {}
+_order_notes = {}
+
+
+@app.route("/api/manual-orders", methods=["GET", "POST"])
+def api_manual_orders():
+    global _manual_orders
+    if request.method == "POST":
+        _manual_orders = request.get_json(force=True) or []
+        return jsonify({"ok": True, "count": len(_manual_orders)})
+    return jsonify(_manual_orders)
+
+
+@app.route("/api/manual-orders/<order_id>", methods=["DELETE"])
+def api_delete_manual_order(order_id):
+    global _manual_orders
+    before = len(_manual_orders)
+    _manual_orders = [o for o in _manual_orders if str(o.get("id")) != str(order_id)]
+    return jsonify({"ok": True, "removed": before - len(_manual_orders)})
+
+
+@app.route("/api/hidden-orders", methods=["GET", "POST"])
+def api_hidden_orders():
+    global _hidden_orders
+    if request.method == "POST":
+        _hidden_orders = request.get_json(force=True) or []
+        return jsonify({"ok": True, "count": len(_hidden_orders)})
+    return jsonify(_hidden_orders)
+
+
+@app.route("/api/overrides", methods=["GET", "POST"])
+def api_overrides():
+    global _overrides
+    if request.method == "POST":
+        _overrides = request.get_json(force=True) or {}
+        return jsonify({"ok": True})
+    return jsonify(_overrides)
+
+
+@app.route("/api/packing-state", methods=["GET", "POST"])
+def api_packing_state():
+    global _packing_state
+    if request.method == "POST":
+        _packing_state = request.get_json(force=True) or {}
+        return jsonify({"ok": True})
+    return jsonify(_packing_state)
+
+
+@app.route("/api/notes", methods=["GET", "POST"])
+def api_notes():
+    global _order_notes
+    if request.method == "POST":
+        _order_notes = request.get_json(force=True) or {}
+        return jsonify({"ok": True})
+    return jsonify(_order_notes)
+
+
 # ── OPPSTART ───────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     # Last cache fra disk ved oppstart (om den finnes)

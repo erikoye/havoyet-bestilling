@@ -841,6 +841,38 @@ function formatDate(iso){
   return new Date(iso+'T00:00:00').toLocaleDateString('nb-NO',{day:'2-digit',month:'2-digit',year:'numeric'});
 }
 
+// ─── SERVER-SYNC (cross-device) ───────────────
+async function syncFromServer() {
+  try {
+    const [manRes, hidRes] = await Promise.all([
+      fetch(`${FLASK_BASE}/api/manual-orders`, { signal: AbortSignal.timeout(3000) }),
+      fetch(`${FLASK_BASE}/api/hidden-orders`,  { signal: AbortSignal.timeout(3000) }),
+    ]);
+    if (manRes.ok) {
+      const manual = await manRes.json();
+      localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual));
+    }
+    if (hidRes.ok) {
+      const hidden = await hidRes.json();
+      localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden));
+    }
+  } catch(e) { /* server ikke nådd – bruk lokalt */ }
+}
+
+function serverSaveManualOrders(list) {
+  fetch(`${FLASK_BASE}/api/manual-orders`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(list)
+  }).catch(()=>{});
+}
+
+function serverSaveHiddenOrders(list) {
+  fetch(`${FLASK_BASE}/api/hidden-orders`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(list)
+  }).catch(()=>{});
+}
+
 // ─── FLASK-HENTING ────────────────────────────
 function mergeManualOrders() {
   try {
@@ -860,15 +892,21 @@ function filterHiddenOrders() {
 function deleteOrder(id) {
   if (!confirm('Slett denne bestillingen?')) return;
   // Fjern fra manuell liste
+  let manual = [];
   try {
-    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
-    localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual.filter(o => o.id !== id)));
+    manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    manual = manual.filter(o => o.id !== id);
+    localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual));
   } catch(e) {}
   // Legg til i skjult liste (for Shopify-ordre)
+  let hidden = [];
   try {
-    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
     if (!hidden.includes(id)) { hidden.push(id); localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden)); }
   } catch(e) {}
+  // Sync til server
+  serverSaveManualOrders(manual);
+  serverSaveHiddenOrders(hidden);
   ORDERS = ORDERS.filter(o => o.id !== id);
   renderAll();
 }
@@ -889,6 +927,7 @@ async function loadFromFlask(){
     // Backend ikke oppe — bruk mock
     updateSyncBadge(false, null, 'Flask-backend ikke nådd (bruker demodata)');
   }
+  await syncFromServer();
   mergeManualOrders();
   filterHiddenOrders();
   renderAll();
@@ -1114,10 +1153,11 @@ function saveNewOrder() {
     items
   };
 
-  // Lagre i localStorage
+  // Lagre i localStorage og server
   const existing = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
   existing.push(order);
   localStorage.setItem('havøyet_manual_orders', JSON.stringify(existing));
+  serverSaveManualOrders(existing);
 
   // Legg til i visning
   ORDERS = [...ORDERS, order];

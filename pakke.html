@@ -925,6 +925,29 @@ function setBanner(ok, msg) {
   b.innerHTML = `<span style="font-size:16px">${ok ? '🟢' : '🟡'}</span> ${msg}`;
 }
 
+// ─── SERVER-SYNC (cross-device) ───────────────
+async function syncFromServer() {
+  try {
+    const [manRes, hidRes, stRes, notRes] = await Promise.all([
+      fetch(`${FLASK_BASE}/api/manual-orders`,  { signal: AbortSignal.timeout(3000) }),
+      fetch(`${FLASK_BASE}/api/hidden-orders`,  { signal: AbortSignal.timeout(3000) }),
+      fetch(`${FLASK_BASE}/api/packing-state`,  { signal: AbortSignal.timeout(3000) }),
+      fetch(`${FLASK_BASE}/api/notes`,          { signal: AbortSignal.timeout(3000) }),
+    ]);
+    if (manRes.ok) localStorage.setItem('havøyet_manual_orders', JSON.stringify(await manRes.json()));
+    if (hidRes.ok) localStorage.setItem('havøyet_hidden_orders', JSON.stringify(await hidRes.json()));
+    if (stRes.ok)  localStorage.setItem('havøyet_state',         JSON.stringify(await stRes.json()));
+    if (notRes.ok) localStorage.setItem('havøyet_notes',         JSON.stringify(await notRes.json()));
+  } catch(e) { /* server ikke nådd */ }
+}
+
+function serverPost(endpoint, data) {
+  fetch(`${FLASK_BASE}${endpoint}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  }).catch(()=>{});
+}
+
 function mergeManualOrders() {
   try {
     const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
@@ -978,15 +1001,21 @@ function confirmDelete() {
   };
 
   // Fjern fra manuell liste
+  let manual = [];
   try {
-    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
-    localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual.filter(o => o.id !== id)));
+    manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    manual = manual.filter(o => o.id !== id);
+    localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual));
   } catch(e) {}
   // Legg til skjult liste
+  let hidden = [];
   try {
-    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
     if (!hidden.includes(id)) { hidden.push(id); localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden)); }
   } catch(e) {}
+  // Sync til server
+  serverPost('/api/manual-orders', manual);
+  serverPost('/api/hidden-orders', hidden);
 
   ORDERS = ORDERS.filter(o => o.id !== id);
   showList();
@@ -1020,16 +1049,21 @@ function undoDelete() {
   _lastDeleted = null;
 
   // Fjern fra skjult liste
+  let hidden = [];
   try {
-    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
-    localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden.filter(id => id !== order.id)));
+    hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    hidden = hidden.filter(id => id !== order.id);
+    localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden));
   } catch(e) {}
+  serverPost('/api/hidden-orders', hidden);
   // Legg tilbake i manuell liste hvis manuell ordre
   if (order.id.startsWith('M-')) {
+    let manual = [];
     try {
-      const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+      manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
       if (!manual.find(o => o.id === order.id)) { manual.push(order); localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual)); }
     } catch(e) {}
+    serverPost('/api/manual-orders', manual);
   }
 
   ORDERS.push(order);
@@ -1045,6 +1079,7 @@ async function loadFromFlask() {
     if (!r.ok) throw new Error();
     const data = await r.json();
     if (data.orders && data.orders.length > 0) {
+      await syncFromServer();
       ORDERS = data.orders.map(normalizeOrder);
       mergeManualOrders();
       filterHiddenOrders();
@@ -1065,7 +1100,8 @@ async function loadFromFlask() {
     }
   } catch(e) { /* backend ikke oppe */ }
 
-  // Fallback: bruk sist kjente bestillinger fra localStorage
+  // Fallback: prøv server-sync for delte data, bruk sist kjente bestillinger fra localStorage
+  await syncFromServer();
   const cached = localStorage.getItem('havøyet_orders');
   if (cached) {
     try {
@@ -1389,7 +1425,10 @@ function renderItemCard(item, i, s) {
 let ORDER_NOTES = {};
 
 function saveState() {
-  try { localStorage.setItem('havøyet_state', JSON.stringify(STATE)); } catch(e) {}
+  try {
+    localStorage.setItem('havøyet_state', JSON.stringify(STATE));
+    serverPost('/api/packing-state', STATE);
+  } catch(e) {}
 }
 function restoreState() {
   try {
@@ -1409,7 +1448,10 @@ function restoreState() {
   } catch(e) {}
 }
 function saveNotes() {
-  try { localStorage.setItem('havøyet_notes', JSON.stringify(ORDER_NOTES)); } catch(e) {}
+  try {
+    localStorage.setItem('havøyet_notes', JSON.stringify(ORDER_NOTES));
+    serverPost('/api/notes', ORDER_NOTES);
+  } catch(e) {}
 }
 function restoreNotes() {
   try {
