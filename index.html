@@ -790,8 +790,7 @@ function slotCount(arr,s){ return arr.filter(o=>o.slot===s).length; }
 // En ordre er "ny" hvis den ikke er sett OG ble opprettet for under 24 timer siden
 function isUnseen(o) {
   if (o.seen) return false;
-  const created = o.created_at ||
-    (o.id && o.id.startsWith('M-') ? new Date(parseInt(o.id.slice(2))).toISOString() : null);
+  const created = o.created_at || o.created_manual || null;
   if (created) {
     const ageMs = Date.now() - new Date(created).getTime();
     if (ageMs > 24 * 60 * 60 * 1000) return false;
@@ -1164,7 +1163,7 @@ function saveNewOrder() {
 
   const storeName = selectedStore === 'havoyet' ? 'Havøyet' : 'Nesttun Fisk & Vilt';
   const order = {
-    id: 'M-' + Date.now(),
+    id: (() => { let c = parseInt(localStorage.getItem('havøyet_manual_counter') || '4999'); c++; localStorage.setItem('havøyet_manual_counter', String(c)); return '#' + c; })(),
     customer: name,
     phone,
     delivery: date,
@@ -1173,6 +1172,7 @@ function saveNewOrder() {
     seen: false,
     store: storeName,
     manual: true,
+    created_manual: new Date().toISOString(),
     items
   };
 

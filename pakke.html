@@ -1083,7 +1083,7 @@ function undoDelete() {
   } catch(e) {}
   serverPost('/api/hidden-orders', hidden);
   // Legg tilbake i manuell liste hvis manuell ordre
-  if (order.id.startsWith('M-')) {
+  if (order.manual) {
     let manual = [];
     try {
       manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
