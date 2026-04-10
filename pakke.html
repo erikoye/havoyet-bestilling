@@ -934,10 +934,36 @@ async function syncFromServer() {
       fetch(`${FLASK_BASE}/api/packing-state`,  { signal: AbortSignal.timeout(3000) }),
       fetch(`${FLASK_BASE}/api/notes`,          { signal: AbortSignal.timeout(3000) }),
     ]);
-    if (manRes.ok) localStorage.setItem('havøyet_manual_orders', JSON.stringify(await manRes.json()));
-    if (hidRes.ok) localStorage.setItem('havøyet_hidden_orders', JSON.stringify(await hidRes.json()));
-    if (stRes.ok)  localStorage.setItem('havøyet_state',         JSON.stringify(await stRes.json()));
-    if (notRes.ok) localStorage.setItem('havøyet_notes',         JSON.stringify(await notRes.json()));
+    if (manRes.ok) {
+      const serverManual = await manRes.json();
+      const localManual  = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+      const merged = [...serverManual];
+      localManual.forEach(o => { if (!merged.find(s => s.id === o.id)) merged.push(o); });
+      localStorage.setItem('havøyet_manual_orders', JSON.stringify(merged));
+      if (merged.length > serverManual.length) serverPost('/api/manual-orders', merged);
+    }
+    if (hidRes.ok) {
+      const serverHidden = await hidRes.json();
+      const localHidden  = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+      const merged = [...new Set([...serverHidden, ...localHidden])];
+      localStorage.setItem('havøyet_hidden_orders', JSON.stringify(merged));
+      if (merged.length > serverHidden.length) serverPost('/api/hidden-orders', merged);
+    }
+    if (stRes.ok) {
+      const serverState = await stRes.json();
+      const localState  = JSON.parse(localStorage.getItem('havøyet_state') || '{}');
+      // Merge: server vinner per ordre-id, behold lokale ordre som ikke finnes på server
+      const merged = { ...localState, ...serverState };
+      localStorage.setItem('havøyet_state', JSON.stringify(merged));
+      if (Object.keys(serverState).length < Object.keys(merged).length) serverPost('/api/packing-state', merged);
+    }
+    if (notRes.ok) {
+      const serverNotes = await notRes.json();
+      const localNotes  = JSON.parse(localStorage.getItem('havøyet_notes') || '{}');
+      const merged = { ...localNotes, ...serverNotes };
+      localStorage.setItem('havøyet_notes', JSON.stringify(merged));
+      if (Object.keys(serverNotes).length < Object.keys(merged).length) serverPost('/api/notes', merged);
+    }
   } catch(e) { /* server ikke nådd */ }
 }
 

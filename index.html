@@ -842,6 +842,8 @@ function formatDate(iso){
 }
 
 // ─── SERVER-SYNC (cross-device) ───────────────
+// Merger server + lokal data slik at server-restart ikke mister data.
+// Klienter re-hydrerer serveren automatisk ved oppstart.
 async function syncFromServer() {
   try {
     const [manRes, hidRes] = await Promise.all([
@@ -849,12 +851,21 @@ async function syncFromServer() {
       fetch(`${FLASK_BASE}/api/hidden-orders`,  { signal: AbortSignal.timeout(3000) }),
     ]);
     if (manRes.ok) {
-      const manual = await manRes.json();
-      localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual));
+      const serverManual = await manRes.json();
+      const localManual  = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+      // Merge: union av begge, dedupliser på id (server vinner ved konflikt)
+      const merged = [...serverManual];
+      localManual.forEach(o => { if (!merged.find(s => s.id === o.id)) merged.push(o); });
+      localStorage.setItem('havøyet_manual_orders', JSON.stringify(merged));
+      // Re-hydrer server om den hadde færre ordre (etter restart)
+      if (merged.length > serverManual.length) serverSaveManualOrders(merged);
     }
     if (hidRes.ok) {
-      const hidden = await hidRes.json();
-      localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden));
+      const serverHidden = await hidRes.json();
+      const localHidden  = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+      const merged = [...new Set([...serverHidden, ...localHidden])];
+      localStorage.setItem('havøyet_hidden_orders', JSON.stringify(merged));
+      if (merged.length > serverHidden.length) serverSaveHiddenOrders(merged);
     }
   } catch(e) { /* server ikke nådd – bruk lokalt */ }
 }
