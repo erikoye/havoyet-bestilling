@@ -142,15 +142,16 @@
       flex-shrink: 0;
     }
 
-    /* Produktnavn: stort, bold, ikke uppercase */
+    /* Produktnavn: stort, bold, sentrert */
     .lbl-product {
       font-family: 'DM Sans', Arial, sans-serif;
-      font-size: 11pt;
+      font-size: 15pt;
       font-weight: 700;
       color: #000;
       line-height: 1.2;
-      padding: 1.8mm 3.5mm 1.5mm;
+      padding: 2mm 3.5mm 1mm;
       flex-shrink: 0;
+      text-align: center;
     }
 
     /* Bestillingsinfo: sentrert */
@@ -208,11 +209,12 @@
 
     /* Footer */
     .lbl-capture {
-      font-size: 5pt;
+      font-size: 6.5pt;
       color: #555;
       font-style: italic;
       padding: 0 3.5mm 1.5mm;
       flex-shrink: 0;
+      text-align: center;
     }
 
     .lbl-footer {
@@ -430,8 +432,6 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
     <strong>Allergener:</strong> ${n.all}
   </div>
 
-  <div class="lbl-hr"></div>
-
   <div class="lbl-trio">
     <div class="lbl-trio-row">
       <span class="lbl-trio-label">Vekt</span>
@@ -446,6 +446,8 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
       <span class="lbl-trio-val">${n.opb}</span>
     </div>
   </div>
+
+  <div class="lbl-hr"></div>
 
   <div class="lbl-footer">Havøyet AS, Nesttunvegen 96, 5221 Nesttun</div>
 
