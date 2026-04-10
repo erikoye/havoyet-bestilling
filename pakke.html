@@ -1396,10 +1396,7 @@ function renderItemCard(item, i, s) {
           <input class="field-input${weightOk?' filled':''}" id="weight-${i}" type="number" min="1"
             placeholder="0" value="${s.weight}"
             oninput="onFieldChange('${currentOrderId}',${i},'weight',this.value)"/>
-          <div class="unit-toggle">
-            <button class="unit-btn ${ (s.weightUnit||'g')==='g' ? 'active' : ''}" onclick="setWeightUnit('${currentOrderId}',${i},'g')">g</button>
-            <button class="unit-btn ${ (s.weightUnit||'g')==='stk' ? 'active' : ''}" onclick="setWeightUnit('${currentOrderId}',${i},'stk')">stk</button>
-          </div>
+          <span style="font-size:12px;font-weight:600;color:var(--muted);padding:0 6px;align-self:center">${s.weightUnit||'g'}</span>
         </div>
         <div class="field-check ${weightOk?'ok':'empty'}">
           ${weightOk?`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Lagret`:''}
