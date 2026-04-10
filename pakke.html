@@ -1282,6 +1282,23 @@ function openOrder(id) {
   updateToolbar();
 }
 
+// ─── FORMATERING AV VARENAVN MED ENHET ───────
+function formatItemName(item) {
+  const name = item.name || '';
+  const unit = item.unit || '';
+  if (!unit) return name;
+  // Finn tall i parentes, f.eks. "(2300)" eller "(2300 – uten skinn)"
+  return name.replace(/\((\d+(?:[.,]\d+)?)(\s*[–\-].*?)?\)/, (match, num, rest) => {
+    const val = parseFloat(num.replace(',', '.'));
+    const restStr = rest || '';
+    if (unit === 'g' && val >= 1000) {
+      const kg = (val / 1000).toLocaleString('nb-NO', { maximumFractionDigits: 3 }).replace(/,?0+$/, '');
+      return `(${kg} kg${restStr})`;
+    }
+    return `(${num} ${unit}${restStr})`;
+  });
+}
+
 // ─── RENDER DETAIL ──────────────────────────
 function renderDetail() {
   const o = ORDERS.find(x => x.id === currentOrderId);
@@ -1364,7 +1381,7 @@ function renderItemCard(item, i, s) {
   return `
   <div class="item-card ${statusClass}" id="card-${i}">
     <div class="item-top">
-      <div class="item-name" id="item-name-${i}">${s.confirmedReplacement ? (() => { const f=FISH_DB.find(x=>x.id===s.confirmedReplacement); return f ? `<span class="item-name replaced">${item.name}</span> <span class="item-name-replacement">${f.name}</span>` : item.name; })() : item.name}</div>
+      <div class="item-name" id="item-name-${i}">${s.confirmedReplacement ? (() => { const f=FISH_DB.find(x=>x.id===s.confirmedReplacement); return f ? `<span class="item-name replaced">${formatItemName(item)}</span> <span class="item-name-replacement">${f.name}</span>` : formatItemName(item); })() : formatItemName(item)}</div>
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setAvail('${currentOrderId}',${i},'ok')">Tilgjengelig</button>
         <button class="${chipClass('unsure')}" onclick="setAvail('${currentOrderId}',${i},'unsure')">Usikkert</button>
@@ -1560,7 +1577,8 @@ function updateChips(orderId, i) {
   if (nameEl) {
     const confirmed = s.confirmedReplacement ? FISH_DB.find(x=>x.id===s.confirmedReplacement) : null;
     const order = ORDERS.find(x=>x.id===orderId);
-    const originalName = order ? order.items[i].name : '';
+    const originalItem = order ? order.items[i] : null;
+    const originalName = originalItem ? formatItemName(originalItem) : '';
     if (confirmed) {
       nameEl.innerHTML = `<span class="item-name replaced">${originalName}</span> <span class="item-name-replacement">${confirmed.name}</span>`;
     } else {
