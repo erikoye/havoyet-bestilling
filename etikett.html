@@ -100,7 +100,7 @@
       padding: 7px 4px; cursor: pointer;
       transition: background 0.15s, color 0.15s;
     }
-    .cap-btn:first-child { border-right: 1px solid #e2e8f0; }
+    .cap-btn:not(:last-child) { border-right: 1px solid #e2e8f0; }
     .cap-btn.active { background: #fff; color: var(--dark); font-weight: 600; }
     .cap-btn:hover:not(.active) { background: #f1f5f9; color: #64748b; }
 
@@ -392,12 +392,12 @@ function defaultCapture(name) {
   return 'villfanget';
 }
 
-function buildLabel(order, name, weight, expiry, capture) {
+function buildLabel(order, name, weight, expiry, capture, weightUnit) {
   const n         = lookupNutr(name);
   const cleanName = name.replace(/\s*\([^)]*\)/g,'').trim();
   const ordNum    = order.id.startsWith('#') ? order.id : '#' + order.id.replace(/^M-/,'');
   const cap       = capture || defaultCapture(name);
-  const capLabel  = cap === 'villfanget' ? 'Villfanget' : 'Oppdrett';
+  const capLabel  = cap === 'villfanget' ? 'Villfanget' : cap === 'oppdrett' ? 'Oppdrett' : '';
 
   const addrLine  = order.address ? `<div class="lbl-order-addr">${order.address}</div>` : '';
   const phoneLine = order.phone   ? `<div class="lbl-order-addr">${order.phone}</div>`   : '';
@@ -434,7 +434,7 @@ function buildLabel(order, name, weight, expiry, capture) {
   <div class="lbl-trio">
     <div class="lbl-trio-row">
       <span class="lbl-trio-label">Vekt</span>
-      <span class="lbl-trio-val">${weight ? weight + ' g' : '–'}</span>
+      <span class="lbl-trio-val">${weight ? weight + '\u00a0' + (weightUnit || 'g') : '–'}</span>
     </div>
     <div class="lbl-trio-row">
       <span class="lbl-trio-label">Holdbarhetsdato:</span>
@@ -492,7 +492,7 @@ function collectLabels(rawOrder) {
   (rawOrder.items || []).forEach((item, i) => {
     const st = s[i] || {};
     if (st.avail === 'ok' && st.weight && st.expiry) {
-      labels.push({ order, name: item.name || '', weight: st.weight, expiry: st.expiry });
+      labels.push({ order, name: item.name || '', weight: st.weight, expiry: st.expiry, weightUnit: st.weightUnit || item.unit || 'g' });
     }
   });
 }
@@ -517,7 +517,7 @@ function setCapture(idx, val) {
   captureState[idx] = val;
   const card = document.getElementById('lc-' + idx);
   const lbl = labels[idx];
-  card.querySelector('.label').outerHTML = buildLabel(lbl.order, lbl.name, lbl.weight, lbl.expiry, val);
+  card.querySelector('.label').outerHTML = buildLabel(lbl.order, lbl.name, lbl.weight, lbl.expiry, val, lbl.weightUnit);
   card.querySelectorAll('.cap-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.val === val)
   );
@@ -531,17 +531,18 @@ function renderCards() {
     </div>`;
     return;
   }
-  area.innerHTML = labels.map(({ order, name, weight, expiry }, idx) => {
+  area.innerHTML = labels.map(({ order, name, weight, expiry, weightUnit }, idx) => {
     const cap = captureState[idx] || defaultCapture(name);
     return `
     <div class="label-card" id="lc-${idx}">
       <div class="label-card-header">
         ${order.customer} &nbsp;·&nbsp; ${name.replace(/\s*\([^)]*\)/g,'').trim()} &nbsp;·&nbsp; Etikett ${idx+1} av ${labels.length}
       </div>
-      ${buildLabel(order, name, weight, expiry, cap)}
+      ${buildLabel(order, name, weight, expiry, cap, weightUnit)}
       <div class="capture-toggle">
         <button class="cap-btn ${cap==='villfanget'?'active':''}" data-val="villfanget" onclick="setCapture(${idx},'villfanget')">Villfanget</button>
         <button class="cap-btn ${cap==='oppdrett'?'active':''}" data-val="oppdrett" onclick="setCapture(${idx},'oppdrett')">Oppdrett</button>
+        <button class="cap-btn ${cap==='ingen'?'active':''}" data-val="ingen" onclick="setCapture(${idx},'ingen')">Ingen</button>
       </div>
     </div>`;
   }).join('');

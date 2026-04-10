@@ -1043,11 +1043,25 @@ function addItem() {
   div.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px">
       <input class="form-input" id="item-name-${i}" type="text" placeholder="Produktnavn" style="flex:1" />
-      <input class="form-input item-qty-input" id="item-qty-${i}" type="text" placeholder="Mengde" style="width:110px;flex:none" />
+      <input class="form-input item-qty-input" id="item-qty-${i}" type="text" placeholder="Mengde" style="width:90px;flex:none" />
+      <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;flex-shrink:0">
+        <button id="unit-g-${i}" class="item-unit-btn active" onclick="setItemUnit(${i},'g')" style="padding:0 10px;height:38px;border:none;background:#fff;font-size:13px;font-weight:600;cursor:pointer;color:var(--primary);transition:background 0.15s">g</button>
+        <button id="unit-stk-${i}" class="item-unit-btn" onclick="setItemUnit(${i},'stk')" style="padding:0 10px;height:38px;border:none;border-left:1px solid var(--border);background:#fff;font-size:13px;font-weight:600;cursor:pointer;color:var(--muted);transition:background 0.15s">stk</button>
+      </div>
       <button class="btn-remove-item" onclick="removeItem(${i})" title="Fjern">✕</button>
     </div>
     <input class="form-input" id="item-note-${i}" type="text" placeholder="Kommentar – f.eks. uten skinn, ekstra is, hel fisk…" style="font-size:13px;color:var(--muted)" />`;
   document.getElementById('itemsList').appendChild(div);
+}
+
+function setItemUnit(i, unit) {
+  const gBtn   = document.getElementById('unit-g-'   + i);
+  const stkBtn = document.getElementById('unit-stk-' + i);
+  if (!gBtn || !stkBtn) return;
+  gBtn.style.color   = unit === 'g'   ? 'var(--primary)' : 'var(--muted)';
+  stkBtn.style.color = unit === 'stk' ? 'var(--primary)' : 'var(--muted)';
+  gBtn.style.background   = unit === 'g'   ? '#f0fdfb' : '#fff';
+  stkBtn.style.background = unit === 'stk' ? '#f0fdfb' : '#fff';
 }
 
 function removeItem(i) {
@@ -1074,12 +1088,14 @@ function saveNewOrder() {
     const q    = qtyEl  ? qtyEl.value.trim()  : '';
     const noteEl = document.getElementById('item-note-' + i);
     const note = noteEl ? noteEl.value.trim() : '';
+    const unitStk = document.getElementById('unit-stk-' + i);
+    const unit = unitStk && unitStk.style.color === 'var(--primary)' ? 'stk' : 'g';
     if (n) {
       let label = n;
       if (q && note)    label = `${n} (${q} – ${note})`;
       else if (q)       label = `${n} (${q})`;
       else if (note)    label = `${n} – ${note}`;
-      items.push({ name: label, qty: 1, weight: null, expiry: null });
+      items.push({ name: label, qty: 1, weight: null, expiry: null, unit });
     }
   }
   if (items.length === 0) { alert('Legg til minst én vare.'); return; }

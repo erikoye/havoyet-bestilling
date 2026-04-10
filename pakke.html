@@ -870,7 +870,7 @@ const STATE = {};
 function initState(orders) {
   orders.forEach(o => {
     if (!STATE[o.id]) {
-      STATE[o.id] = o.items.map(() => ({ weight:'', expiry:'', weightUnit:'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' }));
+      STATE[o.id] = o.items.map(item => ({ weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' }));
     }
   });
 }
@@ -1430,6 +1430,13 @@ function onItemComment(orderId, i, val) {
 // ─── STATE HANDLERS ──────────────────────────
 function setAvail(orderId, i, val) {
   const s = STATE[orderId][i];
+  // Klikk på allerede valgt knapp → fjern valget
+  if (s.avail === val) {
+    s.avail = null;
+    s.weight = ''; s.expiry = '';
+    saveState(); renderDetail(); updateToolbar();
+    return;
+  }
   s.avail = val;
   if (val === 'ok') { s.replacements = []; }
   else              { s.weight = ''; s.expiry = ''; }
