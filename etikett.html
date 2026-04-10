@@ -40,6 +40,15 @@
     }
     .back-btn:hover { color: #fff; background: #1e293b; }
     .divider { width: 1px; height: 20px; background: #334155; }
+    .header-right { display: flex; align-items: center; gap: 10px; }
+    .btn-ptouch {
+      background: transparent; color: #94a3b8; border: 1px solid #334155; border-radius: 8px;
+      padding: 8px 14px; font-size: 12px; font-weight: 500; cursor: pointer;
+      font-family: 'DM Sans', sans-serif; text-decoration: none;
+      display: flex; align-items: center; gap: 7px;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+    }
+    .btn-ptouch:hover { color: #fff; border-color: #475569; background: #1e293b; }
     .btn-print-all {
       background: var(--surface); color: var(--dark); border: none; border-radius: 8px;
       padding: 9px 20px; font-size: 13px; font-weight: 600; cursor: pointer;
@@ -80,6 +89,20 @@
       border-bottom: 1px solid #e2e8f0;
       font-size: 11px; color: #94a3b8; font-weight: 500;
     }
+    /* ── CAPTURE TOGGLE ── */
+    .capture-toggle {
+      display: flex; border-top: 1px solid #e2e8f0;
+      flex-shrink: 0;
+    }
+    .cap-btn {
+      flex: 1; border: none; background: #f8fafc; color: #94a3b8;
+      font-size: 11px; font-weight: 500; font-family: 'DM Sans', sans-serif;
+      padding: 7px 4px; cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .cap-btn:first-child { border-right: 1px solid #e2e8f0; }
+    .cap-btn.active { background: #fff; color: var(--dark); font-weight: 600; }
+    .cap-btn:hover:not(.active) { background: #f1f5f9; color: #64748b; }
 
     /* ═══════════════════════════════════════
        ETIKETT — 50 mm × 103 mm
@@ -184,6 +207,14 @@
     }
 
     /* Footer */
+    .lbl-capture {
+      font-size: 5pt;
+      color: #555;
+      font-style: italic;
+      padding: 0 3.5mm 1.5mm;
+      flex-shrink: 0;
+    }
+
     .lbl-footer {
       font-size: 4.5pt;
       color: #555;
@@ -218,14 +249,26 @@
     <span style="font-family:'Montserrat',sans-serif;font-weight:900;font-size:20px;letter-spacing:2px;color:#fff">Havøyet</span>
     <span style="color:#475569;font-size:13px;font-family:'DM Mono',monospace">/ etiketter</span>
   </div>
-  <button class="btn-print-all" onclick="window.print()">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <polyline points="6 9 6 2 18 2 18 9"/>
-      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
-      <rect x="6" y="14" width="12" height="8"/>
-    </svg>
-    Skriv ut etiketter
-  </button>
+  <div class="header-right">
+    <a class="btn-ptouch"
+       href="https://support.brother.com/g/b/downloadlist.aspx?c=eu&lang=en&prod=lpql1110nwbeuuk&os=10060"
+       target="_blank" rel="noopener">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      P-touch Editor
+    </a>
+    <button class="btn-print-all" onclick="window.print()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 6 2 18 2 18 9"/>
+        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+        <rect x="6" y="14" width="12" height="8"/>
+      </svg>
+      Skriv ut etiketter
+    </button>
+  </div>
 </header>
 
 <div class="screen-toolbar">
@@ -343,15 +386,21 @@ function faoArea(name) {
   return 'Nordøst-Atlanteren (FAO\u00a027)';
 }
 
-function buildLabel(order, name, weight, expiry) {
-  const n        = lookupNutr(name);
-  const cleanName = name.replace(/\s*\([^)]*\)/g,'').trim();
-  const ordNum   = order.id.startsWith('#') ? order.id : '#' + order.id.replace(/^M-/,'');
+function defaultCapture(name) {
+  const n = name.toLowerCase();
+  if (n.includes('laks') || n.includes('ørret') || n.includes('regnbue')) return 'oppdrett';
+  return 'villfanget';
+}
 
-  const addrLine = order.address
-    ? `<div class="lbl-order-addr">${order.address}</div>` : '';
-  const phoneLine = order.phone
-    ? `<div class="lbl-order-addr">${order.phone}</div>` : '';
+function buildLabel(order, name, weight, expiry, capture) {
+  const n         = lookupNutr(name);
+  const cleanName = name.replace(/\s*\([^)]*\)/g,'').trim();
+  const ordNum    = order.id.startsWith('#') ? order.id : '#' + order.id.replace(/^M-/,'');
+  const cap       = capture || defaultCapture(name);
+  const capLabel  = cap === 'villfanget' ? 'Villfanget' : 'Oppdrett';
+
+  const addrLine  = order.address ? `<div class="lbl-order-addr">${order.address}</div>` : '';
+  const phoneLine = order.phone   ? `<div class="lbl-order-addr">${order.phone}</div>`   : '';
 
   return `<div class="label">
 
@@ -362,6 +411,7 @@ function buildLabel(order, name, weight, expiry) {
   <div class="lbl-hr"></div>
 
   <div class="lbl-product">${cleanName}</div>
+  <div class="lbl-capture">${capLabel}</div>
 
   <div class="lbl-hr"></div>
 
@@ -461,21 +511,43 @@ document.getElementById('pageTitle').textContent = ordreId && labels[0]
 document.getElementById('labelCount').textContent =
   `${labels.length} etikett${labels.length !== 1 ? 'er' : ''} klar for utskrift`;
 
-if (!labels.length) {
-  area.innerHTML = `<div style="padding:40px 0;color:var(--muted);font-size:14px">
-    Ingen bekreftede varer funnet.<br>
-    <span style="font-size:13px">Merk varer som <em>Tilgjengelig</em> med vekt og holdbarhetsdato i pakkevisningen.</span>
-  </div>`;
-} else {
-  area.innerHTML = labels.map(({ order, name, weight, expiry }, idx) => `
-    <div class="label-card">
+const captureState = {};
+
+function setCapture(idx, val) {
+  captureState[idx] = val;
+  const card = document.getElementById('lc-' + idx);
+  const lbl = labels[idx];
+  card.querySelector('.label').outerHTML = buildLabel(lbl.order, lbl.name, lbl.weight, lbl.expiry, val);
+  card.querySelectorAll('.cap-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.val === val)
+  );
+}
+
+function renderCards() {
+  if (!labels.length) {
+    area.innerHTML = `<div style="padding:40px 0;color:var(--muted);font-size:14px">
+      Ingen bekreftede varer funnet.<br>
+      <span style="font-size:13px">Merk varer som <em>Tilgjengelig</em> med vekt og holdbarhetsdato i pakkevisningen.</span>
+    </div>`;
+    return;
+  }
+  area.innerHTML = labels.map(({ order, name, weight, expiry }, idx) => {
+    const cap = captureState[idx] || defaultCapture(name);
+    return `
+    <div class="label-card" id="lc-${idx}">
       <div class="label-card-header">
         ${order.customer} &nbsp;·&nbsp; ${name.replace(/\s*\([^)]*\)/g,'').trim()} &nbsp;·&nbsp; Etikett ${idx+1} av ${labels.length}
       </div>
-      ${buildLabel(order, name, weight, expiry)}
-    </div>
-  `).join('');
+      ${buildLabel(order, name, weight, expiry, cap)}
+      <div class="capture-toggle">
+        <button class="cap-btn ${cap==='villfanget'?'active':''}" data-val="villfanget" onclick="setCapture(${idx},'villfanget')">Villfanget</button>
+        <button class="cap-btn ${cap==='oppdrett'?'active':''}" data-val="oppdrett" onclick="setCapture(${idx},'oppdrett')">Oppdrett</button>
+      </div>
+    </div>`;
+  }).join('');
 }
+
+renderCards();
 </script>
 </body>
 </html>
