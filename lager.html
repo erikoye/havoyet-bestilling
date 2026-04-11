@@ -248,29 +248,46 @@ function parseWeightFromName(name) {
   return { grams: 0, stk: n };
 }
 
-function fmtWeight(grams) {
-  if (!grams) return null;
+// Formater rå gram-verdi til lesbar tekst: 3000 → "3 kg", 750 → "750 g"
+function fmtGrams(grams) {
   if (grams >= 1000) {
     const kg = grams / 1000;
     const rounded = Math.round(kg * 10) / 10;
-    return (rounded % 1 === 0 ? rounded : rounded.toFixed(1)) + ' kg';
+    return (rounded % 1 === 0 ? rounded : rounded.toFixed(1).replace('.', ',')) + ' kg';
   }
   return Math.round(grams) + ' g';
 }
 
-// Formaterer variant-streng fra varenavn: "3000 g" → "3 kg", "1500 g" → "1,5 kg"
+function fmtWeight(grams) {
+  if (!grams) return null;
+  return fmtGrams(grams);
+}
+
+// Formaterer variant-streng fra Shopify-varenavn til lesbar tekst.
+// Håndterer: "3000 g" → "3 kg", "2.5 kg" → "2,5 kg", "3000 – Uten bein" → "3 kg – Uten bein",
+//            "750" → "750 g", "6" → "6 stk"  (heuristikk: tall ≤ 20 = stk, > 20 = gram)
 function fmtVariant(variant) {
   if (!variant) return null;
-  return variant.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/gi, (_, num, unit) => {
+
+  // 1. Tall med eksplisitt g/kg-enhet
+  let result = variant.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/gi, (_, num, unit) => {
     const n = parseFloat(num.replace(',', '.'));
-    const grams = unit.toLowerCase() === 'kg' ? n * 1000 : n;
-    if (grams >= 1000) {
-      const kg = grams / 1000;
-      const rounded = Math.round(kg * 10) / 10;
-      return (rounded % 1 === 0 ? rounded : rounded.toFixed(1).replace('.', ',')) + ' kg';
-    }
-    return Math.round(grams) + ' g';
+    return fmtGrams(unit.toLowerCase() === 'kg' ? n * 1000 : n);
   });
+
+  // 2. Tall uten enhet (etter at g/kg allerede er konvertert):
+  //    – start av streng: tall etterfulgt av ikke-enhet (eller end-of-string / separatortegn)
+  //    – ≤ 20  →  stk  |  > 20  →  gram
+  result = result.replace(
+    /^(\d+(?:[.,]\d+)?)(?!\s*(?:g|kg|stk)\b)((\s*[-–\/,].*)|$)/,
+    (_, num, rest) => {
+      const n = parseFloat(num.replace(',', '.'));
+      const suffix = rest || '';
+      return n > 20 ? fmtGrams(n) + suffix : `${Math.round(n)} stk${suffix}`;
+    }
+  );
+
+  return result;
 }
 
 // ── BYGG PRODUKTKART ─────────────────────────────────────────────
