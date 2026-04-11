@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Innkjøpsstatus — Havøyet AS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --primary: #0d9488; --primary-dk: #0f766e;
+      --bg: #f1f5f9; --dark: #0f172a; --surface: #ffffff;
+      --border: #e2e8f0; --muted: #64748b;
+      --c-red: #ef4444; --c-orange: #f59e0b; --c-green: #22c55e;
+    }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--dark); min-height: 100vh; display: flex; flex-direction: column; }
+
+    header { background: var(--dark); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; height: 56px; flex-shrink: 0; position: sticky; top: 0; z-index: 200; }
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .back-btn { display: flex; align-items: center; gap: 6px; color: #94a3b8; text-decoration: none; font-size: 13px; font-weight: 500; padding: 6px 10px; border-radius: 6px; transition: color .15s, background .15s; }
+    .back-btn:hover { color: #fff; background: #1e293b; }
+    .hdr-div { width: 1px; height: 20px; background: #334155; }
+    .header-title { font-size: 14px; font-weight: 600; color: #fff; }
+    .clock { font-family: 'DM Mono', monospace; font-size: 12px; color: #94a3b8; }
+
+    .flask-banner { display: none; padding: 10px 24px; font-size: 13px; align-items: center; gap: 8px; border-bottom: 1px solid transparent; }
+
+    main { flex: 1; max-width: 960px; margin: 0 auto; width: 100%; padding: 28px 24px 80px; }
+
+    /* Stats */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; }
+    .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .stat-value { font-family: 'DM Mono', monospace; font-size: 28px; font-weight: 500; color: var(--dark); line-height: 1; margin-top: 6px; }
+    .stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .stat-card.s-red    { border-left: 3px solid var(--c-red); }
+    .stat-card.s-orange { border-left: 3px solid var(--c-orange); }
+    .stat-card.s-green  { border-left: 3px solid var(--c-green); }
+
+    /* Filter bar */
+    .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filter-btn { padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 13px; font-weight: 500; font-family: 'DM Sans', sans-serif; color: var(--muted); cursor: pointer; transition: all .15s; }
+    .filter-btn:hover { border-color: var(--primary); color: var(--primary-dk); }
+    .filter-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .sep { width: 1px; background: var(--border); align-self: stretch; margin: 0 2px; }
+
+    /* Product list */
+    .product-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .product-row { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .product-row.all-ok   { border-left: 3px solid var(--c-green); }
+    .product-row.partial  { border-left: 3px solid var(--c-orange); }
+    .product-row.none-ok  { border-left: 3px solid var(--c-red); }
+
+    .product-main { display: flex; align-items: center; gap: 14px; padding: 14px 18px; cursor: pointer; user-select: none; }
+    .product-main:hover { background: #f8fafc; }
+
+    .product-name-wrap { flex: 1; min-width: 0; }
+    .product-name { font-size: 14px; font-weight: 600; color: var(--dark); }
+    .product-variant { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; margin-top: 2px; }
+
+    .product-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+
+    .conf-weight { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+    .mbadge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .mbadge.red    { background: #fef2f2; color: var(--c-red);  border: 1px solid #fecaca; }
+    .mbadge.orange { background: #fffbeb; color: #d97706;        border: 1px solid #fde68a; }
+    .mbadge.green  { background: #f0fdf4; color: #16a34a;        border: 1px solid #bbf7d0; }
+
+    .pbar-wrap { display: flex; align-items: center; gap: 7px; }
+    .pbar-bg { width: 72px; height: 5px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+    .pbar-fill { height: 100%; border-radius: 3px; }
+    .pbar-fill.red    { background: var(--c-red); }
+    .pbar-fill.orange { background: var(--c-orange); }
+    .pbar-fill.green  { background: var(--c-green); }
+    .pbar-label { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+    .chevron { color: #cbd5e1; transition: transform .2s; flex-shrink: 0; }
+    .product-row.open .chevron { transform: rotate(90deg); }
+
+    /* Detail */
+    .product-detail { display: none; border-top: 1px solid var(--border); padding: 14px 18px 16px; background: #f8fafc; }
+    .product-row.open .product-detail { display: block; }
+    .detail-section { margin-bottom: 12px; }
+    .detail-section:last-child { margin-bottom: 0; }
+    .detail-section-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 7px; }
+
+    .order-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .order-pill { display: inline-flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 5px 11px; font-size: 12px; color: var(--dark); text-decoration: none; transition: border-color .12s, background .12s; }
+    .order-pill:hover { border-color: var(--primary); background: #f0fdfb; }
+    .order-pill .p-id   { font-family: 'DM Mono', monospace; color: var(--muted); font-size: 11px; }
+    .order-pill .p-date { font-family: 'DM Mono', monospace; color: var(--muted); font-size: 11px; }
+    .order-pill .p-miss-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c-red); flex-shrink: 0; }
+    .order-pill .p-ok-dot   { width: 6px; height: 6px; border-radius: 50%; background: var(--c-green); flex-shrink: 0; }
+
+    .weight-summary { display: flex; gap: 20px; flex-wrap: wrap; }
+    .wsum-item { display: flex; flex-direction: column; gap: 2px; }
+    .wsum-label { font-size: 11px; color: var(--muted); }
+    .wsum-value { font-family: 'DM Mono', monospace; font-size: 14px; font-weight: 500; }
+    .wsum-value.red   { color: var(--c-red); }
+    .wsum-value.green { color: #16a34a; }
+    .wsum-value.muted { color: var(--muted); }
+
+    .empty-state { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
+
+    footer { position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 10px 24px; }
+    footer span { font-family: 'DM Mono', monospace; font-size: 11px; color: #94a3b8; }
+
+    @media (max-width: 700px) {
+      .stats { grid-template-columns: 1fr 1fr; }
+      .conf-weight { display: none; }
+      .product-right { gap: 8px; }
+      .pbar-bg { width: 52px; }
+    }
+    @media (max-width: 480px) {
+      main { padding: 16px 12px 80px; }
+      .stats { gap: 8px; }
+      .stat-value { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a href="index.html" class="back-btn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      Tilbake
+    </a>
+    <div class="hdr-div"></div>
+    <span class="header-title">Innkjøpsstatus</span>
+  </div>
+  <span class="clock" id="clock">--:--:--</span>
+</header>
+
+<div class="flask-banner" id="flaskBanner"></div>
+
+<main>
+
+  <div class="filter-bar">
+    <button class="filter-btn" id="swHavoyet" onclick="setStore('havoyet')">Havøyet</button>
+    <button class="filter-btn" id="swNesttun" onclick="setStore('nesttun')">Nesttun Fisk &amp; Vilt</button>
+    <div class="sep"></div>
+    <button class="filter-btn active" id="fAll"     onclick="setFilter('all')">Alle</button>
+    <button class="filter-btn"        id="fMissing" onclick="setFilter('missing')">Kun manglende</button>
+    <button class="filter-btn"        id="fReady"   onclick="setFilter('ready')">Kun klar</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Produktlinjer</div>
+      <div class="stat-value" id="statTotal">–</div>
+      <div class="stat-sub" id="statTotalSub">–</div>
+    </div>
+    <div class="stat-card s-red">
+      <div class="stat-label">Mangler alt</div>
+      <div class="stat-value" id="statNone">–</div>
+      <div class="stat-sub">0 % bekreftet</div>
+    </div>
+    <div class="stat-card s-orange">
+      <div class="stat-label">Delvis klar</div>
+      <div class="stat-value" id="statPartial">–</div>
+      <div class="stat-sub">1–99 % bekreftet</div>
+    </div>
+    <div class="stat-card s-green">
+      <div class="stat-label">Fullt bekreftet</div>
+      <div class="stat-value" id="statReady">–</div>
+      <div class="stat-sub">100 % bekreftet</div>
+    </div>
+  </div>
+
+  <div class="product-list" id="productList"></div>
+
+</main>
+
+<footer>
+  <span>Havøyet AS — Innkjøpsstatus</span>
+  <span id="footerUpdated">–</span>
+</footer>
+
+<script>
+// ── KONFIG ───────────────────────────────────────────────────────
+const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:5001' : window.location.origin;
+
+const _T = new Date(); _T.setHours(0,0,0,0);
+function isoDate(d) { return d.toISOString().slice(0,10); }
+function dayOff(n)  { const d=new Date(_T); d.setDate(d.getDate()+n); return isoDate(d); }
+const todayISO = isoDate(_T);
+
+// ── MOCK-DATA (fallback) ─────────────────────────────────────────
+const MOCK_ORDERS = [
+  { id:'#4821', customer:'Ingrid Bakke',   delivery:dayOff(1), slot:'a', seen:false,
+    items:[{name:'Atlanterhavslaks, hel'},{name:'Kongekrabbe, klør'},{name:'Reker, ferske'}] },
+  { id:'#4820', customer:'Lars Johansen',  delivery:dayOff(1), slot:'b', seen:false,
+    items:[{name:'Torsk, loins',weight:820,expiry:dayOff(4)},{name:'Sei, filet',weight:650,expiry:dayOff(4)},{name:'Blåskjell, nett 1 kg'},{name:'Krabbe, hel kokt'},{name:'Reker, ferske'}] },
+  { id:'#4819', customer:'Eva Mikkelsen',  delivery:dayOff(1), slot:'a', seen:true,
+    items:[{name:'Laks, røkt',weight:400,expiry:dayOff(6)},{name:'Ørret, hel',weight:1100,expiry:dayOff(3)}] },
+  { id:'#4818', customer:'Marte Lund',     delivery:dayOff(2), slot:'a', seen:false,
+    items:[{name:'Kveite, steak',weight:560,expiry:dayOff(5)},{name:'Reker, ferske'}] },
+  { id:'#4817', customer:'Petter Holm',    delivery:dayOff(2), slot:'b', seen:true,
+    items:[{name:'Torsk, loins'},{name:'Sei, filet'},{name:'Laks, hel'}] },
+  { id:'#4808', customer:'Fredrik Løkke',  delivery:dayOff(0), slot:'b', seen:false,
+    items:[{name:'Kongekrabbe, klør'},{name:'Hummer, hel'}] },
+  { id:'#4807', customer:'Cecilie Moen',   delivery:dayOff(0), slot:'a', seen:true,
+    items:[{name:'Torsk, loins',weight:800,expiry:dayOff(2)},{name:'Laks, røkt',weight:400,expiry:dayOff(5)}] },
+];
+
+let ORDERS = [];
+let activeFilter = 'all';
+
+// ── BUTIKKFILTER ─────────────────────────────────────────────────
+function getStore() { return localStorage.getItem('hv_active_store') || 'havoyet'; }
+function storeFilter(o) {
+  const s = getStore();
+  if (s === 'nesttun') return o.store === 'Nesttun Fisk & Vilt';
+  return !o.store || o.store === 'Havøyet';
+}
+function setStore(s) {
+  localStorage.setItem('hv_active_store', s);
+  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
+  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
+  render();
+}
+function initStoreSwitcher() {
+  const s = getStore();
+  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
+  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
+}
+
+// ── PACKING STATE ────────────────────────────────────────────────
+function getPackingState() {
+  try { return JSON.parse(localStorage.getItem('havøyet_state') || '{}'); } catch(e) { return {}; }
+}
+
+// ── VEKT-PARSING FRA VARENAVN ────────────────────────────────────
+// Finner første "(...)" med tall + enhet i varenavn, f.eks. "(800 g)" eller "(1.5 kg)"
+function parseWeightFromName(name) {
+  const m = name.match(/\((\d+(?:[.,]\d+)?)\s*(g|kg|stk|nett|boks)\b/i);
+  if (!m) return null;
+  const n = parseFloat(m[1].replace(',', '.'));
+  const u = m[2].toLowerCase();
+  if (u === 'kg') return { grams: Math.round(n * 1000), stk: 0 };
+  if (u === 'g')  return { grams: n, stk: 0 };
+  return { grams: 0, stk: n };
+}
+
+function fmtWeight(grams) {
+  if (!grams) return null;
+  if (grams >= 1000) {
+    const kg = grams / 1000;
+    return (kg % 1 === 0 ? kg : kg.toFixed(1)) + ' kg';
+  }
+  return Math.round(grams) + ' g';
+}
+
+// ── BYGG PRODUKTKART ─────────────────────────────────────────────
+function buildProductMap(orders) {
+  const packingState = getPackingState();
+  const map = {};
+
+  orders.filter(storeFilter).forEach(order => {
+    const orderState = packingState[order.id];
+    (order.items || []).forEach((item, i) => {
+      const key = item.name || '(ukjent)';
+      if (!map[key]) map[key] = {
+        name: key,
+        total: 0, confirmed: 0,
+        confirmedGrams: 0, confirmedStk: 0,
+        estMissingGrams: 0, estMissingStk: 0, canEstimate: false,
+        missingOrders: [], confirmedOrders: []
+      };
+
+      map[key].total++;
+
+      let isBestilt = false;
+      let packedGrams = 0, packedStk = 0;
+
+      if (orderState && orderState[i]) {
+        const s = orderState[i];
+        isBestilt = s.avail === 'ok'
+          && s.weight && s.weight.toString().trim() !== ''
+          && s.expiry && s.expiry.trim() !== '';
+        if (isBestilt) {
+          const w = parseFloat(s.weight) || 0;
+          if ((s.weightUnit || 'g') === 'stk') packedStk = w;
+          else packedGrams = w;
+        }
+      } else {
+        // Fallback: vekt/holdbarhet direkte på vare (mock-data / Shopify pre-fill)
+        isBestilt = item.weight != null && item.expiry != null;
+        if (isBestilt && item.weight) packedGrams = parseFloat(item.weight) || 0;
+      }
+
+      const d = new Date((order.delivery || todayISO) + 'T00:00:00');
+      const dateStr = d.toLocaleDateString('nb-NO', {day:'2-digit', month:'2-digit'});
+      const slotStr = order.slot === 'a' ? '13–15' : '15–18';
+      const pill = { customer: order.customer, orderId: order.id, delivery: order.delivery, dateStr, slotStr };
+
+      if (isBestilt) {
+        map[key].confirmed++;
+        map[key].confirmedGrams += packedGrams;
+        map[key].confirmedStk   += packedStk;
+        map[key].confirmedOrders.push(pill);
+      } else {
+        const pw = parseWeightFromName(key);
+        if (pw) {
+          map[key].canEstimate = true;
+          map[key].estMissingGrams += pw.grams;
+          map[key].estMissingStk   += pw.stk;
+        }
+        map[key].missingOrders.push(pill);
+      }
+    });
+  });
+
+  return map;
+}
+
+// ── RENDER ───────────────────────────────────────────────────────
+function render() {
+  const orders = ORDERS.length ? ORDERS : MOCK_ORDERS;
+  const map = buildProductMap(orders);
+  const products = Object.values(map);
+
+  // Statistikk
+  const noneOk    = products.filter(p => p.confirmed === 0);
+  const allOk     = products.filter(p => p.confirmed === p.total);
+  const partial   = products.filter(p => p.confirmed > 0 && p.confirmed < p.total);
+  const totalVarer = products.reduce((s, p) => s + p.total, 0);
+  const manglerVarer = products.reduce((s, p) => s + (p.total - p.confirmed), 0);
+
+  document.getElementById('statTotal').textContent   = products.length;
+  document.getElementById('statTotalSub').textContent = `${totalVarer} varelinjer totalt · ${manglerVarer} mangler`;
+  document.getElementById('statNone').textContent    = noneOk.length;
+  document.getElementById('statPartial').textContent = partial.length;
+  document.getElementById('statReady').textContent   = allOk.length;
+
+  // Filtrer
+  let visible = products;
+  if (activeFilter === 'missing') visible = products.filter(p => p.confirmed < p.total);
+  if (activeFilter === 'ready')   visible = products.filter(p => p.confirmed === p.total);
+
+  // Sorter: mest manglende % øverst, deretter navn
+  visible.sort((a, b) => {
+    const aPct = a.total ? a.confirmed / a.total : 0;
+    const bPct = b.total ? b.confirmed / b.total : 0;
+    if (aPct !== bPct) return aPct - bPct;
+    return a.name.localeCompare(b.name, 'nb');
+  });
+
+  const list = document.getElementById('productList');
+  if (!visible.length) {
+    list.innerHTML = `<div class="empty-state">Ingen produkter å vise</div>`;
+    return;
+  }
+
+  list.innerHTML = visible.map(p => renderProductRow(p)).join('');
+}
+
+function renderProductRow(p) {
+  const missing = p.total - p.confirmed;
+  const pct = p.total ? Math.round(p.confirmed / p.total * 100) : 0;
+  const cls     = pct === 100 ? 'all-ok' : pct === 0 ? 'none-ok' : 'partial';
+  const barCls  = pct === 100 ? 'green'  : pct === 0 ? 'red'     : 'orange';
+  const badgeCls = pct === 100 ? 'green'  : pct === 0 ? 'red'     : 'orange';
+  const badgeTxt = pct === 100 ? 'Klar ✓' : `${missing} mangler`;
+
+  // Varenavn: skil ut variant i parentes
+  const base    = p.name.replace(/\s*\(.*\)\s*$/, '').trim();
+  const variant = (() => { const m = p.name.match(/\((.+)\)\s*$/); return m ? m[1] : null; })();
+
+  // Bekreftet vekt
+  const confParts = [];
+  if (p.confirmedGrams > 0) confParts.push(fmtWeight(p.confirmedGrams));
+  if (p.confirmedStk   > 0) confParts.push(`${p.confirmedStk} stk`);
+  const confStr = confParts.join(' + ');
+
+  // Estimert manglende vekt
+  const estParts = [];
+  if (p.canEstimate) {
+    if (p.estMissingGrams > 0) estParts.push(`~${fmtWeight(p.estMissingGrams)}`);
+    if (p.estMissingStk   > 0) estParts.push(`~${p.estMissingStk} stk`);
+  } else if (missing > 0) {
+    estParts.push(`${missing} stk ukjent vekt`);
+  }
+  const estStr = estParts.join(' + ');
+
+  // Varenavn-del i raden
+  const nameHtml = escH(base) + (variant ? `<div class="product-variant">${escH(variant)}</div>` : '');
+
+  // Conf-weight chip
+  const weightChip = confStr
+    ? `<span class="conf-weight" title="${p.confirmed}/${p.total} bekreftet med vekt">${confStr} bekreftet</span>`
+    : '';
+
+  // Expandable detail
+  const missingPills = p.missingOrders.map(mo =>
+    `<a class="order-pill" href="pakke.html?ordre=${encodeURIComponent(mo.orderId)}">
+      <span class="p-miss-dot"></span>
+      <span>${escH(mo.customer.split(' ')[0])}</span>
+      <span class="p-id">${escH(mo.orderId)}</span>
+      <span class="p-date">${mo.dateStr} ${mo.slotStr}</span>
+    </a>`
+  ).join('');
+
+  const confPills = p.confirmedOrders.map(co =>
+    `<a class="order-pill" href="pakke.html?ordre=${encodeURIComponent(co.orderId)}">
+      <span class="p-ok-dot"></span>
+      <span>${escH(co.customer.split(' ')[0])}</span>
+      <span class="p-id">${escH(co.orderId)}</span>
+      <span class="p-date">${co.dateStr} ${co.slotStr}</span>
+    </a>`
+  ).join('');
+
+  const detailHtml = `
+    <div class="product-detail">
+      ${missing > 0 ? `
+      <div class="detail-section">
+        <div class="detail-section-label">Mangler i disse bestillingene (${missing})</div>
+        <div class="order-pills">${missingPills}</div>
+      </div>` : ''}
+      <div class="detail-section">
+        <div class="weight-summary">
+          <div class="wsum-item">
+            <div class="wsum-label">Mangler (ikke bestilt inn)</div>
+            <div class="wsum-value ${missing > 0 ? 'red' : 'green'}">${missing > 0 ? estStr || `${missing} varer` : '—'}</div>
+          </div>
+          <div class="wsum-item">
+            <div class="wsum-label">Bekreftet vekt</div>
+            <div class="wsum-value ${p.confirmed > 0 ? 'green' : 'muted'}">${confStr || '—'}</div>
+          </div>
+          <div class="wsum-item">
+            <div class="wsum-label">Totalt bestillinger</div>
+            <div class="wsum-value muted">${p.total} stk</div>
+          </div>
+        </div>
+      </div>
+      ${p.confirmed > 0 ? `
+      <div class="detail-section">
+        <div class="detail-section-label">Bestilt inn (${p.confirmed})</div>
+        <div class="order-pills">${confPills}</div>
+      </div>` : ''}
+    </div>`;
+
+  return `<div class="product-row ${cls}" onclick="toggleRow(this)">
+    <div class="product-main">
+      <div class="product-name-wrap">${nameHtml}</div>
+      <div class="product-right">
+        ${weightChip}
+        <span class="mbadge ${badgeCls}">${badgeTxt}</span>
+        <div class="pbar-wrap">
+          <div class="pbar-bg"><div class="pbar-fill ${barCls}" style="width:${pct}%"></div></div>
+          <span class="pbar-label">${p.confirmed}/${p.total}</span>
+        </div>
+        <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+    </div>
+    ${detailHtml}
+  </div>`;
+}
+
+function toggleRow(el) {
+  el.classList.toggle('open');
+}
+
+function escH(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── FILTER ───────────────────────────────────────────────────────
+function setFilter(f) {
+  activeFilter = f;
+  ['All','Missing','Ready'].forEach(id => {
+    document.getElementById('f' + id).classList.toggle('active', f === id.toLowerCase());
+  });
+  render();
+}
+
+// ── DATA-LASTING (samme mønster som pakke.html) ──────────────────
+function multiplyWeight(variant, qty) {
+  if (!variant || qty <= 1) return variant;
+  let r = variant.replace(/(\d+(?:[.,]\d+)?)\s*(stk)\b/i, (_, n, u) => `${Math.round(parseFloat(n.replace(',','.')) * qty)} ${u}`);
+  r = r.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/i, (_, n, u) => {
+    const g = parseFloat(n.replace(',','.')) * (u.toLowerCase()==='kg'?1000:1) * qty;
+    return g >= 1000 ? `${g%1000===0?g/1000:(g/1000).toFixed(1)} kg` : `${g} g`;
+  });
+  return r;
+}
+
+function normalizeOrder(o) {
+  return {
+    id: o.id, customer: o.customer, phone: o.phone||'',
+    delivery: o.delivery || todayISO, slot: o.slot||'a',
+    seen: o.seen||false, store: o.store||'',
+    items: (o.items||[]).map(i => {
+      const qty = i.quantity || 1;
+      const v = multiplyWeight(i.variant, qty);
+      return { name: v ? `${i.name} (${v})` : i.name, qty };
+    }),
+  };
+}
+
+function setBanner(ok, msg) {
+  const b = document.getElementById('flaskBanner');
+  b.style.display = 'flex';
+  b.style.background = ok ? '#dcfce7' : '#fef3c7';
+  b.style.borderBottom = ok ? '1px solid #86efac' : '1px solid #fcd34d';
+  b.style.color = ok ? '#166534' : '#92400e';
+  b.innerHTML = `<span>${ok ? '🟢' : '🟡'}</span> ${msg}`;
+}
+
+function mergeManualOrders() {
+  try {
+    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    const ids = new Set(ORDERS.map(o => o.id));
+    manual.forEach(o => { if (!ids.has(o.id)) ORDERS.push(o); });
+  } catch(e) {}
+}
+
+function filterHiddenOrders() {
+  try {
+    const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
+    if (hidden.length) ORDERS = ORDERS.filter(o => !hidden.includes(o.id));
+  } catch(e) {}
+}
+
+async function loadFromFlask() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) throw new Error();
+    const data = await r.json();
+    if (data.orders && data.orders.length > 0) {
+      ORDERS = data.orders.map(normalizeOrder);
+      mergeManualOrders(); filterHiddenOrders();
+      localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
+      const tid = data.last_sync ? new Date(data.last_sync).toLocaleTimeString('nb',{hour:'2-digit',minute:'2-digit'}) : '';
+      setBanner(true, `Koblet til Shopify${tid ? ' · sist synk ' + tid : ''} · ${ORDERS.length} bestillinger`);
+      document.getElementById('footerUpdated').textContent = 'Oppdatert ' + new Date().toLocaleTimeString('nb',{hour:'2-digit',minute:'2-digit'});
+      render(); return;
+    }
+  } catch(e) {}
+
+  // Fallback: lokalt bufret
+  const cached = localStorage.getItem('havøyet_orders');
+  if (cached) {
+    try {
+      ORDERS = JSON.parse(cached).map(normalizeOrder);
+      mergeManualOrders(); filterHiddenOrders();
+      setBanner(false, 'Flask ikke tilgjengelig – viser sist lagrede bestillinger');
+      render(); return;
+    } catch(e) {}
+  }
+
+  // Siste fallback: mock
+  ORDERS = [];
+  setBanner(false, 'Bruker demodata – Flask-backend ikke tilgjengelig');
+  render();
+}
+
+// ── KLOKKE ───────────────────────────────────────────────────────
+function pad(n) { return String(n).padStart(2,'0'); }
+function tickClock() {
+  const n = new Date();
+  document.getElementById('clock').textContent = pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());
+}
+tickClock(); setInterval(tickClock, 1000);
+
+// ── INIT ─────────────────────────────────────────────────────────
+initStoreSwitcher();
+render();        // vis mock-data umiddelbart
+loadFromFlask(); // erstatt med live-data om Flask er oppe
+setInterval(loadFromFlask, 5 * 60 * 1000);
+</script>
+</body>
+</html>

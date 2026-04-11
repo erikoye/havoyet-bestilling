@@ -134,7 +134,7 @@
     }
 
     /* ── NAV CARDS ── */
-    .nav-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 40px; }
+    .nav-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 40px; }
 
     .nav-card {
       background: var(--surface);
@@ -603,6 +603,20 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </div>
     </a>
+    <a href="lager.html" class="nav-card">
+      <div class="nav-icon" style="background:#fff7ed;border-color:#fed7aa;color:#ea580c">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3h18v4H3z"/><path d="M3 10h18v4H3z"/><path d="M3 17h18v4H3z"/>
+        </svg>
+      </div>
+      <div class="nav-content">
+        <h2>Innkjøpsstatus</h2>
+        <p>Hva mangler å kjøpes inn</p>
+      </div>
+      <div class="nav-arrow">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+    </a>
   </div>
 
   <!-- TABLE -->
@@ -911,6 +925,13 @@ function filterHiddenOrders() {
   } catch(e) {}
 }
 
+function applyOverrides() {
+  try {
+    const ov = JSON.parse(localStorage.getItem('havøyet_order_overrides') || '{}');
+    ORDERS.forEach(o => { if (ov[o.id]) { o.delivery = ov[o.id].delivery; o.slot = ov[o.id].slot; } });
+  } catch(e) {}
+}
+
 function deleteOrder(id) {
   if (!confirm('Slett denne bestillingen?')) return;
   // Fjern fra manuell liste
@@ -952,6 +973,7 @@ async function loadFromFlask(){
   await syncFromServer();
   mergeManualOrders();
   filterHiddenOrders();
+  applyOverrides();
   renderAll();
 }
 
