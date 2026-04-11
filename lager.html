@@ -252,9 +252,25 @@ function fmtWeight(grams) {
   if (!grams) return null;
   if (grams >= 1000) {
     const kg = grams / 1000;
-    return (kg % 1 === 0 ? kg : kg.toFixed(1)) + ' kg';
+    const rounded = Math.round(kg * 10) / 10;
+    return (rounded % 1 === 0 ? rounded : rounded.toFixed(1)) + ' kg';
   }
   return Math.round(grams) + ' g';
+}
+
+// Formaterer variant-streng fra varenavn: "3000 g" → "3 kg", "1500 g" → "1,5 kg"
+function fmtVariant(variant) {
+  if (!variant) return null;
+  return variant.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/gi, (_, num, unit) => {
+    const n = parseFloat(num.replace(',', '.'));
+    const grams = unit.toLowerCase() === 'kg' ? n * 1000 : n;
+    if (grams >= 1000) {
+      const kg = grams / 1000;
+      const rounded = Math.round(kg * 10) / 10;
+      return (rounded % 1 === 0 ? rounded : rounded.toFixed(1).replace('.', ',')) + ' kg';
+    }
+    return Math.round(grams) + ' g';
+  });
 }
 
 // ── BYGG PRODUKTKART ─────────────────────────────────────────────
@@ -389,8 +405,9 @@ function renderProductRow(p) {
   }
   const estStr = estParts.join(' + ');
 
-  // Varenavn-del i raden
-  const nameHtml = escH(base) + (variant ? `<div class="product-variant">${escH(variant)}</div>` : '');
+  // Varenavn-del i raden (formater gram→kg i variant-teksten)
+  const variantFmt = fmtVariant(variant);
+  const nameHtml = escH(base) + (variantFmt ? `<div class="product-variant">${escH(variantFmt)}</div>` : '');
 
   // Conf-weight chip
   const weightChip = confStr
