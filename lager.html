@@ -104,6 +104,21 @@
     .wsum-value.green { color: #16a34a; }
     .wsum-value.muted { color: var(--muted); }
 
+    /* ── PRODUCT GROUP HEADER (multi-variant) ── */
+    .product-header { display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--border); background: #f8fafc; }
+    .product-header-name { font-size: 14px; font-weight: 600; color: var(--dark); flex: 1; }
+
+    /* ── VARIANT SUB-ROWS ── */
+    .variant-row { display: flex; align-items: center; gap: 14px; padding: 10px 18px 10px 36px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; transition: background .1s; }
+    .variant-rows > *:last-child { border-bottom: none; }
+    .variant-row:hover { background: #f8fafc; }
+    .variant-label { flex: 1; min-width: 0; }
+    .variant-name { font-size: 13px; font-weight: 500; color: var(--dark); }
+    .variant-weight-hint { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; margin-top: 2px; }
+    .variant-detail { display: none; padding: 10px 18px 12px 36px; background: #f8fafc; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .variant-row.open + .variant-detail { display: block; }
+    .variant-row.open .chevron { transform: rotate(90deg); }
+
     .empty-state { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
 
     footer { position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 10px 24px; }
@@ -236,19 +251,7 @@ function getPackingState() {
   try { return JSON.parse(localStorage.getItem('havøyet_state') || '{}'); } catch(e) { return {}; }
 }
 
-// ── VEKT-PARSING FRA VARENAVN ────────────────────────────────────
-// Finner første "(...)" med tall + enhet i varenavn, f.eks. "(800 g)" eller "(1.5 kg)"
-function parseWeightFromName(name) {
-  const m = name.match(/\((\d+(?:[.,]\d+)?)\s*(g|kg|stk|nett|boks)\b/i);
-  if (!m) return null;
-  const n = parseFloat(m[1].replace(',', '.'));
-  const u = m[2].toLowerCase();
-  if (u === 'kg') return { grams: Math.round(n * 1000), stk: 0 };
-  if (u === 'g')  return { grams: n, stk: 0 };
-  return { grams: 0, stk: n };
-}
-
-// Formater rå gram-verdi til lesbar tekst: 3000 → "3 kg", 750 → "750 g"
+// ── VEKT-FORMATERING ─────────────────────────────────────────────
 function fmtGrams(grams) {
   if (grams >= 1000) {
     const kg = grams / 1000;
@@ -257,57 +260,81 @@ function fmtGrams(grams) {
   }
   return Math.round(grams) + ' g';
 }
-
 function fmtWeight(grams) {
   if (!grams) return null;
   return fmtGrams(grams);
 }
 
-// Formaterer variant-streng fra Shopify-varenavn til lesbar tekst.
-// Håndterer: "3000 g" → "3 kg", "2.5 kg" → "2,5 kg", "3000 – Uten bein" → "3 kg – Uten bein",
-//            "750" → "750 g", "6" → "6 stk"  (heuristikk: tall ≤ 20 = stk, > 20 = gram)
-function fmtVariant(variant) {
-  if (!variant) return null;
+// ── PARSE VARENAVN TIL BASENAVN + VEKT + KATEGORI ────────────────
+// "Lyr filet (3000 – Uten bein)" → { baseName:"Lyr filet", weightStr:"3 kg", category:"Uten bein" }
+// "Torsk, loins (800 g)"         → { baseName:"Torsk, loins", weightStr:"800 g", category:"" }
+// "Reker, ferske"                → { baseName:"Reker, ferske", weightStr:null, category:"" }
+function parseItemName(fullName) {
+  const m = fullName.match(/^(.+?)\s*\((.+)\)\s*$/);
+  if (!m) return { baseName: fullName, weightStr: null, weightGrams: 0, weightStk: 0, category: '' };
 
-  // 1. Tall med eksplisitt g/kg-enhet
-  let result = variant.replace(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/gi, (_, num, unit) => {
-    const n = parseFloat(num.replace(',', '.'));
-    return fmtGrams(unit.toLowerCase() === 'kg' ? n * 1000 : n);
-  });
+  const baseName = m[1].trim();
+  const variantText = m[2].trim();
 
-  // 2. Tall uten enhet (etter at g/kg allerede er konvertert):
-  //    – start av streng: tall etterfulgt av ikke-enhet (eller end-of-string / separatortegn)
-  //    – ≤ 20  →  stk  |  > 20  →  gram
-  result = result.replace(
-    /^(\d+(?:[.,]\d+)?)(?!\s*(?:g|kg|stk)\b)((\s*[-–\/,].*)|$)/,
-    (_, num, rest) => {
-      const n = parseFloat(num.replace(',', '.'));
-      const suffix = rest || '';
-      return n > 20 ? fmtGrams(n) + suffix : `${Math.round(n)} stk${suffix}`;
+  // Split on em-dash or regular hyphen (with surrounding spaces)
+  const parts = variantText.split(/\s*[–\-]\s*/);
+
+  let weightGrams = 0, weightStk = 0;
+  const catParts = [];
+
+  for (const part of parts) {
+    const pTrim = part.trim();
+    const mKg = pTrim.match(/^(\d+(?:[.,]\d+)?)\s*kg$/i);
+    const mG  = pTrim.match(/^(\d+(?:[.,]\d+)?)\s*g$/i);
+    const mN  = pTrim.match(/^(\d+(?:[.,]\d+)?)$/);
+
+    if (mKg) {
+      weightGrams = Math.round(parseFloat(mKg[1].replace(',', '.')) * 1000);
+    } else if (mG) {
+      weightGrams = Math.round(parseFloat(mG[1].replace(',', '.')));
+    } else if (mN) {
+      const n = parseFloat(mN[1].replace(',', '.'));
+      if (n > 20) weightGrams = Math.round(n);
+      else weightStk = n;
+    } else {
+      catParts.push(pTrim);
     }
-  );
+  }
 
-  return result;
+  let weightStr = null;
+  if (weightGrams > 0) weightStr = fmtGrams(weightGrams);
+  else if (weightStk > 0) weightStr = `${Math.round(weightStk)} stk`;
+
+  return { baseName, weightStr, weightGrams, weightStk, category: catParts.join(' – ') };
 }
 
-// ── BYGG PRODUKTKART ─────────────────────────────────────────────
+// ── BYGG PRODUKTKART (GRUPPERT PER BASISPRODUKTNAVN) ─────────────
 function buildProductMap(orders) {
   const packingState = getPackingState();
-  const map = {};
+  const groups = {};
 
   orders.filter(storeFilter).forEach(order => {
     const orderState = packingState[order.id];
     (order.items || []).forEach((item, i) => {
-      const key = item.name || '(ukjent)';
-      if (!map[key]) map[key] = {
-        name: key,
+      const fullName = item.name || '(ukjent)';
+      const { baseName, weightStr, weightGrams, weightStk, category } = parseItemName(fullName);
+
+      if (!groups[baseName]) groups[baseName] = {
+        name: baseName, variants: {}, total: 0, confirmed: 0
+      };
+      const grp = groups[baseName];
+
+      if (!grp.variants[category]) grp.variants[category] = {
+        category, weightStr, weightGrams, weightStk,
         total: 0, confirmed: 0,
         confirmedGrams: 0, confirmedStk: 0,
         estMissingGrams: 0, estMissingStk: 0, canEstimate: false,
         missingOrders: [], confirmedOrders: []
       };
+      const v = grp.variants[category];
 
-      map[key].total++;
+      v.total++;
+      grp.total++;
 
       let isBestilt = false;
       let packedGrams = 0, packedStk = 0;
@@ -323,7 +350,7 @@ function buildProductMap(orders) {
           else packedGrams = w;
         }
       } else {
-        // Fallback: vekt/holdbarhet direkte på vare (mock-data / Shopify pre-fill)
+        // Fallback: vekt/holdbarhet direkte på vare (mock-data)
         isBestilt = item.weight != null && item.expiry != null;
         if (isBestilt && item.weight) packedGrams = parseFloat(item.weight) || 0;
       }
@@ -334,51 +361,66 @@ function buildProductMap(orders) {
       const pill = { customer: order.customer, orderId: order.id, delivery: order.delivery, dateStr, slotStr };
 
       if (isBestilt) {
-        map[key].confirmed++;
-        map[key].confirmedGrams += packedGrams;
-        map[key].confirmedStk   += packedStk;
-        map[key].confirmedOrders.push(pill);
+        v.confirmed++;
+        grp.confirmed++;
+        v.confirmedGrams += packedGrams;
+        v.confirmedStk   += packedStk;
+        v.confirmedOrders.push(pill);
       } else {
-        const pw = parseWeightFromName(key);
-        if (pw) {
-          map[key].canEstimate = true;
-          map[key].estMissingGrams += pw.grams;
-          map[key].estMissingStk   += pw.stk;
-        }
-        map[key].missingOrders.push(pill);
+        if (weightGrams > 0) { v.canEstimate = true; v.estMissingGrams += weightGrams; }
+        else if (weightStk > 0) { v.canEstimate = true; v.estMissingStk += weightStk; }
+        v.missingOrders.push(pill);
       }
     });
   });
 
-  return map;
+  return groups;
 }
 
 // ── RENDER ───────────────────────────────────────────────────────
 function render() {
   const orders = ORDERS.length ? ORDERS : MOCK_ORDERS;
-  const map = buildProductMap(orders);
-  const products = Object.values(map);
+  const groups = buildProductMap(orders);
 
-  // Statistikk
-  const noneOk    = products.filter(p => p.confirmed === 0);
-  const allOk     = products.filter(p => p.confirmed === p.total);
-  const partial   = products.filter(p => p.confirmed > 0 && p.confirmed < p.total);
-  const totalVarer = products.reduce((s, p) => s + p.total, 0);
-  const manglerVarer = products.reduce((s, p) => s + (p.total - p.confirmed), 0);
+  // Statistikk: tell per variant-rad
+  let totalVariants = 0, noneOk = 0, allOk = 0, partialOk = 0;
+  let totalItems = 0, manglerItems = 0;
+  Object.values(groups).forEach(grp => {
+    Object.values(grp.variants).forEach(v => {
+      totalVariants++;
+      totalItems   += v.total;
+      manglerItems += (v.total - v.confirmed);
+      if (v.confirmed === 0)            noneOk++;
+      else if (v.confirmed === v.total) allOk++;
+      else                              partialOk++;
+    });
+  });
+  document.getElementById('statTotal').textContent    = totalVariants;
+  document.getElementById('statTotalSub').textContent = `${totalItems} varelinjer totalt · ${manglerItems} mangler`;
+  document.getElementById('statNone').textContent     = noneOk;
+  document.getElementById('statPartial').textContent  = partialOk;
+  document.getElementById('statReady').textContent    = allOk;
 
-  document.getElementById('statTotal').textContent   = products.length;
-  document.getElementById('statTotalSub').textContent = `${totalVarer} varelinjer totalt · ${manglerVarer} mangler`;
-  document.getElementById('statNone').textContent    = noneOk.length;
-  document.getElementById('statPartial').textContent = partial.length;
-  document.getElementById('statReady').textContent   = allOk.length;
+  let displayGroups = Object.values(groups);
 
-  // Filtrer
-  let visible = products;
-  if (activeFilter === 'missing') visible = products.filter(p => p.confirmed < p.total);
-  if (activeFilter === 'ready')   visible = products.filter(p => p.confirmed === p.total);
+  if (activeFilter === 'missing') {
+    displayGroups = displayGroups.map(grp => {
+      const fv = Object.fromEntries(Object.entries(grp.variants).filter(([,v]) => v.confirmed < v.total));
+      const t  = Object.values(fv).reduce((s,v) => s + v.total, 0);
+      const c  = Object.values(fv).reduce((s,v) => s + v.confirmed, 0);
+      return { ...grp, variants: fv, total: t, confirmed: c };
+    }).filter(grp => Object.keys(grp.variants).length > 0);
+  } else if (activeFilter === 'ready') {
+    displayGroups = displayGroups.map(grp => {
+      const fv = Object.fromEntries(Object.entries(grp.variants).filter(([,v]) => v.confirmed === v.total));
+      const t  = Object.values(fv).reduce((s,v) => s + v.total, 0);
+      const c  = Object.values(fv).reduce((s,v) => s + v.confirmed, 0);
+      return { ...grp, variants: fv, total: t, confirmed: c };
+    }).filter(grp => Object.keys(grp.variants).length > 0);
+  }
 
   // Sorter: mest manglende % øverst, deretter navn
-  visible.sort((a, b) => {
+  displayGroups.sort((a, b) => {
     const aPct = a.total ? a.confirmed / a.total : 0;
     const bPct = b.total ? b.confirmed / b.total : 0;
     if (aPct !== bPct) return aPct - bPct;
@@ -386,118 +428,174 @@ function render() {
   });
 
   const list = document.getElementById('productList');
-  if (!visible.length) {
+  if (!displayGroups.length) {
     list.innerHTML = `<div class="empty-state">Ingen produkter å vise</div>`;
     return;
   }
-
-  list.innerHTML = visible.map(p => renderProductRow(p)).join('');
+  list.innerHTML = displayGroups.map(grp => renderProductGroup(grp)).join('');
 }
 
-function renderProductRow(p) {
-  const missing = p.total - p.confirmed;
-  const pct = p.total ? Math.round(p.confirmed / p.total * 100) : 0;
-  const cls     = pct === 100 ? 'all-ok' : pct === 0 ? 'none-ok' : 'partial';
-  const barCls  = pct === 100 ? 'green'  : pct === 0 ? 'red'     : 'orange';
-  const badgeCls = pct === 100 ? 'green'  : pct === 0 ? 'red'     : 'orange';
-  const badgeTxt = pct === 100 ? 'Klar ✓' : `${missing} mangler`;
+// ── HJELPEFUNKSJONER ─────────────────────────────────────────────
+function variantStatus(v) {
+  const pct = v.total ? Math.round(v.confirmed / v.total * 100) : 0;
+  return {
+    pct,
+    cls:      pct === 100 ? 'all-ok'  : pct === 0 ? 'none-ok' : 'partial',
+    barCls:   pct === 100 ? 'green'   : pct === 0 ? 'red'     : 'orange',
+    badgeCls: pct === 100 ? 'green'   : pct === 0 ? 'red'     : 'orange',
+    badgeTxt: pct === 100 ? 'Klar ✓' : `${v.total - v.confirmed} mangler`,
+  };
+}
 
-  // Varenavn: skil ut variant i parentes
-  const base    = p.name.replace(/\s*\(.*\)\s*$/, '').trim();
-  const variant = (() => { const m = p.name.match(/\((.+)\)\s*$/); return m ? m[1] : null; })();
+function pillsHtml(orders, dotClass) {
+  return orders.map(o =>
+    `<a class="order-pill" href="pakke.html?ordre=${encodeURIComponent(o.orderId)}">
+      <span class="${dotClass}"></span>
+      <span>${escH(o.customer.split(' ')[0])}</span>
+      <span class="p-id">${escH(o.orderId)}</span>
+      <span class="p-date">${o.dateStr} ${o.slotStr}</span>
+    </a>`
+  ).join('');
+}
 
-  // Bekreftet vekt
+function variantDetailHtml(v) {
+  const missing = v.total - v.confirmed;
   const confParts = [];
-  if (p.confirmedGrams > 0) confParts.push(fmtWeight(p.confirmedGrams));
-  if (p.confirmedStk   > 0) confParts.push(`${p.confirmedStk} stk`);
+  if (v.confirmedGrams > 0) confParts.push(fmtWeight(v.confirmedGrams));
+  if (v.confirmedStk   > 0) confParts.push(`${v.confirmedStk} stk`);
   const confStr = confParts.join(' + ');
 
-  // Estimert manglende vekt
   const estParts = [];
-  if (p.canEstimate) {
-    if (p.estMissingGrams > 0) estParts.push(`~${fmtWeight(p.estMissingGrams)}`);
-    if (p.estMissingStk   > 0) estParts.push(`~${p.estMissingStk} stk`);
+  if (v.canEstimate) {
+    if (v.estMissingGrams > 0) estParts.push(`~${fmtWeight(v.estMissingGrams)}`);
+    if (v.estMissingStk   > 0) estParts.push(`~${v.estMissingStk} stk`);
   } else if (missing > 0) {
     estParts.push(`${missing} stk ukjent vekt`);
   }
   const estStr = estParts.join(' + ');
 
-  // Varenavn-del i raden (formater gram→kg i variant-teksten)
-  const variantFmt = fmtVariant(variant);
-  const nameHtml = escH(base) + (variantFmt ? `<div class="product-variant">${escH(variantFmt)}</div>` : '');
-
-  // Conf-weight chip
-  const weightChip = confStr
-    ? `<span class="conf-weight" title="${p.confirmed}/${p.total} bekreftet med vekt">${confStr} bekreftet</span>`
-    : '';
-
-  // Expandable detail
-  const missingPills = p.missingOrders.map(mo =>
-    `<a class="order-pill" href="pakke.html?ordre=${encodeURIComponent(mo.orderId)}">
-      <span class="p-miss-dot"></span>
-      <span>${escH(mo.customer.split(' ')[0])}</span>
-      <span class="p-id">${escH(mo.orderId)}</span>
-      <span class="p-date">${mo.dateStr} ${mo.slotStr}</span>
-    </a>`
-  ).join('');
-
-  const confPills = p.confirmedOrders.map(co =>
-    `<a class="order-pill" href="pakke.html?ordre=${encodeURIComponent(co.orderId)}">
-      <span class="p-ok-dot"></span>
-      <span>${escH(co.customer.split(' ')[0])}</span>
-      <span class="p-id">${escH(co.orderId)}</span>
-      <span class="p-date">${co.dateStr} ${co.slotStr}</span>
-    </a>`
-  ).join('');
-
-  const detailHtml = `
-    <div class="product-detail">
-      ${missing > 0 ? `
-      <div class="detail-section">
-        <div class="detail-section-label">Mangler i disse bestillingene (${missing})</div>
-        <div class="order-pills">${missingPills}</div>
-      </div>` : ''}
-      <div class="detail-section">
-        <div class="weight-summary">
-          <div class="wsum-item">
-            <div class="wsum-label">Mangler (ikke bestilt inn)</div>
-            <div class="wsum-value ${missing > 0 ? 'red' : 'green'}">${missing > 0 ? estStr || `${missing} varer` : '—'}</div>
-          </div>
-          <div class="wsum-item">
-            <div class="wsum-label">Bekreftet vekt</div>
-            <div class="wsum-value ${p.confirmed > 0 ? 'green' : 'muted'}">${confStr || '—'}</div>
-          </div>
-          <div class="wsum-item">
-            <div class="wsum-label">Totalt bestillinger</div>
-            <div class="wsum-value muted">${p.total} stk</div>
-          </div>
+  return `
+    ${missing > 0 ? `
+    <div class="detail-section">
+      <div class="detail-section-label">Mangler (${missing})</div>
+      <div class="order-pills">${pillsHtml(v.missingOrders, 'p-miss-dot')}</div>
+    </div>` : ''}
+    <div class="detail-section">
+      <div class="weight-summary">
+        <div class="wsum-item">
+          <div class="wsum-label">Mangler (ikke bestilt inn)</div>
+          <div class="wsum-value ${missing > 0 ? 'red' : 'green'}">${missing > 0 ? estStr || `${missing} varer` : '—'}</div>
         </div>
-      </div>
-      ${p.confirmed > 0 ? `
-      <div class="detail-section">
-        <div class="detail-section-label">Bestilt inn (${p.confirmed})</div>
-        <div class="order-pills">${confPills}</div>
-      </div>` : ''}
-    </div>`;
-
-  return `<div class="product-row ${cls}" onclick="toggleRow(this)">
-    <div class="product-main">
-      <div class="product-name-wrap">${nameHtml}</div>
-      <div class="product-right">
-        ${weightChip}
-        <span class="mbadge ${badgeCls}">${badgeTxt}</span>
-        <div class="pbar-wrap">
-          <div class="pbar-bg"><div class="pbar-fill ${barCls}" style="width:${pct}%"></div></div>
-          <span class="pbar-label">${p.confirmed}/${p.total}</span>
+        <div class="wsum-item">
+          <div class="wsum-label">Bekreftet vekt</div>
+          <div class="wsum-value ${v.confirmed > 0 ? 'green' : 'muted'}">${confStr || '—'}</div>
         </div>
-        <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <div class="wsum-item">
+          <div class="wsum-label">Totalt bestillinger</div>
+          <div class="wsum-value muted">${v.total} stk</div>
+        </div>
       </div>
     </div>
-    ${detailHtml}
+    ${v.confirmed > 0 ? `
+    <div class="detail-section">
+      <div class="detail-section-label">Bestilt inn (${v.confirmed})</div>
+      <div class="order-pills">${pillsHtml(v.confirmedOrders, 'p-ok-dot')}</div>
+    </div>` : ''}`;
+}
+
+// ── RENDER PRODUKT-GRUPPE ─────────────────────────────────────────
+function renderProductGroup(grp) {
+  const variantList = Object.values(grp.variants);
+  const hasCategories = variantList.some(v => v.category !== '');
+
+  // Enkelt produkt uten kategori-varianter → flat rad
+  if (!hasCategories && variantList.length === 1) {
+    const v = variantList[0];
+    const { pct, cls, barCls, badgeCls, badgeTxt } = variantStatus(v);
+    const confParts = [];
+    if (v.confirmedGrams > 0) confParts.push(fmtWeight(v.confirmedGrams));
+    if (v.confirmedStk   > 0) confParts.push(`${v.confirmedStk} stk`);
+    const confStr = confParts.join(' + ');
+    const weightChip = confStr
+      ? `<span class="conf-weight" title="${v.confirmed}/${v.total} bekreftet med vekt">${confStr} bekreftet</span>`
+      : '';
+    const nameHtml = escH(grp.name) + (v.weightStr ? `<div class="product-variant">${escH(v.weightStr)}</div>` : '');
+    return `<div class="product-row ${cls}" onclick="toggleRow(this)">
+      <div class="product-main">
+        <div class="product-name-wrap">${nameHtml}</div>
+        <div class="product-right">
+          ${weightChip}
+          <span class="mbadge ${badgeCls}">${badgeTxt}</span>
+          <div class="pbar-wrap">
+            <div class="pbar-bg"><div class="pbar-fill ${barCls}" style="width:${pct}%"></div></div>
+            <span class="pbar-label">${v.confirmed}/${v.total}</span>
+          </div>
+          <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+      <div class="product-detail">${variantDetailHtml(v)}</div>
+    </div>`;
+  }
+
+  // Produkt med kategori-varianter → gruppeoverskrift + variant-rader
+  const grpPct      = grp.total ? Math.round(grp.confirmed / grp.total * 100) : 0;
+  const grpCls      = grpPct === 100 ? 'all-ok'  : grpPct === 0 ? 'none-ok' : 'partial';
+  const grpBarCls   = grpPct === 100 ? 'green'   : grpPct === 0 ? 'red'     : 'orange';
+  const grpBadgeCls = grpPct === 100 ? 'green'   : grpPct === 0 ? 'red'     : 'orange';
+  const grpBadgeTxt = grpPct === 100 ? 'Klar ✓'  : `${grp.total - grp.confirmed} mangler`;
+
+  // Sorter varianter: mest manglende % øverst, deretter alfabetisk
+  variantList.sort((a, b) => {
+    const aPct = a.total ? a.confirmed / a.total : 0;
+    const bPct = b.total ? b.confirmed / b.total : 0;
+    if (aPct !== bPct) return aPct - bPct;
+    return (a.category || '').localeCompare(b.category || '', 'nb');
+  });
+
+  const subRows = variantList.map(v => renderVariantSubRow(v)).join('');
+
+  return `<div class="product-row ${grpCls}">
+    <div class="product-header">
+      <div class="product-header-name">${escH(grp.name)}</div>
+      <div class="product-right">
+        <span class="mbadge ${grpBadgeCls}">${grpBadgeTxt}</span>
+        <div class="pbar-wrap">
+          <div class="pbar-bg"><div class="pbar-fill ${grpBarCls}" style="width:${grpPct}%"></div></div>
+          <span class="pbar-label">${grp.confirmed}/${grp.total}</span>
+        </div>
+      </div>
+    </div>
+    <div class="variant-rows">${subRows}</div>
   </div>`;
 }
 
+function renderVariantSubRow(v) {
+  const { pct, barCls, badgeCls, badgeTxt } = variantStatus(v);
+  const label      = v.category || v.weightStr || 'Standard';
+  const weightHint = v.category && v.weightStr ? v.weightStr : null;
+
+  return `<div class="variant-row" onclick="toggleVariant(this)">
+    <div class="variant-label">
+      <div class="variant-name">${escH(label)}</div>
+      ${weightHint ? `<div class="variant-weight-hint">${escH(weightHint)}</div>` : ''}
+    </div>
+    <div class="product-right">
+      <span class="mbadge ${badgeCls}">${badgeTxt}</span>
+      <div class="pbar-wrap">
+        <div class="pbar-bg"><div class="pbar-fill ${barCls}" style="width:${pct}%"></div></div>
+        <span class="pbar-label">${v.confirmed}/${v.total}</span>
+      </div>
+      <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    </div>
+  </div>
+  <div class="variant-detail">${variantDetailHtml(v)}</div>`;
+}
+
 function toggleRow(el) {
+  el.classList.toggle('open');
+}
+
+function toggleVariant(el) {
   el.classList.toggle('open');
 }
 
