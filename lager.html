@@ -701,11 +701,32 @@ function tickClock() {
 }
 tickClock(); setInterval(tickClock, 1000);
 
+// ── LIVE SYNC (pakkingstilstand fra andre enheter) ───────────────
+let _lastPackingHash = '';
+
+async function pollPackingState() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/packing-state`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return;
+    const serverState = await r.json();
+    if (!serverState || !Object.keys(serverState).length) return;
+
+    const hash = JSON.stringify(serverState);
+    if (hash === _lastPackingHash) return; // ingen endring
+    _lastPackingHash = hash;
+
+    // Oppdater localStorage og re-render
+    localStorage.setItem('havøyet_state', hash);
+    render();
+  } catch(e) {}
+}
+
 // ── INIT ─────────────────────────────────────────────────────────
 initStoreSwitcher();
 render();        // vis mock-data umiddelbart
 loadFromFlask(); // erstatt med live-data om Flask er oppe
 setInterval(loadFromFlask, 5 * 60 * 1000);
+setInterval(pollPackingState, 15000); // sync pakkingstilstand hvert 15. sekund
 </script>
 </body>
 </html>

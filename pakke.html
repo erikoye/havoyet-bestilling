@@ -1664,6 +1664,43 @@ function pad(n){return String(n).padStart(2,'0');}
 function updateClock(){const n=new Date();document.getElementById('clock').textContent=pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());}
 updateClock(); setInterval(updateClock,1000);
 
+// ─── LIVE SYNC (cross-device packing state) ──
+let _lastSyncHash = '';
+
+async function pollPackingState() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/packing-state`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return;
+    const serverState = await r.json();
+    if (!serverState || !Object.keys(serverState).length) return;
+
+    const hash = JSON.stringify(serverState);
+    if (hash === _lastSyncHash) return; // ingen endring
+    _lastSyncHash = hash;
+
+    // Oppdater STATE for alle ordre unntatt den som er åpen (for å unngå å overskrive pågående redigering)
+    let changed = false;
+    Object.keys(serverState).forEach(id => {
+      if (id === currentOrderId) return; // ikke forstyrr pågående redigering
+      if (STATE[id] && JSON.stringify(STATE[id]) !== JSON.stringify(serverState[id])) {
+        STATE[id] = serverState[id];
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      localStorage.setItem('havøyet_state', JSON.stringify(STATE));
+      if (currentOrderId === null) {
+        renderList(); // oppdater listevisning umiddelbart
+      }
+      // Vis en kort melding om at data er synkronisert
+      toast('Synkronisert fra annen enhet');
+    }
+  } catch(e) { /* server ikke nådd */ }
+}
+
+setInterval(pollPackingState, 15000); // poll hvert 15. sekund
+
 // ─── INIT ────────────────────────────────────
 initStoreSwitcher();
 loadFromFlask();
