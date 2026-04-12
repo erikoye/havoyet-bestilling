@@ -783,31 +783,42 @@ function dayOffset(n) {
 }
 
 // ─────────────────────────────────────────────
+// PAKKINGSTILSTAND — leses fra localStorage (synkronisert fra pakke.html)
+// ─────────────────────────────────────────────
+function getPackingState() {
+  try { return JSON.parse(localStorage.getItem('havøyet_state') || '{}'); } catch(e) { return {}; }
+}
+
+// ─────────────────────────────────────────────
 // PRIORITY LOGIC
-// En vare er bekreftet når den har både vekt (gram) og holdbarhetsdato.
+// En vare er bekreftet når avail=ok + vekt + holdbarhetsdato er satt i pakkingstilstand.
 // < 33%  → rød
 // 33–99% → oransje
 // 100%   → grønn
 // ─────────────────────────────────────────────
+function _confirmedItems(order) {
+  const s = getPackingState()[order.id];
+  if (s) return s.filter(i => i.avail === 'ok' && i.weight && i.expiry).length;
+  return order.items.filter(i => i.weight !== null && i.expiry !== null).length;
+}
+
 function confirmationClass(order) {
   const total = order.items.length;
   if (total === 0) return 'red';
-  const confirmed = order.items.filter(i => i.weight !== null && i.expiry !== null).length;
-  const pct = confirmed / total;
-  if (pct === 1)    return 'green';
-  if (pct >= 0.33)  return 'orange';
+  const pct = _confirmedItems(order) / total;
+  if (pct === 1)   return 'green';
+  if (pct >= 0.33) return 'orange';
   return 'red';
 }
 
 function confirmationPct(order) {
   const total = order.items.length;
   if (total === 0) return 0;
-  const confirmed = order.items.filter(i => i.weight !== null && i.expiry !== null).length;
-  return Math.round((confirmed / total) * 100);
+  return Math.round(_confirmedItems(order) / total * 100);
 }
 
 function confirmedCount(order) {
-  return order.items.filter(i => i.weight !== null && i.expiry !== null).length;
+  return _confirmedItems(order);
 }
 
 // ─────────────────────────────────────────────
@@ -1161,8 +1172,27 @@ function initStoreSwitcher() {
   document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
 }
 
+// ─── LIVE SYNC (pakkingstilstand fra andre enheter) ───────────────
+let _lastPackingHash = '';
+
+async function pollPackingState() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/packing-state`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return;
+    const serverState = await r.json();
+    if (!serverState || !Object.keys(serverState).length) return;
+    const hash = JSON.stringify(serverState);
+    if (hash === _lastPackingHash) return;
+    _lastPackingHash = hash;
+    localStorage.setItem('havøyet_state', hash);
+    renderWeek(); // oppdater kalender med ny pakkingstilstand
+  } catch(e) {}
+}
+
 initStoreSwitcher();
 loadFromFlask();
+setInterval(loadFromFlask, 5 * 60 * 1000);
+setInterval(pollPackingState, 15000);
 </script>
 </body>
 </html>
