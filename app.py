@@ -36,7 +36,8 @@ SHOPIFY_VERSION = os.environ.get("SHOPIFY_API_VERSION", "2024-01")
 POLL_INTERVAL   = int(os.environ.get("POLL_INTERVAL", "300"))  # sekunder (5 min)
 
 PORT       = int(os.environ.get("PORT", 5001))
-CACHE_FILE = os.path.join("/tmp", "havoyet_orders_cache.json")
+CACHE_FILE      = os.path.join("/tmp", "havoyet_orders_cache.json")
+SYNC_STATE_FILE = os.path.join("/tmp", "havoyet_sync_state.json")
 
 # In-memory cache
 _cache = {
@@ -307,12 +308,44 @@ _overrides = {}
 _packing_state = {}
 _order_notes = {}
 
+def _save_sync_state():
+    """Persist cross-device sync state to disk."""
+    try:
+        with open(SYNC_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({
+                "manual_orders": _manual_orders,
+                "hidden_orders": _hidden_orders,
+                "overrides":     _overrides,
+                "packing_state": _packing_state,
+                "order_notes":   _order_notes,
+            }, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def _load_sync_state():
+    """Load cross-device sync state from disk on startup."""
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes
+    if not os.path.exists(SYNC_STATE_FILE):
+        return
+    try:
+        with open(SYNC_STATE_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        _manual_orders = d.get("manual_orders", [])
+        _hidden_orders = d.get("hidden_orders", [])
+        _overrides     = d.get("overrides", {})
+        _packing_state = d.get("packing_state", {})
+        _order_notes   = d.get("order_notes", {})
+        print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre")
+    except Exception as e:
+        print(f"[ADVARSEL] Kunne ikke laste sync-state: {e}")
+
 
 @app.route("/api/manual-orders", methods=["GET", "POST"])
 def api_manual_orders():
     global _manual_orders
     if request.method == "POST":
         _manual_orders = request.get_json(force=True) or []
+        _save_sync_state()
         return jsonify({"ok": True, "count": len(_manual_orders)})
     return jsonify(_manual_orders)
 
@@ -322,6 +355,7 @@ def api_delete_manual_order(order_id):
     global _manual_orders
     before = len(_manual_orders)
     _manual_orders = [o for o in _manual_orders if str(o.get("id")) != str(order_id)]
+    _save_sync_state()
     return jsonify({"ok": True, "removed": before - len(_manual_orders)})
 
 
@@ -330,6 +364,7 @@ def api_hidden_orders():
     global _hidden_orders
     if request.method == "POST":
         _hidden_orders = request.get_json(force=True) or []
+        _save_sync_state()
         return jsonify({"ok": True, "count": len(_hidden_orders)})
     return jsonify(_hidden_orders)
 
@@ -339,6 +374,7 @@ def api_overrides():
     global _overrides
     if request.method == "POST":
         _overrides = request.get_json(force=True) or {}
+        _save_sync_state()
         return jsonify({"ok": True})
     return jsonify(_overrides)
 
@@ -348,6 +384,7 @@ def api_packing_state():
     global _packing_state
     if request.method == "POST":
         _packing_state = request.get_json(force=True) or {}
+        _save_sync_state()
         return jsonify({"ok": True})
     return jsonify(_packing_state)
 
@@ -357,6 +394,7 @@ def api_notes():
     global _order_notes
     if request.method == "POST":
         _order_notes = request.get_json(force=True) or {}
+        _save_sync_state()
         return jsonify({"ok": True})
     return jsonify(_order_notes)
 
@@ -371,6 +409,9 @@ if __name__ == "__main__":
             print(f"Lastet {len(_cache.get('orders', []))} ordre fra disk-cache")
         except Exception:
             pass
+
+    # Last sync-state (pakkingstilstand, manuelle ordre, etc.)
+    _load_sync_state()
 
     # Start poller i bakgrunnen
     t = threading.Thread(target=poll_loop, daemon=True)

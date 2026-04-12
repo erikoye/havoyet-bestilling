@@ -856,7 +856,9 @@ const FISH_DB = [
 ];
 
 // ─── DATA ───────────────────────────────────
-const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5001' : window.location.origin;
+const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:5001'
+  : 'https://havoyet-bestilling.onrender.com';
 const _T = new Date(); _T.setHours(0,0,0,0);
 function isoDate(d){return d.toISOString().slice(0,10);}
 function dayOffset(n){const d=new Date(_T);d.setDate(d.getDate()+n);return isoDate(d);}
