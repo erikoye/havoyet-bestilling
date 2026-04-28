@@ -729,13 +729,11 @@
 
 <script>
 // ─── KONFIG ───────────────────────────────────
-const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:5001'
-  : 'https://havoyet-bestilling.onrender.com';
+const FLASK_BASE = window.location.origin;
 
 // ─── DATO-HJELPER ──────────────────────────────
 const _TODAY = new Date(); _TODAY.setHours(0,0,0,0);
-function isoDate(d){ return d.toISOString().slice(0,10); }
+function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function dayOffset(n){ const d=new Date(_TODAY); d.setDate(d.getDate()+n); return isoDate(d); }
 const todayISO = isoDate(_TODAY);
 const tmrwISO  = dayOffset(1);

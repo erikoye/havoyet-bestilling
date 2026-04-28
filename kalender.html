@@ -773,7 +773,7 @@ const TODAY = new Date();
 TODAY.setHours(0, 0, 0, 0);
 
 function isoDate(d) {
-  return d.toISOString().slice(0, 10);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 
 function dayOffset(n) {
@@ -824,9 +824,7 @@ function confirmedCount(order) {
 // ─────────────────────────────────────────────
 // DATA — hentes fra Flask
 // ─────────────────────────────────────────────
-const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:5001'
-  : 'https://havoyet-bestilling.onrender.com';
+const FLASK_BASE = window.location.origin;
 let ORDERS = [];
 
 // Multipliser mengde i variant-streng med antall

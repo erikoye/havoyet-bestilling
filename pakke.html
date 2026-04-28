@@ -679,6 +679,48 @@
     @media (min-width: 768px) and (max-width: 1100px) {
       main { max-width: 100%; padding: 20px 28px 100px; }
     }
+
+    /* ── VIEW TABS ── */
+    .view-tab-bar{display:flex;gap:8px;margin-bottom:20px;}
+    .view-tab-btn{padding:8px 18px;border:1px solid var(--border);border-radius:8px;background:var(--surface);font-size:13px;font-weight:500;font-family:'DM Sans',sans-serif;color:var(--muted);cursor:pointer;transition:all .15s;}
+    .view-tab-btn:hover{border-color:var(--primary);color:var(--primary-dk);}
+    .view-tab-btn.active{background:var(--primary);border-color:var(--primary);color:#fff;}
+
+    /* ── PRODUKTOVERSIKT ── */
+    .prod-list{display:flex;flex-direction:column;gap:10px;}
+    .prod-row{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .1s;}
+    .prod-row:hover{border-color:var(--primary);box-shadow:0 2px 12px rgba(13,148,136,.10);transform:translateY(-1px);}
+    .prod-row.ps-red{border-left:4px solid var(--c-red);}
+    .prod-row.ps-orange{border-left:4px solid var(--c-orange);}
+    .prod-row.ps-green{border-left:4px solid var(--c-green);}
+    .prod-main{flex:1;min-width:0;}
+    .prod-name{font-size:15px;font-weight:600;color:var(--dark);}
+    .prod-qty{font-size:13px;color:var(--muted);margin-top:3px;}
+    .prod-right{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+    .prod-badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:99px;}
+    .prod-badge.mangler{background:#fee2e2;color:#dc2626;}
+    .prod-badge.klar{background:#dcfce7;color:#15803d;}
+    .prod-bar-bg{width:80px;height:5px;background:#e2e8f0;border-radius:3px;overflow:hidden;}
+    .prod-bar{height:100%;border-radius:3px;}
+    .prod-bar.red{background:var(--c-red);}
+    .prod-bar.orange{background:var(--c-orange);}
+    .prod-bar.green{background:var(--c-green);}
+    .prod-arrow{flex-shrink:0;color:var(--muted);}
+
+    /* Produktdetalj */
+    .proddetail-back{display:inline-flex;align-items:center;gap:7px;color:var(--primary);font-size:13px;font-weight:600;background:none;border:none;cursor:pointer;padding:0;margin-bottom:20px;font-family:'DM Sans',sans-serif;}
+    .proddetail-back:hover{text-decoration:underline;}
+    .variant-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:10px;}
+    .variant-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+    .variant-name{font-size:15px;font-weight:600;color:var(--dark);}
+    .variant-qty{font-family:'DM Mono',monospace;font-size:13px;color:var(--muted);}
+    .order-refs{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;}
+    .order-ref{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-family:'DM Mono',monospace;background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:4px 9px;color:var(--muted);cursor:pointer;transition:border-color .15s;}
+    .order-ref:hover{border-color:var(--primary);color:var(--primary);}
+    .prod-detail-header{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 22px;margin-bottom:20px;}
+    .prod-detail-title{font-size:20px;font-weight:600;color:var(--dark);margin-bottom:6px;}
+    .prod-detail-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+    .prod-detail-meta-chip{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);}
   </style>
 </head>
 <body>
@@ -704,8 +746,17 @@
 
 <main>
 
-  <!-- ── VIEW 1: ORDRELISTE ── -->
+  <!-- ── VIEW 1: ORDRELISTE + INNKJØPSLISTE ── -->
   <div id="viewList">
+
+    <!-- Tabs -->
+    <div class="view-tab-bar">
+      <button class="view-tab-btn active" id="tabBestillinger" onclick="switchTab('bestillinger')">Bestillingsliste</button>
+      <button class="view-tab-btn" id="tabInnkjop" onclick="switchTab('innkjop')">Innkjøpsliste</button>
+    </div>
+
+    <!-- ── BESTILLINGSLISTE ── -->
+    <div id="ordreListContent">
     <div class="list-header">
       <div style="display:flex;align-items:center;gap:10px">
         <h1 class="list-title">Upakkede bestillinger</h1>
@@ -754,6 +805,30 @@
     </div>
 
     <div class="order-list" id="orderList"></div>
+    </div><!-- end #ordreListContent -->
+
+    <!-- ── INNKJØPSLISTE ── -->
+    <div id="prodListContent" style="display:none">
+      <div class="list-header">
+        <div style="display:flex;align-items:center;gap:10px">
+          <h1 class="list-title">Innkjøpsliste</h1>
+          <span class="list-count" id="prodListCount">–</span>
+        </div>
+      </div>
+      <div class="prod-list" id="prodList"></div>
+    </div>
+
+    <!-- ── PRODUKTDETALJ ── -->
+    <div id="prodDetailContent" style="display:none">
+      <button class="proddetail-back" onclick="showProductList()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Tilbake til innkjøpsliste
+      </button>
+      <div id="prodDetailInner"></div>
+    </div>
+
   </div>
 
   <!-- ── VIEW 2: PAKKESKJEMA ── -->
@@ -856,11 +931,9 @@ const FISH_DB = [
 ];
 
 // ─── DATA ───────────────────────────────────
-const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:5001'
-  : 'https://havoyet-bestilling.onrender.com';
+const FLASK_BASE = window.location.origin;
 const _T = new Date(); _T.setHours(0,0,0,0);
-function isoDate(d){return d.toISOString().slice(0,10);}
+function isoDate(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function dayOffset(n){const d=new Date(_T);d.setDate(d.getDate()+n);return isoDate(d);}
 const todayISO = isoDate(_T);
 
@@ -912,6 +985,8 @@ function normalizeOrder(o) {
       const variant = multiplyWeight(i.variant, qty);
       return {
         name: variant ? `${i.name} (${variant})` : i.name,
+        productName: i.name,
+        variantStr: i.variant || '',
         qty,
       };
     }),
@@ -1297,7 +1372,18 @@ function showList() {
   document.getElementById('detailToolbar').style.display = 'none';
   document.getElementById('headerBack').href = 'index.html';
   currentOrderId = null;
-  renderList();
+  // Vis riktig tab-innhold
+  if (currentTab === 'innkjop') {
+    document.getElementById('ordreListContent').style.display  = 'none';
+    document.getElementById('prodListContent').style.display   = '';
+    document.getElementById('prodDetailContent').style.display = 'none';
+    renderProductList();
+  } else {
+    document.getElementById('ordreListContent').style.display  = '';
+    document.getElementById('prodListContent').style.display   = 'none';
+    document.getElementById('prodDetailContent').style.display = 'none';
+    renderList();
+  }
 }
 
 function openOrder(id) {
@@ -1702,6 +1788,176 @@ async function pollPackingState() {
 }
 
 setInterval(pollPackingState, 15000); // poll hvert 15. sekund
+
+// ─── PRODUKTOVERSIKT ─────────────────────────
+
+let currentTab = 'bestillinger';
+let currentProduct = null;
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabBestillinger').classList.toggle('active', tab === 'bestillinger');
+  document.getElementById('tabInnkjop').classList.toggle('active', tab === 'innkjop');
+  document.getElementById('ordreListContent').style.display  = tab === 'bestillinger' ? '' : 'none';
+  document.getElementById('prodListContent').style.display   = tab === 'innkjop'      ? '' : 'none';
+  document.getElementById('prodDetailContent').style.display = 'none';
+  if (tab === 'innkjop') renderProductList();
+}
+
+function parseVariantQty(variantStr, qty) {
+  if (!variantStr) return { amount: qty, unit: 'stk' };
+  const m = variantStr.match(/^(\d+(?:[.,]\d+)?)\s*(g|kg|stk)\b/i);
+  if (!m) return { amount: qty, unit: 'stk' };
+  const num  = parseFloat(m[1].replace(',', '.'));
+  const unit = m[2].toLowerCase();
+  if (unit === 'kg') return { amount: num * qty * 1000, unit: 'g' };
+  if (unit === 'g')  return { amount: num * qty,        unit: 'g' };
+  return { amount: num * qty, unit: 'stk' };
+}
+
+function formatTotal(amount, unit) {
+  if (unit === 'g') {
+    if (amount >= 1000 && amount % 1000 === 0) return `${amount / 1000} kg`;
+    if (amount >= 1000) return `${(amount / 1000).toFixed(1).replace('.0', '')} kg`;
+    return `${amount} g`;
+  }
+  return `${amount} stk`;
+}
+
+function buildProductSummary() {
+  const products = new Map();
+  ORDERS.filter(storeFilter).forEach(o => {
+    const s = STATE[o.id] || [];
+    o.items.forEach((item, idx) => {
+      const pName = item.productName || item.name;
+      if (!products.has(pName)) products.set(pName, { variants: new Map(), totalOrders: 0, confirmedOrders: 0 });
+      const p = products.get(pName);
+      p.totalOrders++;
+      const itemState = s[idx];
+      if (itemState && itemState.weight && itemState.expiry && itemState.avail === 'ok') {
+        p.confirmedOrders++;
+      }
+      const vStr = item.variantStr || '';
+      if (!p.variants.has(vStr)) {
+        const { amount, unit } = parseVariantQty(vStr, item.qty);
+        p.variants.set(vStr, { amount: 0, unit, orders: [] });
+      }
+      const v = p.variants.get(vStr);
+      const { amount } = parseVariantQty(vStr, item.qty);
+      v.amount += amount;
+      v.orders.push({ id: o.id, customer: o.customer, qty: item.qty, variantStr: vStr });
+    });
+  });
+  return products;
+}
+
+function renderProductList() {
+  const products = buildProductSummary();
+  const listEl   = document.getElementById('prodList');
+  const countEl  = document.getElementById('prodListCount');
+  countEl.textContent = products.size + ' produkt' + (products.size !== 1 ? 'er' : '');
+  if (products.size === 0) {
+    listEl.innerHTML = `<div class="empty-state"><h2>Ingen bestillinger</h2><p>Hent bestillinger fra Shopify for å se innkjøpslisten.</p></div>`;
+    return;
+  }
+  listEl.innerHTML = '';
+  products.forEach((p, pName) => {
+    const pct      = p.totalOrders ? Math.round(p.confirmedOrders / p.totalOrders * 100) : 0;
+    const mangler  = p.totalOrders - p.confirmedOrders;
+    const barClass = pct === 100 ? 'green' : pct >= 50 ? 'orange' : 'red';
+    const rowClass = pct === 100 ? 'ps-green' : pct >= 50 ? 'ps-orange' : 'ps-red';
+    const badgeHtml = mangler > 0
+      ? `<span class="prod-badge mangler">${mangler} mangler</span>`
+      : `<span class="prod-badge klar">Klar ✓</span>`;
+    let totalGrams = 0, totalStk = 0, hasGrams = false, hasStk = false;
+    p.variants.forEach(v => {
+      if (v.unit === 'g') { totalGrams += v.amount; hasGrams = true; }
+      else                { totalStk   += v.amount; hasStk   = true; }
+    });
+    let totalStr = '';
+    if (hasGrams && hasStk)      totalStr = formatTotal(totalGrams, 'g') + ' + ' + formatTotal(totalStk, 'stk');
+    else if (hasGrams)           totalStr = formatTotal(totalGrams, 'g');
+    else                         totalStr = formatTotal(totalStk, 'stk');
+    const row = document.createElement('div');
+    row.className = `prod-row ${rowClass}`;
+    row.onclick = () => openProductDetail(pName);
+    row.innerHTML = `
+      <div class="prod-main">
+        <div class="prod-name">${pName}</div>
+        <div class="prod-qty">${totalStr}</div>
+      </div>
+      <div class="prod-right">
+        ${badgeHtml}
+        <div class="prod-bar-bg"><div class="prod-bar ${barClass}" style="width:${pct}%"></div></div>
+        <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">${p.confirmedOrders}/${p.totalOrders}</span>
+        <svg class="prod-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+    `;
+    listEl.appendChild(row);
+  });
+}
+
+function openProductDetail(productName) {
+  currentProduct = productName;
+  document.getElementById('prodListContent').style.display   = 'none';
+  document.getElementById('prodDetailContent').style.display = '';
+  renderProductDetail(productName);
+}
+
+function showProductList() {
+  currentProduct = null;
+  document.getElementById('prodDetailContent').style.display = 'none';
+  document.getElementById('prodListContent').style.display   = '';
+}
+
+function renderProductDetail(productName) {
+  const products = buildProductSummary();
+  const p = products.get(productName);
+  if (!p) return;
+  const mangler = p.totalOrders - p.confirmedOrders;
+  const badgeHtml = mangler > 0
+    ? `<span class="prod-badge mangler">${mangler} mangler</span>`
+    : `<span class="prod-badge klar">Klar ✓</span>`;
+  let html = `
+    <div class="prod-detail-header">
+      <div class="prod-detail-title">${productName}</div>
+      <div class="prod-detail-meta">
+        ${badgeHtml}
+        <span class="prod-detail-meta-chip">${p.confirmedOrders}/${p.totalOrders} bestillinger bekreftet</span>
+      </div>
+    </div>
+    <div class="section-label">Varianter bestilt</div>
+  `;
+  p.variants.forEach((v, vStr) => {
+    const label = vStr || 'Standard';
+    const totalStr = formatTotal(v.amount, v.unit);
+    const orderChips = v.orders.map(ord =>
+      `<span class="order-ref" onclick="event.stopPropagation();goToOrder('${ord.id}')">
+        ${ord.customer} · ${ord.qty} stk
+      </span>`
+    ).join('');
+    html += `
+      <div class="variant-card">
+        <div class="variant-header">
+          <span class="variant-name">${label}</span>
+          <span class="variant-qty">${totalStr} totalt</span>
+        </div>
+        <div class="order-refs">${orderChips}</div>
+      </div>
+    `;
+  });
+  document.getElementById('prodDetailInner').innerHTML = html;
+}
+
+function goToOrder(orderId) {
+  currentTab = 'bestillinger';
+  document.getElementById('tabBestillinger').classList.add('active');
+  document.getElementById('tabInnkjop').classList.remove('active');
+  document.getElementById('prodDetailContent').style.display = 'none';
+  document.getElementById('prodListContent').style.display   = 'none';
+  document.getElementById('ordreListContent').style.display  = '';
+  openOrder(orderId);
+}
 
 // ─── INIT ────────────────────────────────────
 initStoreSwitcher();

@@ -263,9 +263,7 @@
 </main>
 
 <script>
-const FLASK_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:5001'
-  : 'https://havoyet-bestilling.onrender.com';
+const FLASK_BASE = window.location.origin;
 const STORAGE_KEY = 'havoyetAdmin';
 const POLL_MS     = 15_000;  // 15 sekunder
 
@@ -281,7 +279,8 @@ updateClock();
 
 // ── TODAY ─────────────────────────────────────────────────────────────────────
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 
 // ── HENT ADMIN-TILSTAND ───────────────────────────────────────────────────────

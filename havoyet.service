@@ -1,0 +1,18 @@
+[Unit]
+Description=Havøyet Bestillingsside (Flask)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/havoyet
+ExecStart=/usr/bin/python3 /home/pi/havoyet/app.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/pi/havoyet/.env
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

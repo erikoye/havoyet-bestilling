@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Nesttun Fisk &amp; Vilt — Ordrebehandling</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary:    #0d9488;
+      --primary-dk: #0f766e;
+      --bg:         #f1f5f9;
+      --dark:       #0f172a;
+      --surface:    #ffffff;
+      --border:     #e2e8f0;
+      --muted:      #64748b;
+      --c-red:      #ef4444;
+      --c-orange:   #f59e0b;
+      --c-green:    #22c55e;
+    }
+
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--dark); min-height: 100vh; }
+
+    header {
+      background: #0f172a;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 32px; height: 60px;
+      position: sticky; top: 0; z-index: 100;
+    }
+
+    .logo-text { font-family: 'Montserrat', sans-serif; font-weight: 900; font-size: 18px; letter-spacing: 1px; color: #fff; }
+    .logo-sub  { font-size: 11px; color: #94a3b8; font-weight: 400; letter-spacing: 0.05em; margin-left: 10px; font-family: 'DM Sans', sans-serif; }
+
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    .clock { font-family: 'DM Mono', monospace; font-size: 13px; color: #94a3b8; }
+
+    .sync-badge {
+      font-family: 'DM Mono', monospace; font-size: 11px;
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: 6px; padding: 4px 10px;
+      display: flex; align-items: center; gap: 6px; color: #94a3b8;
+    }
+    .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c-green); animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .btn-open-havoyet {
+      display: flex; align-items: center; gap: 6px;
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: 6px; padding: 6px 12px; font-size: 12px;
+      color: #94a3b8; cursor: pointer; font-family: 'DM Sans', sans-serif;
+      text-decoration: none; transition: all .15s;
+    }
+    .btn-open-havoyet:hover { border-color: var(--primary); color: #fff; }
+
+    main { max-width: 1200px; margin: 0 auto; padding: 36px 24px 80px; }
+
+    .hero { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 32px; gap: 24px; flex-wrap: wrap; }
+    .hero-text h1 { font-size: 26px; font-weight: 700; color: var(--dark); line-height: 1.2; }
+    .hero-text p  { margin-top: 6px; font-size: 14px; color: var(--muted); }
+
+    .date-chip { font-family: 'DM Mono', monospace; font-size: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; color: var(--muted); white-space: nowrap; }
+
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 20px 24px; display: flex; flex-direction: column; gap: 6px;
+      cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .1s;
+    }
+    .stat-card:hover { border-color: var(--primary); box-shadow: 0 4px 16px rgba(13,148,136,.10); transform: translateY(-1px); }
+    .stat-label { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .stat-value { font-family: 'DM Mono', monospace; font-size: 32px; font-weight: 500; color: var(--dark); line-height: 1; }
+    .stat-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .stat-card.unseen { border-left: 3px solid var(--primary); }
+    .stat-card.today  { border-left: 3px solid #6366f1; }
+    .stat-card.tmrw   { border-left: 3px solid #8b5cf6; }
+    .stat-card.total  { border-left: 3px solid var(--c-orange); }
+
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 10px; }
+    .section-title  { font-size: 16px; font-weight: 600; color: var(--dark); }
+
+    .btn-new-order {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: var(--primary); color: #fff; border: none; border-radius: 8px;
+      padding: 8px 16px; font-size: 13px; font-weight: 600; font-family: 'DM Sans', sans-serif;
+      cursor: pointer; white-space: nowrap; transition: background .15s, transform .1s;
+    }
+    .btn-new-order:hover { background: var(--primary-dk); transform: translateY(-1px); }
+
+    .filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+    .filter-btn { padding: 5px 14px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); font-size: 12px; font-weight: 600; font-family: 'DM Sans', sans-serif; color: var(--muted); cursor: pointer; transition: all .15s; }
+    .filter-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .filter-btn:hover:not(.active) { border-color: var(--primary); color: var(--primary); }
+    .search-input { padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-family: 'DM Sans', sans-serif; color: var(--dark); outline: none; width: 200px; transition: border-color .15s; }
+    .search-input:focus { border-color: var(--primary); }
+
+    table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; font-size: 13px; }
+    thead th { background: #f8fafc; border-bottom: 1px solid var(--border); padding: 11px 16px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; cursor: pointer; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f0fdfb; }
+    td { padding: 13px 16px; color: var(--dark); vertical-align: middle; }
+
+    .order-id { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
+    .customer-name { font-weight: 600; }
+    .delivery-info { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
+    .order-total { font-family: 'DM Mono', monospace; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-ny       { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+    .badge-pakket   { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+    .badge-levert   { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+    .badge-avbrutt  { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+
+    .actions-cell { display: flex; gap: 6px; align-items: center; }
+    .btn-action { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 11px; font-family: 'DM Sans', sans-serif; font-weight: 500; color: var(--dark); cursor: pointer; transition: all .1s; white-space: nowrap; }
+    .btn-action:hover { border-color: var(--primary); color: var(--primary); background: #f0fdfb; }
+    .btn-action.danger:hover { border-color: var(--c-red); color: var(--c-red); background: #fef2f2; }
+
+    .empty-state { text-align: center; padding: 56px 0; color: var(--muted); }
+    .empty-state svg { opacity: .3; margin-bottom: 12px; }
+    .empty-state p { font-size: 14px; }
+
+    /* DRAWER */
+    .drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 400; }
+    .drawer-overlay.open { display: block; }
+    .drawer { position: fixed; top: 0; right: -480px; width: 460px; max-width: 95vw; height: 100vh; background: var(--surface); box-shadow: -8px 0 40px rgba(0,0,0,.15); z-index: 401; display: flex; flex-direction: column; transition: right .25s cubic-bezier(.4,0,.2,1); }
+    .drawer.open { right: 0; }
+    .drawer-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+    .drawer-title { font-size: 17px; font-weight: 600; color: var(--dark); }
+    .drawer-sub   { font-size: 13px; color: var(--muted); margin-top: 3px; }
+    .drawer-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 22px; padding: 2px; line-height: 1; }
+    .drawer-close:hover { color: var(--dark); }
+    .drawer-body  { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+
+    .order-detail-row { display: flex; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .order-detail-row:last-child { border-bottom: none; }
+    .odr-key { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); min-width: 96px; padding-top: 2px; }
+    .odr-val { font-size: 14px; color: var(--dark); flex: 1; }
+    .odr-val.mono { font-family: 'DM Mono', monospace; font-size: 13px; }
+
+    .prod-list { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+    .prod-item { background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    .prod-item-name { font-weight: 500; color: var(--dark); }
+    .prod-item-meta { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
+
+    .status-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .status-btn { flex: 1; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12px; font-weight: 600; font-family: 'DM Sans', sans-serif; cursor: pointer; transition: all .15s; }
+    .status-btn:hover { border-color: var(--primary); color: var(--primary); }
+    .status-btn.danger:hover { border-color: var(--c-red); color: var(--c-red); }
+
+    /* MODAL */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 500; align-items: flex-start; justify-content: center; padding: 32px 16px; overflow-y: auto; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--surface); border-radius: 16px; width: 100%; max-width: 560px; box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s cubic-bezier(.4,0,.2,1); }
+    @keyframes modalIn { from{opacity:0;transform:translateY(-12px)} to{opacity:1;transform:none} }
+    .modal-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; }
+    .modal-title  { font-size: 17px; font-weight: 600; color: var(--dark); }
+    .modal-close  { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 22px; padding: 2px; line-height: 1; }
+    .modal-close:hover { color: var(--dark); }
+    .modal-body   { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+    .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+
+    .form-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-group { display: flex; flex-direction: column; gap: 5px; }
+    .form-group.full { grid-column: 1 / -1; }
+    .form-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    .form-input  { border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; font-size: 14px; font-family: 'DM Sans', sans-serif; color: var(--dark); background: var(--surface); outline: none; transition: border-color .15s; }
+    .form-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(13,148,136,.1); }
+    .section-divider { font-size: 13px; font-weight: 600; color: var(--dark); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+
+    .item-row { display: flex; align-items: center; gap: 8px; }
+    .item-row .form-input { flex: 1; }
+    .item-qty-input { width: 90px !important; flex: none !important; }
+    .btn-remove-item { background: none; border: 1px solid #fecaca; border-radius: 6px; color: var(--c-red); cursor: pointer; padding: 6px 8px; font-size: 14px; line-height: 1; transition: background .1s; }
+    .btn-remove-item:hover { background: #fef2f2; }
+    .btn-add-item { background: none; border: 1px dashed var(--border); border-radius: 8px; padding: 9px 12px; font-size: 13px; color: var(--muted); cursor: pointer; width: 100%; text-align: center; transition: all .15s; font-family: 'DM Sans', sans-serif; }
+    .btn-add-item:hover { border-color: var(--primary); color: var(--primary); }
+    .btn-cancel { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 9px 18px; font-size: 14px; font-weight: 500; font-family: 'DM Sans', sans-serif; cursor: pointer; color: var(--dark); }
+    .btn-cancel:hover { border-color: #94a3b8; }
+    .btn-lagre { background: var(--primary); color: #fff; border: none; border-radius: 8px; padding: 9px 22px; font-size: 14px; font-weight: 600; font-family: 'DM Sans', sans-serif; cursor: pointer; }
+    .btn-lagre:hover { background: var(--primary-dk); }
+
+    .footer-bar { position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 10px 32px; }
+    .footer-bar span { font-family: 'DM Mono', monospace; font-size: 11px; color: #94a3b8; }
+
+    @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) {
+      header { padding: 0 14px; height: 50px; }
+      main { padding: 16px 12px 80px; }
+      .hero { flex-direction: column; gap: 10px; margin-bottom: 20px; }
+      .stats { grid-template-columns: 1fr 1fr; }
+      table { font-size: 12px; }
+      td, thead th { padding: 9px 10px; }
+      .drawer { width: 100vw; }
+      .form-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div style="display:flex;align-items:center;">
+    <span class="logo-text">Nesttun Fisk &amp; Vilt</span>
+    <span class="logo-sub">— Ordresystem</span>
+  </div>
+  <div class="header-right">
+    <div class="sync-badge">
+      <span class="sync-dot" id="syncDot"></span>
+      <span id="syncLabel">Henter ordrer…</span>
+    </div>
+    <span class="clock" id="clock">--:--:--</span>
+    <a href="../Nettside/admin.html" class="btn-open-havoyet" title="Åpne Havøyet Admin">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      Havøyet Admin
+    </a>
+  </div>
+</header>
+
+<main>
+
+  <div class="hero">
+    <div class="hero-text">
+      <h1>Ordrebehandling</h1>
+      <p>Nesttun Fisk &amp; Vilt — bestillinger fra Havøyet-plattformen</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <div class="date-chip" id="dateChip">–</div>
+      <button class="btn-new-order" onclick="openModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Ny bestilling
+      </button>
+      <button class="btn-action" onclick="refreshOrders()" style="font-size:12px;padding:7px 14px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Oppdater
+      </button>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats">
+    <div class="stat-card unseen">
+      <div class="stat-label">Nye ordre</div>
+      <div class="stat-value" id="stat-ny">–</div>
+      <div class="stat-sub">Ikke behandlet ennå</div>
+    </div>
+    <div class="stat-card today">
+      <div class="stat-label">Pakket</div>
+      <div class="stat-value" id="stat-pakket">–</div>
+      <div class="stat-sub">Klar til levering</div>
+    </div>
+    <div class="stat-card tmrw">
+      <div class="stat-label">Levert i dag</div>
+      <div class="stat-value" id="stat-levert">–</div>
+      <div class="stat-sub" id="stat-levert-sub">–</div>
+    </div>
+    <div class="stat-card total">
+      <div class="stat-label">Totalt omsetning</div>
+      <div class="stat-value" id="stat-total">–</div>
+      <div class="stat-sub">Alle ordrer</div>
+    </div>
+  </div>
+
+  <!-- FILTER + SEARCH -->
+  <div class="filter-row">
+    <button class="filter-btn active" data-filter="alle" onclick="setFilter('alle',this)">Alle</button>
+    <button class="filter-btn" data-filter="Ny" onclick="setFilter('Ny',this)">Nye</button>
+    <button class="filter-btn" data-filter="Pakket" onclick="setFilter('Pakket',this)">Pakket</button>
+    <button class="filter-btn" data-filter="Levert" onclick="setFilter('Levert',this)">Levert</button>
+    <button class="filter-btn" data-filter="Avbrutt" onclick="setFilter('Avbrutt',this)">Avbrutt</button>
+    <input class="search-input" type="search" placeholder="Søk navn, adresse…" oninput="setSearch(this.value)" />
+  </div>
+
+  <!-- TABLE -->
+  <div class="section-header">
+    <span class="section-title" id="tableTitle">Bestillinger</span>
+    <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);" id="tableCount"></span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Kunde</th>
+        <th>Adresse</th>
+        <th>Levering</th>
+        <th>Produkter</th>
+        <th>Total</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="ordreTabell">
+      <tr><td colspan="8"><div class="empty-state"><p>Laster ordrer…</p></div></td></tr>
+    </tbody>
+  </table>
+
+</main>
+
+<!-- DRAWER: ordredetaljer -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-header">
+    <div>
+      <div class="drawer-title" id="drawerTitle">Ordre</div>
+      <div class="drawer-sub" id="drawerSub"></div>
+    </div>
+    <button class="drawer-close" onclick="closeDrawer()">×</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<!-- MODAL: ny bestilling -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Ny bestilling</div>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Fornavn</label>
+          <input class="form-input" id="m-fn" placeholder="Ola" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Etternavn</label>
+          <input class="form-input" id="m-en" placeholder="Nordmann" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Telefon</label>
+          <input class="form-input" id="m-tlf" type="tel" placeholder="400 00 000" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Leveringsdato</label>
+          <input class="form-input" id="m-dato" type="date" />
+        </div>
+      </div>
+      <div class="form-group full">
+        <label class="form-label">Adresse</label>
+        <input class="form-input" id="m-adr" placeholder="Gateveien 1, Bergen" />
+      </div>
+      <div class="form-group full">
+        <label class="form-label">Leveringstid</label>
+        <input class="form-input" id="m-tid" placeholder="17:00–19:00" value="17:00–19:00" />
+      </div>
+      <div>
+        <div class="section-divider" style="margin-bottom:12px;">Produkter</div>
+        <div id="m-items"></div>
+        <button class="btn-add-item" onclick="addItem()">+ Legg til produkt</button>
+      </div>
+      <div class="form-group full">
+        <label class="form-label">Merknad</label>
+        <input class="form-input" id="m-merk" placeholder="Allergier, ringeønske, etc." />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal()">Avbryt</button>
+      <button class="btn-lagre" onclick="saveOrder()">Lagre bestilling</button>
+    </div>
+  </div>
+</div>
+
+<div class="footer-bar">
+  <span>Nesttun Fisk &amp; Vilt · Ordresystem</span>
+  <span id="lastSync">–</span>
+</div>
+
+<script>
+  // ── Storage helpers ─────────────────────────────────────────────
+  // Reads from hv_orders (same key as Havøyet admin.html)
+  // Own orders stored under nfv_orders and merged in
+  const HV_KEY  = 'hv_orders';
+  const NFV_KEY = 'nfv_orders';
+
+  function getHvOrders()  { return JSON.parse(localStorage.getItem(HV_KEY)  || '[]'); }
+  function getNfvOrders() { return JSON.parse(localStorage.getItem(NFV_KEY) || '[]'); }
+  function saveNfvOrders(o) { localStorage.setItem(NFV_KEY, JSON.stringify(o)); }
+
+  function getAllOrders() {
+    const hv  = getHvOrders().map(o => ({ ...o, _src: 'havoyet' }));
+    const nfv = getNfvOrders().map(o => ({ ...o, _src: 'nesttun' }));
+    return [...hv, ...nfv].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  }
+
+  function updateHvStatus(nr, status) {
+    const orders = getHvOrders();
+    const o = orders.find(x => x.nr === nr);
+    if (o) { o.status = status; localStorage.setItem(HV_KEY, JSON.stringify(orders)); }
+  }
+  function updateNfvStatus(nr, status) {
+    const orders = getNfvOrders();
+    const o = orders.find(x => x.nr === nr);
+    if (o) { o.status = status; saveNfvOrders(orders); }
+  }
+  function updateStatus(nr, src, status) {
+    if (src === 'havoyet') updateHvStatus(nr, status);
+    else updateNfvStatus(nr, status);
+  }
+  function deleteNfv(nr) {
+    const orders = getNfvOrders().filter(x => x.nr !== nr);
+    saveNfvOrders(orders);
+  }
+
+  // ── Counter ──────────────────────────────────────────────────────
+  let nfvCounter = parseInt(localStorage.getItem('nfv_oc') || '1000');
+  function nextNr() { nfvCounter++; localStorage.setItem('nfv_oc', String(nfvCounter)); return nfvCounter; }
+
+  // ── State ────────────────────────────────────────────────────────
+  let activeFilter = 'alle';
+  let searchQuery  = '';
+  let openOrderNr  = null;
+  let openOrderSrc = null;
+  let modalItems   = [{ navn: '', ant: '' }];
+
+  // ── Clock ────────────────────────────────────────────────────────
+  function tick() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  setInterval(tick, 1000); tick();
+
+  // ── Date chip ────────────────────────────────────────────────────
+  const todayStr = new Date().toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long' });
+  document.getElementById('dateChip').textContent = todayStr;
+  document.getElementById('m-dato').value = new Date().toISOString().slice(0, 10);
+
+  // ── Filter / search ──────────────────────────────────────────────
+  function setFilter(f, btn) {
+    activeFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTable();
+  }
+  function setSearch(v) { searchQuery = v.toLowerCase(); renderTable(); }
+
+  // ── Badge helper ─────────────────────────────────────────────────
+  function badgeHtml(status) {
+    const map = { 'Ny':'badge-ny','Pakket':'badge-pakket','Levert':'badge-levert','Avbrutt':'badge-avbrutt' };
+    return `<span class="badge ${map[status]||'badge-ny'}">${status}</span>`;
+  }
+
+  // ── Render table ──────────────────────────────────────────────────
+  function renderTable() {
+    let orders = getAllOrders();
+    if (activeFilter !== 'alle') orders = orders.filter(o => o.status === activeFilter);
+    if (searchQuery) orders = orders.filter(o =>
+      (o.navn||'').toLowerCase().includes(searchQuery) ||
+      (o.adr||'').toLowerCase().includes(searchQuery) ||
+      String(o.nr).includes(searchQuery)
+    );
+
+    document.getElementById('tableCount').textContent = `${orders.length} ordre`;
+    const body = document.getElementById('ordreTabell');
+
+    if (!orders.length) {
+      body.innerHTML = `<tr><td colspan="8"><div class="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <p>Ingen ordrer funnet</p>
+      </div></td></tr>`;
+      return;
+    }
+
+    body.innerHTML = orders.map(o => {
+      const prods = (o.prods || []).map(p => `${p.navn}${p.ant ? ' ×'+p.ant : ''}${p.kg ? ' ('+p.kg+')' : ''}`).join(', ') || '–';
+      const srcTag = o._src === 'nesttun' ? ' <span style="font-size:10px;color:#8b5cf6;font-weight:600;margin-left:4px;">NFV</span>' : '';
+      return `<tr onclick="openDrawer(${o.nr},'${o._src}')">
+        <td class="order-id">#${o.nr}${srcTag}</td>
+        <td class="customer-name">${o.navn||'–'}</td>
+        <td class="delivery-info" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.adr||'–'}</td>
+        <td class="delivery-info">${o.dato||'–'} ${o.tid ? '<br>'+o.tid : ''}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--muted);">${prods}</td>
+        <td class="order-total">${o.total ? o.total+' kr' : '–'}</td>
+        <td>${badgeHtml(o.status||'Ny')}</td>
+        <td onclick="event.stopPropagation()">
+          <div class="actions-cell">
+            ${o.status === 'Ny' ? `<button class="btn-action" onclick="quickStatus(${o.nr},'${o._src}','Pakket')">Pakk</button>` : ''}
+            ${o.status === 'Pakket' ? `<button class="btn-action" onclick="quickStatus(${o.nr},'${o._src}','Levert')">Lever</button>` : ''}
+            ${o._src === 'nesttun' ? `<button class="btn-action danger" onclick="deleteOrder(${o.nr})">Slett</button>` : ''}
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  function quickStatus(nr, src, status) {
+    updateStatus(nr, src, status);
+    refreshOrders();
+  }
+  function deleteOrder(nr) {
+    if (!confirm('Slette denne bestillingen?')) return;
+    deleteNfv(nr);
+    refreshOrders();
+    closeDrawer();
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────
+  function renderStats() {
+    const all = getAllOrders();
+    document.getElementById('stat-ny').textContent     = all.filter(o => o.status === 'Ny').length;
+    document.getElementById('stat-pakket').textContent  = all.filter(o => o.status === 'Pakket').length;
+    document.getElementById('stat-levert').textContent  = all.filter(o => o.status === 'Levert').length;
+    const total = all.reduce((s, o) => s + (o.total || 0), 0);
+    document.getElementById('stat-total').textContent   = total.toLocaleString('nb-NO') + ' kr';
+    const levert = all.filter(o => o.status === 'Levert');
+    document.getElementById('stat-levert-sub').textContent = levert.length ? levert.reduce((s,o)=>s+(o.total||0),0)+' kr' : '–';
+  }
+
+  // ── Drawer ────────────────────────────────────────────────────────
+  function openDrawer(nr, src) {
+    const order = getAllOrders().find(o => o.nr === nr && o._src === src);
+    if (!order) return;
+    openOrderNr  = nr;
+    openOrderSrc = src;
+
+    document.getElementById('drawerTitle').textContent = `Ordre #${nr}`;
+    document.getElementById('drawerSub').textContent   = order.navn || '';
+
+    const fields = [
+      ['Kunde',       order.navn],
+      ['Telefon',     order.tlf],
+      ['Adresse',     order.adr],
+      ['Levering',    [order.dato, order.tid].filter(Boolean).join(' · ')],
+      ['Merknad',     order.merk || '–'],
+      ['Total',       order.total ? order.total + ' kr' : '–'],
+      ['Status',      badgeHtml(order.status || 'Ny')],
+      ['Kilde',       src === 'nesttun' ? 'Nesttun Fisk & Vilt' : 'Havøyet'],
+    ];
+
+    const prodHtml = (order.prods || []).length
+      ? `<div class="prod-list">${(order.prods||[]).map(p =>
+          `<div class="prod-item">
+            <span class="prod-item-name">${p.navn}</span>
+            <span class="prod-item-meta">${p.ant ? '× '+p.ant : ''}${p.kg ? ' · '+p.kg : ''}</span>
+          </div>`).join('')}</div>`
+      : '<p style="font-size:13px;color:var(--muted);">Ingen produkter registrert</p>';
+
+    document.getElementById('drawerBody').innerHTML = `
+      ${fields.map(([k,v]) => `<div class="order-detail-row"><div class="odr-key">${k}</div><div class="odr-val">${v||'–'}</div></div>`).join('')}
+      <div style="margin-top:8px;"><div class="section-divider" style="margin-bottom:8px;">Produkter</div>${prodHtml}</div>
+      <div>
+        <div class="section-divider" style="margin-bottom:10px;">Endre status</div>
+        <div class="status-actions">
+          <button class="status-btn" onclick="quickStatus(${nr},'${src}','Ny')">Ny</button>
+          <button class="status-btn" onclick="quickStatus(${nr},'${src}','Pakket')">Pakket</button>
+          <button class="status-btn" onclick="quickStatus(${nr},'${src}','Levert')">Levert</button>
+          <button class="status-btn danger" onclick="quickStatus(${nr},'${src}','Avbrutt')">Avbrutt</button>
+        </div>
+      </div>
+      ${src === 'nesttun' ? `<button class="btn-action danger" onclick="deleteOrder(${nr})" style="width:100%;padding:10px;margin-top:4px;">Slett bestilling</button>` : ''}
+    `;
+
+    document.getElementById('drawer').classList.add('open');
+    document.getElementById('drawerOverlay').classList.add('open');
+  }
+
+  function closeDrawer() {
+    document.getElementById('drawer').classList.remove('open');
+    document.getElementById('drawerOverlay').classList.remove('open');
+  }
+
+  // ── Modal ─────────────────────────────────────────────────────────
+  function openModal() {
+    modalItems = [{ navn: '', ant: '' }];
+    renderModalItems();
+    document.getElementById('modalOverlay').classList.add('open');
+    document.getElementById('m-fn').focus();
+  }
+  function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+  function renderModalItems() {
+    document.getElementById('m-items').innerHTML = modalItems.map((it, i) => `
+      <div class="item-row" style="margin-bottom:8px;">
+        <input class="form-input" placeholder="Produktnavn" value="${it.navn}" oninput="modalItems[${i}].navn=this.value" />
+        <input class="form-input item-qty-input" placeholder="Ant / kg" value="${it.ant}" oninput="modalItems[${i}].ant=this.value" />
+        ${i > 0 ? `<button class="btn-remove-item" onclick="removeItem(${i})">×</button>` : '<div style="width:32px"></div>'}
+      </div>
+    `).join('');
+  }
+  function addItem()       { modalItems.push({ navn: '', ant: '' }); renderModalItems(); }
+  function removeItem(i)   { modalItems.splice(i, 1); renderModalItems(); }
+
+  function saveOrder() {
+    const fn   = document.getElementById('m-fn').value.trim();
+    const en   = document.getElementById('m-en').value.trim();
+    const tlf  = document.getElementById('m-tlf').value.trim();
+    const adr  = document.getElementById('m-adr').value.trim();
+    const dato = document.getElementById('m-dato').value;
+    const tid  = document.getElementById('m-tid').value.trim();
+    const merk = document.getElementById('m-merk').value.trim();
+    if (!fn && !en) { alert('Fyll inn kundenavn'); return; }
+    const prods = modalItems.filter(p => p.navn.trim());
+    const total = prods.reduce((s, p) => {
+      const n = parseFloat(p.ant);
+      return s + (isNaN(n) ? 0 : n);
+    }, 0);
+    const nr = nextNr();
+    const orders = getNfvOrders();
+    orders.push({ nr, navn: `${fn} ${en}`.trim(), tlf, adr, dato, tid, merk, prods, total, status: 'Ny', ts: Date.now() });
+    saveNfvOrders(orders);
+    closeModal();
+    refreshOrders();
+  }
+
+  // ── Main refresh ─────────────────────────────────────────────────
+  function refreshOrders() {
+    renderStats();
+    renderTable();
+    const now = new Date().toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('lastSync').textContent = 'Sist synkronisert: ' + now;
+    const count = getAllOrders().length;
+    document.getElementById('syncLabel').textContent = `${count} ordre lastet`;
+    document.getElementById('syncDot').style.background = 'var(--c-green)';
+    // If drawer is open, re-render it
+    if (openOrderNr !== null) openDrawer(openOrderNr, openOrderSrc);
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────
+  refreshOrders();
+  // Auto-refresh every 30 seconds to pick up new orders from Havøyet admin
+  setInterval(refreshOrders, 30000);
+</script>
+
+</body>
+</html>

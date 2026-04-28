@@ -5,3 +5,12 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+.env
+.env.*
+flask-kopi.log
+ukens_fisk_state.json
+.claude/
+.claude-flow/
+.mcp.json
+CLAUDE.md
+admin_notifications.jsonl
