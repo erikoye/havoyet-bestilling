@@ -9,11 +9,13 @@ Krav:  pip install flask flask-cors requests
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import threading
 import time
 import json
 import os
+import secrets
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
@@ -470,6 +472,8 @@ _reviews = []  # [{id, slug, name, rating, text, date}]
 _customer_favorites = {}  # email → [slug, slug, ...]
 _admin_notifiers = []  # [{id, name, email, events:[...], created_at}]
 _customers = []  # [{id, navn, tlf, epost, adresse, kommentar, created_at}]
+_auth_users = []   # [{email, role, password_hash, must_set_password, created_at}]
+_auth_sessions = {}  # token → {email, role, created_at} — i minnet kun
 _shopify_seen_ids = set()  # spor sett Shopify-ordre for å oppdage nye i poll-loop
 
 def _save_sync_state():
@@ -487,14 +491,16 @@ def _save_sync_state():
                 "customer_favorites":  _customer_favorites,
                 "admin_notifiers":     _admin_notifiers,
                 "customers":           _customers,
+                "auth_users":          _auth_users,
             }, f, ensure_ascii=False)
     except Exception:
         pass
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _auth_users
     if not os.path.exists(SYNC_STATE_FILE):
+        _seed_auth_users()
         return
     try:
         with open(SYNC_STATE_FILE, "r", encoding="utf-8") as f:
@@ -509,9 +515,12 @@ def _load_sync_state():
         _customer_favorites = d.get("customer_favorites", {})
         _admin_notifiers    = d.get("admin_notifiers", [])
         _customers          = d.get("customers", [])
-        print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder")
+        _auth_users         = d.get("auth_users", [])
+        _seed_auth_users()
+        print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder, {len(_auth_users)} auth-brukere")
     except Exception as e:
         print(f"[ADVARSEL] Kunne ikke laste sync-state: {e}")
+        _seed_auth_users()
 
 
 @app.route("/api/manual-orders", methods=["GET", "POST"])
@@ -1790,6 +1799,206 @@ def api_checkout_status(reference):
         payments[reference]["last_check"] = time.time()
         _vipps_save_payments(payments)
     return jsonify({"reference": reference, "state": state, "vipps": body})
+
+# ── AUTH (admin-brukere + sesjoner) ───────────────────────────────────────────
+# Brukere lagres på disk via _save_sync_state. Sesjoner er kun i minnet — overlever
+# ikke restart, men det er greit (klienten ber bare om login på nytt).
+
+_AUTH_SEED = [
+    {"email": "erik@havoyet.no",  "role": "admin"},
+    {"email": "stian@havoyet.no", "role": "user"},
+]
+
+def _seed_auth_users():
+    """Sett opp standard-brukere første gang serveren starter, eller legg til
+    seed-brukere som mangler i en eksisterende database."""
+    global _auth_users
+    existing = {u.get("email", "").lower() for u in _auth_users}
+    for s in _AUTH_SEED:
+        if s["email"].lower() not in existing:
+            _auth_users.append({
+                "email": s["email"],
+                "role": s["role"],
+                "password_hash": None,
+                "must_set_password": True,
+                "created_at": int(time.time()),
+            })
+
+def _find_user(email):
+    if not email:
+        return None
+    em = email.strip().lower()
+    return next((u for u in _auth_users if u.get("email", "").lower() == em), None)
+
+def _user_from_request():
+    """Returnerer (user_dict, token) hvis det er en gyldig sesjon, ellers (None, None)."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, None
+    token = auth[7:].strip()
+    sess = _auth_sessions.get(token)
+    if not sess:
+        return None, None
+    user = _find_user(sess.get("email"))
+    if not user:
+        _auth_sessions.pop(token, None)
+        return None, None
+    return user, token
+
+def _public_user(u):
+    return {
+        "email": u.get("email"),
+        "role": u.get("role"),
+        "mustSetPassword": bool(u.get("must_set_password")),
+        "hasPassword": bool(u.get("password_hash")),
+        "createdAt": u.get("created_at"),
+    }
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    user = _find_user(email)
+    if not user:
+        return jsonify({"ok": False, "error": "Ugyldig e-post eller passord"}), 401
+    if user.get("must_set_password") or not user.get("password_hash"):
+        return jsonify({
+            "ok": False,
+            "mustSetPassword": True,
+            "email": user.get("email"),
+            "message": "Førstegangs-pålogging — du må sette et passord først.",
+        })
+    if not check_password_hash(user.get("password_hash") or "", password):
+        return jsonify({"ok": False, "error": "Ugyldig e-post eller passord"}), 401
+    token = secrets.token_urlsafe(32)
+    _auth_sessions[token] = {
+        "email": user["email"],
+        "role": user["role"],
+        "created_at": int(time.time()),
+    }
+    return jsonify({"ok": True, "token": token, "user": _public_user(user)})
+
+@app.route("/api/auth/set-password", methods=["POST"])
+def api_auth_set_password():
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    new_password = data.get("newPassword") or ""
+    if len(new_password) < 8:
+        return jsonify({"ok": False, "error": "Passordet må være minst 8 tegn"}), 400
+    user = _find_user(email)
+    if not user:
+        return jsonify({"ok": False, "error": "Bruker finnes ikke"}), 404
+    if not user.get("must_set_password"):
+        return jsonify({"ok": False, "error": "Førstegangs-passord er allerede satt. Bruk «Endre passord» fra Min bruker."}), 400
+    user["password_hash"] = generate_password_hash(new_password)
+    user["must_set_password"] = False
+    _save_sync_state()
+    token = secrets.token_urlsafe(32)
+    _auth_sessions[token] = {
+        "email": user["email"],
+        "role": user["role"],
+        "created_at": int(time.time()),
+    }
+    return jsonify({"ok": True, "token": token, "user": _public_user(user)})
+
+@app.route("/api/auth/me", methods=["GET"])
+def api_auth_me():
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False}), 401
+    return jsonify({"ok": True, "user": _public_user(user)})
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    _, token = _user_from_request()
+    if token:
+        _auth_sessions.pop(token, None)
+    return jsonify({"ok": True})
+
+@app.route("/api/auth/me/password", methods=["POST"])
+def api_auth_me_password():
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Ikke innlogget"}), 401
+    data = request.get_json(force=True) or {}
+    current = data.get("currentPassword") or ""
+    new_pwd = data.get("newPassword") or ""
+    if len(new_pwd) < 8:
+        return jsonify({"ok": False, "error": "Nytt passord må være minst 8 tegn"}), 400
+    if not check_password_hash(user.get("password_hash") or "", current):
+        return jsonify({"ok": False, "error": "Feil nåværende passord"}), 401
+    user["password_hash"] = generate_password_hash(new_pwd)
+    user["must_set_password"] = False
+    _save_sync_state()
+    return jsonify({"ok": True})
+
+@app.route("/api/auth/users", methods=["GET", "POST"])
+def api_auth_users():
+    actor, _ = _user_from_request()
+    if not actor:
+        return jsonify({"ok": False, "error": "Ikke innlogget"}), 401
+    if actor.get("role") != "admin":
+        return jsonify({"ok": False, "error": "Bare admin kan administrere brukere"}), 403
+    if request.method == "GET":
+        return jsonify({"ok": True, "users": [_public_user(u) for u in _auth_users]})
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    role = data.get("role", "user")
+    if role not in ("admin", "user"):
+        return jsonify({"ok": False, "error": "Ugyldig rolle"}), 400
+    if not email or "@" not in email:
+        return jsonify({"ok": False, "error": "Ugyldig e-post"}), 400
+    if _find_user(email):
+        return jsonify({"ok": False, "error": "E-posten er allerede registrert"}), 409
+    new_user = {
+        "email": email,
+        "role": role,
+        "password_hash": None,
+        "must_set_password": True,
+        "created_at": int(time.time()),
+    }
+    _auth_users.append(new_user)
+    _save_sync_state()
+    return jsonify({"ok": True, "user": _public_user(new_user)})
+
+@app.route("/api/auth/users/<email>", methods=["DELETE", "PATCH"])
+def api_auth_user_one(email):
+    actor, _ = _user_from_request()
+    if not actor:
+        return jsonify({"ok": False, "error": "Ikke innlogget"}), 401
+    if actor.get("role") != "admin":
+        return jsonify({"ok": False, "error": "Bare admin kan administrere brukere"}), 403
+    target_email = (email or "").strip().lower()
+    target = _find_user(target_email)
+    if not target:
+        return jsonify({"ok": False, "error": "Bruker finnes ikke"}), 404
+    if request.method == "DELETE":
+        if target["email"].lower() == actor["email"].lower():
+            return jsonify({"ok": False, "error": "Du kan ikke slette deg selv"}), 400
+        global _auth_users
+        _auth_users = [u for u in _auth_users if u.get("email", "").lower() != target_email]
+        for tok in list(_auth_sessions.keys()):
+            if _auth_sessions[tok].get("email", "").lower() == target_email:
+                _auth_sessions.pop(tok, None)
+        _save_sync_state()
+        return jsonify({"ok": True})
+    data = request.get_json(force=True) or {}
+    if "role" in data:
+        if data["role"] not in ("admin", "user"):
+            return jsonify({"ok": False, "error": "Ugyldig rolle"}), 400
+        if target["email"].lower() == actor["email"].lower() and data["role"] != "admin":
+            return jsonify({"ok": False, "error": "Du kan ikke fjerne din egen admin-rolle"}), 400
+        target["role"] = data["role"]
+    if data.get("resetPassword"):
+        target["password_hash"] = None
+        target["must_set_password"] = True
+        for tok in list(_auth_sessions.keys()):
+            if _auth_sessions[tok].get("email", "").lower() == target["email"].lower():
+                _auth_sessions.pop(tok, None)
+    _save_sync_state()
+    return jsonify({"ok": True, "user": _public_user(target)})
+
 
 if __name__ == "__main__":
     # Last cache fra disk ved oppstart (om den finnes)
