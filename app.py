@@ -2000,6 +2000,16 @@ def api_auth_user_one(email):
     return jsonify({"ok": True, "user": _public_user(target)})
 
 
+# ── WSGI-bootstrap ────────────────────────────────────────────────────────────
+# Render kjører `gunicorn app:app`, så __main__-blokken under kjøres ALDRI i
+# produksjon. Last sync-state og seed-brukere ved import.
+try:
+    _load_sync_state()
+    print(f"[BOOT-WSGI] sync-state lastet, {len(_auth_users)} auth-brukere")
+except Exception as _e:
+    print(f"[BOOT-WSGI] _load_sync_state feilet: {_e}")
+
+
 if __name__ == "__main__":
     # Last cache fra disk ved oppstart (om den finnes)
     if os.path.exists(CACHE_FILE):
