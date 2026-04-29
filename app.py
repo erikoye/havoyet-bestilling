@@ -2091,6 +2091,35 @@ def api_auth_logout():
         _auth_sessions.pop(token, None)
     return jsonify({"ok": True})
 
+@app.route("/api/customer/auth/register", methods=["POST"])
+def api_customer_auth_register():
+    """Selvbetjent kunde-registrering med passord. Oppretter ny konto og logger inn."""
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if not email or "@" not in email:
+        return jsonify({"ok": False, "error": "Ugyldig e-post"}), 400
+    if len(password) < 8:
+        return jsonify({"ok": False, "error": "Passordet må være minst 8 tegn"}), 400
+    if _find_user(email):
+        return jsonify({"ok": False, "error": "E-posten er allerede registrert. Logg inn i stedet."}), 409
+    new_user = {
+        "email": email,
+        "role": "customer",
+        "password_hash": generate_password_hash(password),
+        "must_set_password": False,
+        "created_at": int(time.time()),
+    }
+    _auth_users.append(new_user)
+    _save_sync_state()
+    token = secrets.token_urlsafe(32)
+    _auth_sessions[token] = {
+        "email": new_user["email"],
+        "role": new_user["role"],
+        "created_at": int(time.time()),
+    }
+    return jsonify({"ok": True, "token": token, "user": _public_user(new_user)})
+
 @app.route("/api/auth/me/password", methods=["POST"])
 def api_auth_me_password():
     user, _ = _user_from_request()
