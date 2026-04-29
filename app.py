@@ -57,6 +57,17 @@ VIPPS_MSN               = os.environ.get("VIPPS_MSN", "")             # Merchant
 VIPPS_TEST_MODE         = os.environ.get("VIPPS_TEST_MODE", "0") == "1"
 VIPPS_API_BASE          = "https://apitest.vipps.no" if VIPPS_TEST_MODE else "https://api.vipps.no"
 VIPPS_PAYMENTS_FILE     = os.path.join("/tmp", "havoyet_vipps_payments.json")
+
+# ── STRIPE (kort-betaling, separat fra Vipps) ────────────────────────────────
+STRIPE_SECRET_KEY      = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET  = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PAYMENTS_FILE   = os.path.join("/tmp", "havoyet_stripe_payments.json")
+try:
+    import stripe as _stripe
+    if STRIPE_SECRET_KEY:
+        _stripe.api_key = STRIPE_SECRET_KEY
+except Exception:
+    _stripe = None
 _vipps_token_cache      = {"access_token": None, "expires_at": 0.0}
 
 # In-memory cache
@@ -1799,6 +1810,170 @@ def api_checkout_status(reference):
         payments[reference]["last_check"] = time.time()
         _vipps_save_payments(payments)
     return jsonify({"reference": reference, "state": state, "vipps": body})
+
+
+# ─── STRIPE CHECKOUT (kort-betaling, parallelt med Vipps) ─────────────────────
+def _stripe_configured():
+    return bool(_stripe and STRIPE_SECRET_KEY)
+
+def _stripe_load_payments():
+    if os.path.exists(STRIPE_PAYMENTS_FILE):
+        try:
+            with open(STRIPE_PAYMENTS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _stripe_save_payments(data):
+    try:
+        with open(STRIPE_PAYMENTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+@app.route("/api/checkout/card-init", methods=["POST"])
+def api_checkout_card_init():
+    """Oppretter en Stripe Checkout-sesjon for kortbetaling.
+    Body: { ordrenr, amount (i øre), customer: { email, name }, returnUrl }"""
+    if not _stripe_configured():
+        return jsonify({"error": "Kortbetaling er ikke konfigurert (mangler Stripe-nøkler på serveren)"}), 503
+    data = request.get_json(silent=True) or {}
+    ordrenr = data.get("ordrenr") or ("H" + str(int(time.time() * 1000))[-8:])
+    amount  = int(data.get("amount", 0))  # i øre (1 NOK = 100 øre)
+    if amount <= 0:
+        return jsonify({"error": "Ugyldig beløp"}), 400
+    customer  = data.get("customer") or {}
+    base_url  = (data.get("returnUrl") or request.host_url).rstrip("/")
+    success_url = f"{base_url}/kasse?ordre={ordrenr}&card_session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url  = f"{base_url}/kasse?ordre={ordrenr}&card_cancelled=1"
+
+    try:
+        session = _stripe.checkout.Session.create(
+            mode="payment",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "nok",
+                    "unit_amount": amount,
+                    "product_data": {
+                        "name": f"Havøyet ordre {ordrenr}",
+                        "description": "Sjømat fra Havøyet",
+                    },
+                },
+                "quantity": 1,
+            }],
+            success_url=success_url,
+            cancel_url=cancel_url,
+            customer_email=customer.get("email") or None,
+            metadata={
+                "ordrenr": str(ordrenr),
+                "kunde_navn": str(customer.get("name", ""))[:200],
+                "kunde_tlf":  str(customer.get("phoneNumber", ""))[:30],
+            },
+            locale="nb",
+        )
+    except Exception as e:
+        return jsonify({"error": f"Kunne ikke opprette Stripe-sesjon: {e}"}), 502
+
+    payments = _stripe_load_payments()
+    payments[session.id] = {
+        "ordrenr": ordrenr,
+        "amount":  amount,
+        "state":   "CREATED",
+        "kind":    "card",
+        "created_at": time.time(),
+        "session_id": session.id,
+        "payment_intent": session.payment_intent,
+    }
+    _stripe_save_payments(payments)
+
+    return jsonify({
+        "ok":         True,
+        "url":        session.url,
+        "sessionId":  session.id,
+        "ordrenr":    ordrenr,
+    })
+
+@app.route("/api/checkout/card-status/<session_id>", methods=["GET"])
+def api_checkout_card_status(session_id):
+    """Polling-endepunkt — sjekker om kortbetalingen er fullført."""
+    if not _stripe_configured():
+        return jsonify({"error": "Kortbetaling er ikke konfigurert"}), 503
+    try:
+        session = _stripe.checkout.Session.retrieve(session_id)
+    except Exception as e:
+        return jsonify({"error": f"Kunne ikke hente Stripe-sesjon: {e}"}), 502
+    payments = _stripe_load_payments()
+    rec = payments.get(session_id, {})
+    new_state = "PAID" if session.payment_status == "paid" else session.status.upper()
+    rec["state"] = new_state
+    rec["last_check"] = time.time()
+    rec["payment_intent"] = session.payment_intent
+    payments[session_id] = rec
+    _stripe_save_payments(payments)
+    return jsonify({
+        "ok":      True,
+        "state":   new_state,
+        "ordrenr": rec.get("ordrenr"),
+        "paid":    session.payment_status == "paid",
+    })
+
+@app.route("/api/webhooks/stripe", methods=["POST"])
+def api_webhook_stripe():
+    """Stripe sender hendelser hit (f.eks. checkout.session.completed)."""
+    if not _stripe_configured():
+        return jsonify({"error": "Stripe ikke konfigurert"}), 503
+    payload    = request.data
+    sig_header = request.headers.get("Stripe-Signature", "")
+
+    # Hvis webhook-secret er konfigurert, verifiser signaturen
+    if STRIPE_WEBHOOK_SECRET:
+        try:
+            event = _stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+        except Exception as e:
+            return jsonify({"error": f"Ugyldig signatur: {e}"}), 400
+    else:
+        # Uten secret — kun for utvikling/test
+        try:
+            event = json.loads(payload.decode("utf-8") or "{}")
+        except Exception:
+            return jsonify({"error": "Ugyldig payload"}), 400
+
+    etype = event.get("type") if isinstance(event, dict) else event["type"]
+    obj   = (event.get("data") if isinstance(event, dict) else event["data"]).get("object", {}) or {}
+
+    if etype == "checkout.session.completed":
+        sess_id  = obj.get("id")
+        ordrenr  = (obj.get("metadata") or {}).get("ordrenr")
+        amount   = obj.get("amount_total") or 0
+        paid     = obj.get("payment_status") == "paid"
+        payments = _stripe_load_payments()
+        rec = payments.get(sess_id, {})
+        rec.update({
+            "state":   "PAID" if paid else "COMPLETED",
+            "ordrenr": ordrenr or rec.get("ordrenr"),
+            "amount":  amount,
+            "paid_at": time.time() if paid else rec.get("paid_at"),
+            "payment_intent": obj.get("payment_intent"),
+        })
+        payments[sess_id] = rec
+        _stripe_save_payments(payments)
+        if paid and ordrenr:
+            _notify_admins(
+                "payment_received",
+                f"[Havøyet] Kortbetaling mottatt #{ordrenr}",
+                f"Beløp: {amount/100:.2f} kr (kort via Stripe)\nOrdre: {ordrenr}\nSession: {sess_id}",
+            )
+    elif etype == "checkout.session.expired":
+        sess_id  = obj.get("id")
+        payments = _stripe_load_payments()
+        if sess_id in payments:
+            payments[sess_id]["state"] = "EXPIRED"
+            _stripe_save_payments(payments)
+
+    return jsonify({"received": True})
+
 
 # ── AUTH (admin-brukere + sesjoner) ───────────────────────────────────────────
 # Brukere lagres på disk via _save_sync_state. Sesjoner er kun i minnet — overlever
