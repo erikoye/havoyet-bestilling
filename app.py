@@ -38,8 +38,17 @@ SHOPIFY_VERSION = os.environ.get("SHOPIFY_API_VERSION", "2024-01")
 POLL_INTERVAL   = int(os.environ.get("POLL_INTERVAL", "300"))  # sekunder (5 min)
 
 PORT            = int(os.environ.get("PORT", 5001))
+# STATE_DIR: hvor vedvarende data (brukere, sesjoner, manuelle ordre, osv.) lagres.
+# På Render må dette peke til en mountet persistent disk (f.eks. /var/data),
+# ellers blir /tmp blanket ved hver container-restart og brukere må sette
+# passord på nytt. Default /tmp for lokal Pi-utvikling.
+STATE_DIR       = os.environ.get("STATE_DIR", "/tmp")
+try:
+    os.makedirs(STATE_DIR, exist_ok=True)
+except Exception:
+    pass
 CACHE_FILE      = os.path.join("/tmp", "havoyet_orders_cache.json")
-SYNC_STATE_FILE = os.path.join("/tmp", "havoyet_sync_state.json")
+SYNC_STATE_FILE = os.path.join(STATE_DIR, "havoyet_sync_state.json")
 
 # PowerOffice GO
 POWEROFFICE_CLIENT_ID     = os.environ.get("POWEROFFICE_CLIENT_ID", "")
@@ -484,7 +493,10 @@ _customer_favorites = {}  # email → [slug, slug, ...]
 _admin_notifiers = []  # [{id, name, email, events:[...], created_at}]
 _customers = []  # [{id, navn, tlf, epost, adresse, kommentar, created_at}]
 _auth_users = []   # [{email, role, password_hash, must_set_password, created_at}]
-_auth_sessions = {}  # token → {email, role, created_at} — i minnet kun
+_auth_sessions = {}  # token → {email, role, created_at} — persisteres til disk via STATE_DIR
+# Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
+# selv logger ut. Fjern token manuelt via /api/auth/logout for å invalidere det.
+AUTH_SESSION_TTL = None
 _shopify_seen_ids = set()  # spor sett Shopify-ordre for å oppdage nye i poll-loop
 
 def _save_sync_state():
@@ -503,13 +515,14 @@ def _save_sync_state():
                 "admin_notifiers":     _admin_notifiers,
                 "customers":           _customers,
                 "auth_users":          _auth_users,
+                "auth_sessions":       _auth_sessions,
             }, f, ensure_ascii=False)
     except Exception:
         pass
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _auth_users
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _auth_users, _auth_sessions
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         return
@@ -527,8 +540,20 @@ def _load_sync_state():
         _admin_notifiers    = d.get("admin_notifiers", [])
         _customers          = d.get("customers", [])
         _auth_users         = d.get("auth_users", [])
+        loaded_sessions     = d.get("auth_sessions", {}) or {}
+        if AUTH_SESSION_TTL is None:
+            _auth_sessions  = {
+                tok: sess for tok, sess in loaded_sessions.items()
+                if isinstance(sess, dict)
+            }
+        else:
+            cutoff = int(time.time()) - AUTH_SESSION_TTL
+            _auth_sessions  = {
+                tok: sess for tok, sess in loaded_sessions.items()
+                if isinstance(sess, dict) and int(sess.get("created_at", 0)) >= cutoff
+            }
         _seed_auth_users()
-        print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder, {len(_auth_users)} auth-brukere")
+        print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder, {len(_auth_users)} auth-brukere, {len(_auth_sessions)} aktive sesjoner")
     except Exception as e:
         print(f"[ADVARSEL] Kunne ikke laste sync-state: {e}")
         _seed_auth_users()
@@ -1980,24 +2005,35 @@ def api_webhook_stripe():
 # ikke restart, men det er greit (klienten ber bare om login på nytt).
 
 _AUTH_SEED = [
-    {"email": "erik@havoyet.no",  "role": "admin"},
-    {"email": "stian@havoyet.no", "role": "user"},
+    # env_hash_key: navnet på env-var som inneholder werkzeug-hash for denne brukeren.
+    # Når env-varen er satt overlever passordet container-restarts uten persistent disk.
+    {"email": "erik@havoyet.no",  "role": "admin", "env_hash_key": "ADMIN_PASSWORD_HASH"},
+    {"email": "stian@havoyet.no", "role": "user",  "env_hash_key": "USER_PASSWORD_HASH"},
 ]
 
 def _seed_auth_users():
     """Sett opp standard-brukere første gang serveren starter, eller legg til
-    seed-brukere som mangler i en eksisterende database."""
+    seed-brukere som mangler i en eksisterende database. Hvis miljøvariabelen
+    angitt av env_hash_key er satt brukes den som passord-hash, slik at brukere
+    fortsatt har et gyldig passord etter at /tmp er slettet ved Render-restart."""
     global _auth_users
-    existing = {u.get("email", "").lower() for u in _auth_users}
+    by_email = {u.get("email", "").lower(): u for u in _auth_users}
     for s in _AUTH_SEED:
-        if s["email"].lower() not in existing:
+        env_hash = os.environ.get(s.get("env_hash_key") or "") or None
+        existing = by_email.get(s["email"].lower())
+        if existing is None:
             _auth_users.append({
                 "email": s["email"],
                 "role": s["role"],
-                "password_hash": None,
-                "must_set_password": True,
+                "password_hash": env_hash,
+                "must_set_password": not bool(env_hash),
                 "created_at": int(time.time()),
             })
+        elif env_hash and not existing.get("password_hash"):
+            # Eksisterende bruker uten hash (f.eks. nylig seedet med must_set_password)
+            # — fyll inn fra env slik at de ikke trenger førstegangs-flyt.
+            existing["password_hash"] = env_hash
+            existing["must_set_password"] = False
 
 def _find_user(email):
     if not email:
@@ -2052,6 +2088,7 @@ def api_auth_login():
         "role": user["role"],
         "created_at": int(time.time()),
     }
+    _save_sync_state()
     return jsonify({"ok": True, "token": token, "user": _public_user(user)})
 
 @app.route("/api/auth/set-password", methods=["POST"])
@@ -2068,13 +2105,13 @@ def api_auth_set_password():
         return jsonify({"ok": False, "error": "Førstegangs-passord er allerede satt. Bruk «Endre passord» fra Min bruker."}), 400
     user["password_hash"] = generate_password_hash(new_password)
     user["must_set_password"] = False
-    _save_sync_state()
     token = secrets.token_urlsafe(32)
     _auth_sessions[token] = {
         "email": user["email"],
         "role": user["role"],
         "created_at": int(time.time()),
     }
+    _save_sync_state()
     return jsonify({"ok": True, "token": token, "user": _public_user(user)})
 
 @app.route("/api/auth/me", methods=["GET"])
@@ -2089,6 +2126,7 @@ def api_auth_logout():
     _, token = _user_from_request()
     if token:
         _auth_sessions.pop(token, None)
+        _save_sync_state()
     return jsonify({"ok": True})
 
 @app.route("/api/customer/auth/register", methods=["POST"])
@@ -2111,13 +2149,13 @@ def api_customer_auth_register():
         "created_at": int(time.time()),
     }
     _auth_users.append(new_user)
-    _save_sync_state()
     token = secrets.token_urlsafe(32)
     _auth_sessions[token] = {
         "email": new_user["email"],
         "role": new_user["role"],
         "created_at": int(time.time()),
     }
+    _save_sync_state()
     return jsonify({"ok": True, "token": token, "user": _public_user(new_user)})
 
 @app.route("/api/auth/me/password", methods=["POST"])
@@ -2204,6 +2242,301 @@ def api_auth_user_one(email):
     return jsonify({"ok": True, "user": _public_user(target)})
 
 
+# ── ANALYTICS (kundebevegelse-tracking) ───────────────────────────────────────
+# Lagrer events fra nettsiden når besøkende har samtykket til markedsføring.
+# Aggregerer drop-off, funnel, klikk-heatmap og navigasjonsstier.
+ANALYTICS_FILE         = os.path.join(STATE_DIR, "havoyet_analytics.json")
+ANALYTICS_MAX_EVENTS   = 50000   # FIFO-cap så filen ikke vokser ubegrenset
+ANALYTICS_LOCK         = threading.Lock()
+_analytics             = {"events": [], "sessions": {}}
+_last_analytics_save   = [0.0]   # liste for muterbar closure-state
+
+def _load_analytics():
+    global _analytics
+    if not os.path.exists(ANALYTICS_FILE):
+        return
+    try:
+        with open(ANALYTICS_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        _analytics["events"]   = d.get("events", []) or []
+        _analytics["sessions"] = d.get("sessions", {}) or {}
+        print(f"[ANALYTICS] Lastet {len(_analytics['events'])} events, {len(_analytics['sessions'])} sesjoner")
+    except Exception as e:
+        print(f"[ANALYTICS] Kunne ikke laste: {e}")
+
+def _save_analytics():
+    try:
+        tmp = ANALYTICS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_analytics, f, ensure_ascii=False)
+        os.replace(tmp, ANALYTICS_FILE)
+    except Exception:
+        pass
+
+def _maybe_persist_analytics(force=False):
+    now = time.time()
+    if force or now - _last_analytics_save[0] > 5:
+        _last_analytics_save[0] = now
+        _save_analytics()
+
+def _analytics_record_event(ev):
+    """Append event, oppdater session-summary."""
+    is_funnel = False
+    with ANALYTICS_LOCK:
+        events = _analytics["events"]
+        events.append(ev)
+        if len(events) > ANALYTICS_MAX_EVENTS:
+            del events[: len(events) - ANALYTICS_MAX_EVENTS]
+        sid = ev.get("sid")
+        if sid:
+            sess = _analytics["sessions"].setdefault(sid, {
+                "did":           ev.get("did"),
+                "started_at":    ev.get("ts"),
+                "last_event_at": ev.get("ts"),
+                "first_path":    ev.get("path"),
+                "last_path":     ev.get("path"),
+                "pages":         [],
+                "events":        0,
+                "referrer":      ev.get("referrer", ""),
+                "user_agent":    ev.get("ua", ""),
+                "funnel":        {},
+            })
+            sess["last_event_at"] = ev.get("ts") or sess.get("last_event_at")
+            sess["events"]        = (sess.get("events") or 0) + 1
+            if ev.get("path"):
+                sess["last_path"] = ev["path"]
+            if ev.get("type") == "pageview" and ev.get("path"):
+                pages = sess.setdefault("pages", [])
+                if not pages or pages[-1] != ev["path"]:
+                    pages.append(ev["path"])
+                    if len(pages) > 50:
+                        del pages[:-50]
+            if ev.get("type") == "funnel_step" and ev.get("step"):
+                sess.setdefault("funnel", {})[ev["step"]] = ev.get("ts")
+                is_funnel = True
+    # Funnel-steg er konverterings-kritiske → lagres umiddelbart.
+    # Andre events (click/scroll/pageview/exit) throttles for å unngå I/O-press.
+    _maybe_persist_analytics(force=is_funnel)
+
+def _analytics_admin_required():
+    user, _ = _user_from_request()
+    if not user:
+        return None, (jsonify({"ok": False, "error": "Ikke innlogget"}), 401)
+    if user.get("role") != "admin":
+        return None, (jsonify({"ok": False, "error": "Bare admin"}), 403)
+    return user, None
+
+@app.route("/api/analytics/event", methods=["POST", "OPTIONS"])
+def api_analytics_event():
+    """Offentlig endpoint — godtar batch eller enkel event fra nettside-tracker.
+    Klienten styrer samtykke; serveren aksepterer alt som har riktig struktur."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        data = {}
+    if not data and request.data:
+        try:
+            data = json.loads(request.data.decode("utf-8"))
+        except Exception:
+            return jsonify({"ok": False, "error": "Bad JSON"}), 400
+    events = data.get("events") if isinstance(data, dict) else None
+    if events is None and isinstance(data, dict) and data.get("type"):
+        events = [data]
+    if not isinstance(events, list):
+        return jsonify({"ok": False, "error": "events må være liste"}), 400
+    ua = (request.headers.get("User-Agent") or "")[:200]
+    accepted = 0
+    for raw in events[:100]:
+        if not isinstance(raw, dict):
+            continue
+        t = raw.get("type")
+        if t not in ("pageview", "click", "scroll", "exit", "funnel_step"):
+            continue
+        ev = {
+            "type": t,
+            "sid":  str(raw.get("sid") or "")[:64],
+            "did":  str(raw.get("did") or "")[:64],
+            "path": str(raw.get("path") or "")[:200],
+            "ts":   int(raw.get("ts") or time.time() * 1000),
+            "ua":   ua,
+        }
+        try:
+            if t == "click":
+                ev["x_pct"]  = max(0.0, min(100.0, float(raw.get("x_pct") or 0)))
+                ev["y_pct"]  = max(0.0, min(100.0, float(raw.get("y_pct") or 0)))
+                ev["target"] = str(raw.get("target") or "")[:120]
+            elif t == "scroll":
+                ev["depth_pct"] = max(0, min(100, int(raw.get("depth_pct") or 0)))
+            elif t == "exit":
+                ev["time_ms"]    = max(0, int(raw.get("time_ms") or 0))
+                ev["max_scroll"] = max(0, min(100, int(raw.get("max_scroll") or 0)))
+            elif t == "funnel_step":
+                step = str(raw.get("step") or "")[:40]
+                if not step:
+                    continue
+                ev["step"] = step
+                ev["meta"] = str(raw.get("meta") or "")[:200]
+            elif t == "pageview":
+                ev["referrer"] = str(raw.get("referrer") or "")[:200]
+        except Exception:
+            continue
+        _analytics_record_event(ev)
+        accepted += 1
+    return jsonify({"ok": True, "accepted": accepted})
+
+@app.route("/api/analytics/summary", methods=["GET"])
+def api_analytics_summary():
+    user, err = _analytics_admin_required()
+    if err: return err
+    now = int(time.time() * 1000)
+    cutoff_24h = now - 24 * 60 * 60 * 1000
+    cutoff_7d  = now - 7 * 24 * 60 * 60 * 1000
+    events     = _analytics["events"]
+    sessions   = _analytics["sessions"]
+    pageviews  = sum(1 for e in events if e.get("type") == "pageview")
+    pv_24h     = sum(1 for e in events if e.get("type") == "pageview" and e.get("ts", 0) >= cutoff_24h)
+    pv_7d      = sum(1 for e in events if e.get("type") == "pageview" and e.get("ts", 0) >= cutoff_7d)
+    sess_24h   = sum(1 for s in sessions.values() if (s.get("started_at") or 0) >= cutoff_24h)
+    devices    = len({s.get("did") for s in sessions.values() if s.get("did")})
+    clicks     = sum(1 for e in events if e.get("type") == "click")
+    return jsonify({
+        "ok": True,
+        "totals":   {"events": len(events), "sessions": len(sessions),
+                     "devices": devices, "pageviews": pageviews, "clicks": clicks},
+        "last_24h": {"pageviews": pv_24h, "sessions": sess_24h},
+        "last_7d":  {"pageviews": pv_7d},
+    })
+
+@app.route("/api/analytics/funnel", methods=["GET"])
+def api_analytics_funnel():
+    user, err = _analytics_admin_required()
+    if err: return err
+    steps  = ["session_start", "view_pdp", "add_to_cart", "begin_checkout", "order_complete"]
+    counts = {s: 0 for s in steps}
+    for sess in _analytics["sessions"].values():
+        counts["session_start"] += 1
+        f = sess.get("funnel") or {}
+        for s in steps[1:]:
+            if s in f:
+                counts[s] += 1
+    rows = []
+    base = counts[steps[0]] or 1
+    for i, s in enumerate(steps):
+        n = counts[s]
+        rows.append({
+            "step":       s,
+            "count":      n,
+            "rate":       round(n / (counts[steps[i-1]] or 1) * 100, 1) if i > 0 else 100.0,
+            "rate_total": round(n / base * 100, 1),
+        })
+    return jsonify({"ok": True, "steps": rows})
+
+@app.route("/api/analytics/dropoff", methods=["GET"])
+def api_analytics_dropoff():
+    user, err = _analytics_admin_required()
+    if err: return err
+    cnt = {}
+    for sess in _analytics["sessions"].values():
+        if (sess.get("funnel") or {}).get("order_complete"):
+            continue
+        p = sess.get("last_path") or "(ukjent)"
+        cnt[p] = cnt.get(p, 0) + 1
+    rows = sorted(cnt.items(), key=lambda kv: -kv[1])[:20]
+    return jsonify({"ok": True, "rows": [{"path": p, "count": n} for p, n in rows]})
+
+@app.route("/api/analytics/pages", methods=["GET"])
+def api_analytics_pages():
+    user, err = _analytics_admin_required()
+    if err: return err
+    pv, ck, ex, t_ms, scr = {}, {}, {}, {}, {}
+    for ev in _analytics["events"]:
+        p, t = ev.get("path") or "", ev.get("type")
+        if   t == "pageview": pv[p] = pv.get(p, 0) + 1
+        elif t == "click":    ck[p] = ck.get(p, 0) + 1
+        elif t == "exit":
+            ex[p] = ex.get(p, 0) + 1
+            t_ms.setdefault(p, []).append(int(ev.get("time_ms") or 0))
+            scr.setdefault(p, []).append(int(ev.get("max_scroll") or 0))
+    rows = []
+    for p in sorted(pv.keys(), key=lambda p: -pv[p])[:30]:
+        tl = t_ms.get(p, []); sl = scr.get(p, [])
+        rows.append({
+            "path":           p,
+            "pageviews":      pv.get(p, 0),
+            "clicks":         ck.get(p, 0),
+            "exits":          ex.get(p, 0),
+            "avg_time_s":     round(sum(tl)/len(tl)/1000, 1) if tl else 0,
+            "avg_scroll_pct": round(sum(sl)/len(sl), 1)      if sl else 0,
+        })
+    return jsonify({"ok": True, "rows": rows})
+
+@app.route("/api/analytics/heatmap", methods=["GET"])
+def api_analytics_heatmap():
+    user, err = _analytics_admin_required()
+    if err: return err
+    path   = request.args.get("path", "/")
+    grid_n = 20
+    grid   = [[0] * grid_n for _ in range(grid_n)]
+    total  = 0
+    for ev in _analytics["events"]:
+        if ev.get("type") != "click" or ev.get("path") != path:
+            continue
+        gx = min(grid_n - 1, int(float(ev.get("x_pct") or 0) / 100 * grid_n))
+        gy = min(grid_n - 1, int(float(ev.get("y_pct") or 0) / 100 * grid_n))
+        grid[gy][gx] += 1
+        total += 1
+    return jsonify({"ok": True, "path": path, "grid": grid, "total": total, "grid_size": grid_n})
+
+@app.route("/api/analytics/paths", methods=["GET"])
+def api_analytics_paths():
+    user, err = _analytics_admin_required()
+    if err: return err
+    seq_count = {}
+    for sess in _analytics["sessions"].values():
+        pages = sess.get("pages") or []
+        if not pages:
+            continue
+        seq = " → ".join(pages[:5])
+        seq_count[seq] = seq_count.get(seq, 0) + 1
+    rows = sorted(seq_count.items(), key=lambda kv: -kv[1])[:20]
+    return jsonify({"ok": True, "rows": [{"path": s, "count": n} for s, n in rows]})
+
+@app.route("/api/analytics/sessions", methods=["GET"])
+def api_analytics_sessions():
+    user, err = _analytics_admin_required()
+    if err: return err
+    items = sorted(_analytics["sessions"].items(),
+                   key=lambda kv: -(kv[1].get("started_at") or 0))[:50]
+    rows  = []
+    for sid, s in items:
+        rows.append({
+            "sid":           sid,
+            "did":           s.get("did"),
+            "started_at":    s.get("started_at"),
+            "last_event_at": s.get("last_event_at"),
+            "events":        s.get("events", 0),
+            "first_path":    s.get("first_path"),
+            "last_path":     s.get("last_path"),
+            "page_count":    len(s.get("pages") or []),
+            "referrer":      s.get("referrer"),
+            "ua":            (s.get("user_agent") or "")[:80],
+            "funnel":        s.get("funnel") or {},
+        })
+    return jsonify({"ok": True, "rows": rows})
+
+@app.route("/api/analytics/clear", methods=["POST"])
+def api_analytics_clear():
+    user, err = _analytics_admin_required()
+    if err: return err
+    with ANALYTICS_LOCK:
+        _analytics["events"]   = []
+        _analytics["sessions"] = {}
+        _maybe_persist_analytics(force=True)
+    return jsonify({"ok": True})
+
+
 # ── WSGI-bootstrap ────────────────────────────────────────────────────────────
 # Render kjører `gunicorn app:app`, så __main__-blokken under kjøres ALDRI i
 # produksjon. Last sync-state og seed-brukere ved import.
@@ -2212,6 +2545,11 @@ try:
     print(f"[BOOT-WSGI] sync-state lastet, {len(_auth_users)} auth-brukere")
 except Exception as _e:
     print(f"[BOOT-WSGI] _load_sync_state feilet: {_e}")
+
+try:
+    _load_analytics()
+except Exception as _e:
+    print(f"[BOOT-WSGI] _load_analytics feilet: {_e}")
 
 
 if __name__ == "__main__":
@@ -2226,6 +2564,7 @@ if __name__ == "__main__":
 
     # Last sync-state (pakkingstilstand, manuelle ordre, etc.)
     _load_sync_state()
+    _load_analytics()
 
     # Last prisliste fra disk
     if os.path.exists(PRISLISTE_FILE):
