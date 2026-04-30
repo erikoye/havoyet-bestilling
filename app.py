@@ -2537,6 +2537,135 @@ def api_analytics_clear():
     return jsonify({"ok": True})
 
 
+# ── SESSION REPLAY (rrweb-events per sesjon) ─────────────────────────────────
+# Lagrer rrweb-events per session-id slik at admin kan se hele kundereisen som
+# et videoopptak. Hver sesjon capped til REPLAY_MAX_EVENTS_PER_SID; totalt antall
+# sesjoner capped til REPLAY_MAX_SESSIONS (FIFO på sist oppdatert).
+REPLAY_FILE                   = os.path.join(STATE_DIR, "havoyet_replays.json")
+REPLAY_MAX_SESSIONS           = 60
+REPLAY_MAX_EVENTS_PER_SID     = 5000
+REPLAY_LOCK                   = threading.Lock()
+_replays                      = {}    # sid → {"did","path","updated_at","events":[...]}
+_last_replay_save             = [0.0]
+
+def _load_replays():
+    global _replays
+    if not os.path.exists(REPLAY_FILE):
+        return
+    try:
+        with open(REPLAY_FILE, "r", encoding="utf-8") as f:
+            _replays = json.load(f) or {}
+        total = sum(len(s.get("events") or []) for s in _replays.values())
+        print(f"[REPLAY] Lastet {len(_replays)} sesjoner ({total} events)")
+    except Exception as e:
+        print(f"[REPLAY] Kunne ikke laste: {e}")
+
+def _save_replays():
+    try:
+        tmp = REPLAY_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_replays, f, ensure_ascii=False)
+        os.replace(tmp, REPLAY_FILE)
+    except Exception:
+        pass
+
+def _maybe_persist_replays(force=False):
+    # Klienten batcher allerede events (60/4s), så vi lagrer på hvert POST.
+    # Atomisk skriving (tmp + replace) holder filen konsistent selv ved crash.
+    _last_replay_save[0] = time.time()
+    _save_replays()
+
+@app.route("/api/analytics/replay", methods=["POST", "OPTIONS"])
+def api_analytics_replay_post():
+    """Offentlig — godtar batch av rrweb-events fra nettside-tracker."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        data = {}
+    if not data and request.data:
+        try:
+            data = json.loads(request.data.decode("utf-8"))
+        except Exception:
+            return jsonify({"ok": False, "error": "Bad JSON"}), 400
+    sid    = str(data.get("sid") or "")[:64]
+    did    = str(data.get("did") or "")[:64]
+    path   = str(data.get("path") or "")[:200]
+    events = data.get("events")
+    if not sid or not isinstance(events, list) or not events:
+        return jsonify({"ok": False, "error": "sid og events kreves"}), 400
+    with REPLAY_LOCK:
+        sess = _replays.setdefault(sid, {
+            "did": did, "path": path,
+            "started_at":   int(time.time() * 1000),
+            "updated_at":   int(time.time() * 1000),
+            "events":       [],
+        })
+        sess["updated_at"] = int(time.time() * 1000)
+        if not sess.get("did") and did: sess["did"] = did
+        if path: sess["path"] = path
+        # Legg til events, og cap på antall
+        ev_list = sess.setdefault("events", [])
+        for e in events[:1000]:  # max 1000 events per request
+            if isinstance(e, dict):
+                ev_list.append(e)
+        if len(ev_list) > REPLAY_MAX_EVENTS_PER_SID:
+            del ev_list[: len(ev_list) - REPLAY_MAX_EVENTS_PER_SID]
+        # FIFO på antall sesjoner
+        if len(_replays) > REPLAY_MAX_SESSIONS:
+            old = sorted(_replays.items(), key=lambda kv: kv[1].get("updated_at", 0))
+            for k, _ in old[: len(_replays) - REPLAY_MAX_SESSIONS]:
+                _replays.pop(k, None)
+    _maybe_persist_replays()
+    return jsonify({"ok": True, "stored": len(events)})
+
+@app.route("/api/analytics/replay", methods=["GET"])
+def api_analytics_replay_get():
+    user, err = _analytics_admin_required()
+    if err: return err
+    sid = request.args.get("sid", "").strip()
+    if not sid:
+        # Liste-modus: returner sammendrag for alle sesjoner med replay
+        rows = []
+        for k, v in _replays.items():
+            rows.append({
+                "sid":         k,
+                "did":         v.get("did"),
+                "path":        v.get("path"),
+                "started_at":  v.get("started_at"),
+                "updated_at":  v.get("updated_at"),
+                "event_count": len(v.get("events") or []),
+            })
+        rows.sort(key=lambda r: -(r["updated_at"] or 0))
+        return jsonify({"ok": True, "rows": rows[:60]})
+    sess = _replays.get(sid)
+    if not sess:
+        return jsonify({"ok": False, "error": "sesjon ikke funnet"}), 404
+    return jsonify({
+        "ok":         True,
+        "sid":        sid,
+        "did":        sess.get("did"),
+        "path":       sess.get("path"),
+        "started_at": sess.get("started_at"),
+        "updated_at": sess.get("updated_at"),
+        "events":     sess.get("events") or [],
+    })
+
+@app.route("/api/analytics/replay", methods=["DELETE"])
+def api_analytics_replay_delete():
+    user, err = _analytics_admin_required()
+    if err: return err
+    sid = request.args.get("sid", "").strip()
+    with REPLAY_LOCK:
+        if sid:
+            _replays.pop(sid, None)
+        else:
+            _replays.clear()
+        _maybe_persist_replays(force=True)
+    return jsonify({"ok": True})
+
+
 # ── WSGI-bootstrap ────────────────────────────────────────────────────────────
 # Render kjører `gunicorn app:app`, så __main__-blokken under kjøres ALDRI i
 # produksjon. Last sync-state og seed-brukere ved import.
@@ -2550,6 +2679,11 @@ try:
     _load_analytics()
 except Exception as _e:
     print(f"[BOOT-WSGI] _load_analytics feilet: {_e}")
+
+try:
+    _load_replays()
+except Exception as _e:
+    print(f"[BOOT-WSGI] _load_replays feilet: {_e}")
 
 
 if __name__ == "__main__":
@@ -2565,6 +2699,7 @@ if __name__ == "__main__":
     # Last sync-state (pakkingstilstand, manuelle ordre, etc.)
     _load_sync_state()
     _load_analytics()
+    _load_replays()
 
     # Last prisliste fra disk
     if os.path.exists(PRISLISTE_FILE):
