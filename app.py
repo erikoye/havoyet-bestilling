@@ -36,6 +36,9 @@ SHOPIFY_SHOP    = os.environ.get("SHOPIFY_SHOP",  "havoyet.myshopify.com")
 SHOPIFY_TOKEN   = os.environ.get("SHOPIFY_TOKEN", "")
 SHOPIFY_VERSION = os.environ.get("SHOPIFY_API_VERSION", "2024-01")
 POLL_INTERVAL   = int(os.environ.get("POLL_INTERVAL", "300"))  # sekunder (5 min)
+# SHOPIFY_ENABLED: sett til "1" på Render for å reaktivere Shopify-polling.
+# Default av: ny.havoyet.no/kasse er primær ordrekanal, ordre lagres i _manual_orders.
+SHOPIFY_ENABLED = os.environ.get("SHOPIFY_ENABLED", "0") == "1"
 
 PORT            = int(os.environ.get("PORT", 5001))
 # STATE_DIR: hvor vedvarende data (brukere, sesjoner, manuelle ordre, osv.) lagres.
@@ -70,6 +73,12 @@ VIPPS_PAYMENTS_FILE     = os.path.join("/tmp", "havoyet_vipps_payments.json")
 # ── STRIPE (kort-betaling, separat fra Vipps) ────────────────────────────────
 STRIPE_SECRET_KEY      = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET  = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+# Publishable key er trygt å eksponere til frontend. Render-env-varen kan ha
+# blandet casing; aksepter flere varianter.
+STRIPE_PUBLISHABLE_KEY = (os.environ.get("STRIPE_PUBLISHABLE_KEY")
+                         or os.environ.get("STRIPE_Publishable_KEY")
+                         or os.environ.get("STRIPE_PUBLIC_KEY")
+                         or "")
 STRIPE_PAYMENTS_FILE   = os.path.join("/tmp", "havoyet_stripe_payments.json")
 try:
     import stripe as _stripe
@@ -216,6 +225,43 @@ def map_order(order):
     }
 
 
+def _normalize_manual_order(o):
+    """Konverter ny.havoyet.no/kasse-ordre (fra _manual_orders) til iPad-shapen
+    som tidligere kom fra Shopify. Beholder bakoverkompatibilitet med
+    index.html / pakke.html som forventer Shopify-felt."""
+    kunde = o.get("kunde") or {}
+    varer = o.get("varer") or o.get("items") or []
+    items = []
+    for v in varer:
+        items.append({
+            "id":       v.get("id"),
+            "name":     v.get("name") or v.get("navn") or v.get("title", ""),
+            "quantity": v.get("qty") or v.get("quantity", 1),
+            "weight":   v.get("weight"),
+            "expiry":   v.get("expiry"),
+            "variant":  v.get("variant"),
+            "sku":      v.get("sku"),
+            "grams":    v.get("grams", 0),
+        })
+    return {
+        "id":         o.get("ordrenr") or o.get("id"),
+        "shopify_id": None,
+        "customer":   kunde.get("navn") or kunde.get("name") or "Ukjent",
+        "email":      kunde.get("epost") or kunde.get("email", ""),
+        "phone":      kunde.get("tlf") or kunde.get("phone") or "",
+        "delivery":   kunde.get("leveringsdag") or o.get("delivery") or "",
+        "slot":       kunde.get("leveringstid") or o.get("slot") or "",
+        "status":     o.get("status") or "NEW",
+        "items":      items,
+        "note":       kunde.get("kommentar") or o.get("note") or "",
+        "financial":  o.get("financial") or "",
+        "created_at": o.get("dato") or o.get("created_at") or "",
+        # Behold de opprinnelige feltene også, så ny.havoyet.no-spesifikke ting
+        # (boxSelection, fee, sum osv.) er fortsatt tilgjengelig for iPad-en.
+        "_raw":       o,
+    }
+
+
 def fetch_orders():
     """Henter alle åpne ordre fra Shopify og oppdaterer cache."""
     global _cache, _shopify_seen_ids
@@ -272,7 +318,11 @@ def fetch_orders():
 
 
 def poll_loop():
-    """Bakgrunns-tråd som poller Shopify hvert POLL_INTERVAL sekund."""
+    """Bakgrunns-tråd som poller Shopify hvert POLL_INTERVAL sekund.
+    Hopper over hvis SHOPIFY_ENABLED er 0 (default)."""
+    if not SHOPIFY_ENABLED:
+        print("[Shopify] Polling deaktivert (SHOPIFY_ENABLED=0). Kilde: _manual_orders.")
+        return
     while True:
         fetch_orders()
         time.sleep(POLL_INTERVAL)
@@ -411,18 +461,36 @@ def serve_static(filename):
 # ── API ────────────────────────────────────────────────────────────────────────
 @app.route("/api/orders")
 def api_orders():
+    """Returnerer aktive ordre i iPad-shape.
+    SHOPIFY_ENABLED=1: cachet Shopify-data fra poll_loop.
+    SHOPIFY_ENABLED=0 (default): normaliserte _manual_orders fra ny.havoyet.no/kasse."""
+    if SHOPIFY_ENABLED:
+        return jsonify({
+            "orders":    _cache["orders"],
+            "last_sync": _cache["last_sync"],
+            "error":     _cache["error"],
+            "count":     len(_cache["orders"]),
+        })
+    orders = [_normalize_manual_order(o) for o in _manual_orders]
+    orders.sort(key=lambda o: (o.get("delivery") or "9999-99-99"))
     return jsonify({
-        "orders":    _cache["orders"],
-        "last_sync": _cache["last_sync"],
-        "error":     _cache["error"],
-        "count":     len(_cache["orders"]),
+        "orders":    orders,
+        "last_sync": datetime.now().isoformat(),
+        "error":     None,
+        "count":     len(orders),
+        "source":    "havoyet.no",
     })
 
 
 @app.route("/api/orders/<order_id>")
 def api_order(order_id):
-    order = next((o for o in _cache["orders"]
-                  if o["id"] == order_id or str(o.get("shopify_id")) == order_id), None)
+    if SHOPIFY_ENABLED:
+        order = next((o for o in _cache["orders"]
+                      if o["id"] == order_id or str(o.get("shopify_id")) == order_id), None)
+    else:
+        match = next((o for o in _manual_orders
+                      if str(o.get("ordrenr") or o.get("id")) == str(order_id)), None)
+        order = _normalize_manual_order(match) if match else None
     if not order:
         return jsonify({"error": "Ikke funnet"}), 404
     return jsonify(order)
@@ -431,12 +499,21 @@ def api_order(order_id):
 @app.route("/api/sync", methods=["POST"])
 def api_sync():
     """Manuell synk-trigger fra frontend."""
-    orders = fetch_orders()
+    if SHOPIFY_ENABLED:
+        orders = fetch_orders()
+        return jsonify({
+            "ok":        True,
+            "count":     len(orders),
+            "last_sync": _cache["last_sync"],
+            "error":     _cache["error"],
+        })
+    # Når Shopify er av: ordrene ligger allerede i _manual_orders (skrives ved checkout).
     return jsonify({
         "ok":        True,
-        "count":     len(orders),
-        "last_sync": _cache["last_sync"],
-        "error":     _cache["error"],
+        "count":     len(_manual_orders),
+        "last_sync": datetime.now().isoformat(),
+        "error":     None,
+        "source":    "havoyet.no",
     })
 
 
@@ -1840,6 +1917,61 @@ def api_checkout_status(reference):
 # ─── STRIPE CHECKOUT (kort-betaling, parallelt med Vipps) ─────────────────────
 def _stripe_configured():
     return bool(_stripe and STRIPE_SECRET_KEY)
+
+@app.route("/api/stripe/config", methods=["GET"])
+def api_stripe_config():
+    """Eksponerer Stripe publishable key til frontend (trygt — den er offentlig)."""
+    return jsonify({
+        "ok": bool(STRIPE_PUBLISHABLE_KEY),
+        "publishableKey": STRIPE_PUBLISHABLE_KEY,
+        "configured": _stripe_configured() and bool(STRIPE_PUBLISHABLE_KEY),
+    })
+
+@app.route("/api/checkout/card-payment-intent", methods=["POST"])
+def api_checkout_card_payment_intent():
+    """Stripe Elements-flyt: oppretter en PaymentIntent og returnerer client_secret
+    så frontenden kan bekrefte betaling med kortdata in-line uten redirect."""
+    if not _stripe_configured():
+        return jsonify({"error": "Kortbetaling er ikke konfigurert"}), 503
+    data = request.get_json(silent=True) or {}
+    ordrenr  = data.get("ordrenr") or ("H" + str(int(time.time() * 1000))[-8:])
+    amount   = int(data.get("amount", 0))   # i øre
+    if amount <= 0:
+        return jsonify({"error": "Ugyldig beløp"}), 400
+    customer = data.get("customer") or {}
+    try:
+        intent = _stripe.PaymentIntent.create(
+            amount=amount,
+            currency="nok",
+            description=f"Havøyet ordre {ordrenr}",
+            receipt_email=customer.get("email") or None,
+            automatic_payment_methods={"enabled": True, "allow_redirects": "never"},
+            metadata={
+                "ordrenr": str(ordrenr),
+                "kunde_navn": str(customer.get("name", ""))[:200],
+                "kunde_tlf":  str(customer.get("phoneNumber", ""))[:30],
+            },
+        )
+    except Exception as e:
+        return jsonify({"error": f"Kunne ikke opprette PaymentIntent: {e}"}), 502
+
+    payments = _stripe_load_payments()
+    payments[intent.id] = {
+        "ordrenr":        ordrenr,
+        "amount":         amount,
+        "state":          "CREATED",
+        "kind":           "elements",
+        "created_at":     time.time(),
+        "payment_intent": intent.id,
+    }
+    _stripe_save_payments(payments)
+
+    return jsonify({
+        "ok":           True,
+        "clientSecret": intent.client_secret,
+        "paymentIntent": intent.id,
+        "ordrenr":      ordrenr,
+    })
 
 def _stripe_load_payments():
     if os.path.exists(STRIPE_PAYMENTS_FILE):
