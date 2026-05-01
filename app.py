@@ -35,9 +35,32 @@ if os.path.exists(_env_file):
 PORT            = int(os.environ.get("PORT", 5001))
 # STATE_DIR: hvor vedvarende data (brukere, sesjoner, manuelle ordre, osv.) lagres.
 # På Render må dette peke til en mountet persistent disk (f.eks. /var/data),
-# ellers blir /tmp blanket ved hver container-restart og brukere må sette
-# passord på nytt. Default /tmp for lokal Pi-utvikling.
-STATE_DIR       = os.environ.get("STATE_DIR", "/tmp")
+# ellers blir /tmp blanket ved hver container-restart.
+#
+# Smart auto-detect: hvis /var/data eksisterer og er skrivbar, foretrekk den
+# automatisk — slik at om brukeren legger til en Render-disk på /var/data,
+# fungerer alt umiddelbart uten å måtte sette STATE_DIR-env-var.
+def _detect_state_dir():
+    explicit = os.environ.get("STATE_DIR")
+    if explicit:
+        return explicit
+    # Foretrukne persistent-disk-paths (i prioritet)
+    for candidate in ("/var/data", "/data", "/persistent-data"):
+        if os.path.isdir(candidate):
+            try:
+                test_file = os.path.join(candidate, ".havoyet_write_test")
+                with open(test_file, "w") as _f:
+                    _f.write("ok")
+                os.remove(test_file)
+                print(f"[STATE] Auto-detected persistent disk at {candidate}")
+                return candidate
+            except Exception:
+                pass
+    print("[STATE] ⚠ Bruker /tmp — data går tapt ved container-restart!")
+    print("[STATE]    Legg til persistent disk på Render og mount til /var/data for å fikse.")
+    return "/tmp"
+
+STATE_DIR       = _detect_state_dir()
 try:
     os.makedirs(STATE_DIR, exist_ok=True)
 except Exception:
@@ -1900,17 +1923,27 @@ def api_economy_stats():
     Tre kilder: nettside-ordre (_manual_orders), Stripe-betalinger,
     Vipps ePayment-betalinger, og Vipps CSV-importerte transaksjoner."""
     today = datetime.now().date()
-    start_week = today - timedelta(days=today.weekday())
+    start_week = today - timedelta(days=today.weekday())  # mandag denne uken
     start_month = today.replace(day=1)
 
-    def _in_range(date_str, since):
+    def _parse_date(date_str):
         if not date_str:
+            return None
+        s = str(date_str).strip()[:10]
+        # Aksepter både YYYY-MM-DD (vår normaliserte form) og DD.MM.YYYY (ikke-normalisert PDF)
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _in_range(date_str, since):
+        d = _parse_date(date_str)
+        if d is None:
             return False
-        try:
-            d = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
-            return d >= since
-        except (ValueError, TypeError):
-            return False
+        # Inkluderer fremtidige datoer ikke (forhindrer at typo/feil-data blåser opp ukens-tall)
+        return since <= d <= today
 
     # Nettside-ordre (kun betalte teller)
     paid_set = _paid_ordrenrs()
