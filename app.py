@@ -390,6 +390,9 @@ _customers = []  # [{id, navn, tlf, epost, adresse, kommentar, created_at}]
 # Hver verdi: {transaction_id, date, time, amount_ore, type, description, phone,
 #              imported_at, source: 'vipps_csv'}
 _vipps_imported_payments = {}
+# Shopify Payments / kortbetalinger importert fra Shopify CSV-eksport.
+# Keyed by synthetic ID (hash av transaction_date + order + amount).
+_card_payments_imported = {}
 _auth_users = []   # [{email, role, password_hash, must_set_password, created_at}]
 _auth_sessions = {}  # legacy lookup — beholdes for bakoverkompatibilitet med eldre tokens
 # Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
@@ -461,6 +464,7 @@ def _save_sync_state():
                 "admin_notifiers":     _admin_notifiers,
                 "customers":           _customers,
                 "vipps_imported_payments": _vipps_imported_payments,
+                "card_payments_imported":  _card_payments_imported,
                 "auth_users":          _auth_users,
                 "auth_sessions":       _auth_sessions,
             }, f, ensure_ascii=False)
@@ -489,9 +493,9 @@ def _restore_baseline_if_empty(name, current, file_basename):
 
 
 def _restore_vipps_baseline():
-    """Auto-restore Vipps-transaksjoner og kunder fra committed baseline-
-    snapshots. Brukes som fall-back når Render-restart wiper /tmp."""
-    global _vipps_imported_payments, _customers
+    """Auto-restore Vipps-transaksjoner, kortbetalinger og kunder fra committed
+    baseline-snapshots. Brukes som fall-back når Render-restart wiper /tmp."""
+    global _vipps_imported_payments, _card_payments_imported, _customers
     restored_any = False
 
     vipps = _restore_baseline_if_empty("Vipps-transaksjoner",
@@ -499,6 +503,13 @@ def _restore_vipps_baseline():
                                        "vipps_baseline.json")
     if vipps is not None:
         _vipps_imported_payments = vipps
+        restored_any = True
+
+    card = _restore_baseline_if_empty("kortbetalinger",
+                                      _card_payments_imported,
+                                      "card_payments_baseline.json")
+    if card is not None:
+        _card_payments_imported = card
         restored_any = True
 
     cust = _restore_baseline_if_empty("kunder",
@@ -514,7 +525,7 @@ def _restore_vipps_baseline():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _vipps_imported_payments, _auth_users, _auth_sessions
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         _restore_vipps_baseline()
@@ -533,8 +544,9 @@ def _load_sync_state():
         _admin_notifiers    = d.get("admin_notifiers", [])
         _customers          = d.get("customers", [])
         _vipps_imported_payments = d.get("vipps_imported_payments", {}) or {}
-        # Auto-restore baseline hvis ingen Vipps-data ble lastet
-        if not _vipps_imported_payments:
+        _card_payments_imported  = d.get("card_payments_imported", {}) or {}
+        # Auto-restore baseline hvis ingen Vipps/kort-data ble lastet
+        if not _vipps_imported_payments or not _card_payments_imported:
             _restore_vipps_baseline()
         _auth_users         = d.get("auth_users", [])
         loaded_sessions     = d.get("auth_sessions", {}) or {}
@@ -1996,6 +2008,131 @@ def _commit_baseline_to_github(file_path, message):
         print(f"[BASELINE] GitHub auto-commit feilet: {e}")
 
 
+# ─── Shopify Payments / kortbetaling CSV-import ────────────────────────────
+@app.route("/api/card-payments/import-csv", methods=["POST"])
+def api_card_payments_import_csv():
+    """Import Shopify Payments CSV-eksport (payment_transactions_export*.csv).
+    Format-kolonner: Transaction Date, Type, Order, Card Brand, Amount, Fee, Net.
+    Dedup på synthetic ID (hash av dato+order+amount+type)."""
+    global _card_payments_imported
+    if not (request.files and "file" in request.files):
+        return jsonify({"error": "Ingen fil i 'file'-feltet"}), 400
+    raw = request.files["file"].read()
+    if not raw:
+        return jsonify({"error": "Tom fil"}), 400
+    try:
+        csv_text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        csv_text = raw.decode("latin-1", errors="replace")
+
+    sample = csv_text[:2048]
+    try:
+        dialect = _csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except _csv.Error:
+        class _D: delimiter = ","
+        dialect = _D()
+    reader = _csv.DictReader(_io.StringIO(csv_text), delimiter=dialect.delimiter)
+    rows = list(reader)
+    if not rows:
+        return jsonify({"error": "Ingen rader i CSV"}), 400
+
+    added, dup, skipped = 0, 0, 0
+    new_records = []
+    for row in rows:
+        date_raw = (row.get("Transaction Date") or row.get("Date") or "").strip()
+        order   = (row.get("Order") or "").strip()
+        type_   = (row.get("Type") or "charge").strip().lower()
+        brand   = (row.get("Card Brand") or "").strip()
+        amount  = row.get("Amount") or "0"
+        fee     = row.get("Fee") or "0"
+        net     = row.get("Net") or "0"
+        if not date_raw or not amount:
+            skipped += 1
+            continue
+        # Konverter dato "2026-04-27 14:08:56 +0200" → ISO-dato
+        date_iso = date_raw[:10]
+        time_str = date_raw[11:16] if len(date_raw) >= 16 else ""
+        try:
+            amount_kr = float(str(amount).replace(",", "."))
+            fee_kr    = float(str(fee).replace(",", "."))
+            net_kr    = float(str(net).replace(",", "."))
+        except (ValueError, TypeError):
+            skipped += 1
+            continue
+        # Synthetic ID — stabil mellom imports
+        seed = f"{date_raw}|{order}|{type_}|{amount}"
+        synth_id = "card-" + _hashlib_mod.sha1(seed.encode("utf-8")).hexdigest()[:16]
+        if synth_id in _card_payments_imported:
+            dup += 1
+            continue
+        rec = {
+            "transaction_id": synth_id,
+            "date":           date_iso,
+            "time":           time_str,
+            "order":          order,
+            "type":           "Refusjon" if type_ == "refund" else "Kjøp",
+            "brand":          brand,
+            "amount_ore":     int(round(amount_kr * 100)),
+            "amount_kr":      amount_kr,
+            "fee_kr":         fee_kr,
+            "net_kr":         net_kr,
+            "imported_at":    datetime.now().isoformat(),
+            "source":         "shopify_card",
+        }
+        _card_payments_imported[synth_id] = rec
+        new_records.append(rec)
+        added += 1
+
+    if added:
+        _save_sync_state()
+        try:
+            _baseline_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          "data", "card_payments_baseline.json")
+            os.makedirs(os.path.dirname(_baseline_path), exist_ok=True)
+            with open(_baseline_path, "w", encoding="utf-8") as bf:
+                json.dump(_card_payments_imported, bf, ensure_ascii=False, indent=2)
+            _commit_baseline_to_github(_baseline_path,
+                                       f"Card-baseline: auto-update etter import (+{added} nye)")
+        except Exception as e:
+            print(f"[BASELINE] Kunne ikke lagre card-baseline: {e}")
+
+    total_kr = sum(r["amount_kr"] for r in new_records if r["type"] == "Kjøp")
+    return jsonify({
+        "ok":               True,
+        "added":            added,
+        "duplicates":       dup,
+        "skipped":          skipped,
+        "total_rows":       len(rows),
+        "total_amount_kr":  round(total_kr, 2),
+        "new":              new_records[:50],
+    })
+
+
+@app.route("/api/card-payments/imported")
+def api_card_payments_imported():
+    items = list(_card_payments_imported.values())
+    items.sort(key=lambda r: (r.get("date") or "", r.get("time") or ""), reverse=True)
+    gross = sum(r.get("amount_ore", 0) for r in items if r.get("type") == "Kjøp") / 100.0
+    refund = sum(r.get("amount_ore", 0) for r in items if r.get("type") == "Refusjon") / 100.0
+    return jsonify({
+        "count":     len(items),
+        "items":     items,
+        "gross_kr":  round(gross, 2),
+        "refund_kr": round(refund, 2),
+        "net_kr":    round(gross - refund, 2),
+    })
+
+
+@app.route("/api/card-payments/imported/<tx_id>", methods=["DELETE"])
+def api_card_payments_delete(tx_id):
+    global _card_payments_imported
+    if tx_id in _card_payments_imported:
+        del _card_payments_imported[tx_id]
+        _save_sync_state()
+        return jsonify({"ok": True})
+    return jsonify({"error": "Ikke funnet"}), 404
+
+
 @app.route("/api/vipps/imported")
 def api_vipps_imported():
     """Liste alle Vipps-betalinger importert fra CSV. Sortert nyest først."""
@@ -2129,10 +2266,24 @@ def api_economy_stats():
     vipps_epay = [p for p in _vipps_load_payments().values() if p.get("state") in _VIPPS_PAID_STATES]
     vipps_epay_total = sum((p.get("amount") or 0) for p in vipps_epay) / 100.0
 
-    grand_total       = web_total + vipps_total
-    grand_total_week  = web_total_week + vipps_total_week
-    grand_total_month = web_total_month + vipps_total_month
-    grand_total_year  = web_total_year + vipps_total_year
+    # Kortbetalinger fra Shopify Payments CSV-import (charge minus refund)
+    card_imported = list(_card_payments_imported.values())
+    def _card_signed_kr(r):
+        v = (r.get("amount_ore") or 0) / 100.0
+        return -v if r.get("type") == "Refusjon" else v
+    def _card_sum(rows, since=None):
+        if since is None:
+            return sum(_card_signed_kr(r) for r in rows)
+        return sum(_card_signed_kr(r) for r in rows if _in_range(r.get("date"), since))
+    card_total       = _card_sum(card_imported)
+    card_total_week  = _card_sum(card_imported, start_week)
+    card_total_month = _card_sum(card_imported, start_month)
+    card_total_year  = _card_sum(card_imported, start_year)
+
+    grand_total       = web_total + vipps_total + card_total
+    grand_total_week  = web_total_week + vipps_total_week + card_total_week
+    grand_total_month = web_total_month + vipps_total_month + card_total_month
+    grand_total_year  = web_total_year + vipps_total_year + card_total_year
 
     # === PERIODE-FILTRERTE SUMMER (basert på from/to fra query-params) ===
     def _in_period(date_str):
@@ -2144,9 +2295,11 @@ def api_economy_stats():
     direct_period     = [r for r in vipps_period_rows if r.get("payment_channel") == "direct"]
     website_period    = [r for r in vipps_period_rows if r.get("payment_channel") != "direct"]
 
+    card_period_rows = [r for r in card_imported if _in_period(r.get("date"))]
     period_web_kr   = sum(_order_total_kr(o) for o in web_period_rows)
     period_vipps_kr = sum((r.get("amount_ore") or 0) for r in vipps_period_rows) / 100.0
-    period_total_kr = period_web_kr + period_vipps_kr
+    period_card_kr  = sum(_card_signed_kr(r) for r in card_period_rows)
+    period_total_kr = period_web_kr + period_vipps_kr + period_card_kr
 
     # === ÅR-OVERSIKT (alle år hvor vi har data) ===
     by_year = {}
@@ -2159,16 +2312,23 @@ def api_economy_stats():
     for r in vipps_imported:
         d = _parse_date(r.get("date"))
         if d:
-            by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "count": 0})
+            by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "card_kr": 0.0, "count": 0})
             by_year[d.year]["vipps_kr"] += (r.get("amount_ore") or 0) / 100.0
             by_year[d.year]["count"]    += 1
+    for r in card_imported:
+        d = _parse_date(r.get("date"))
+        if d:
+            by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "card_kr": 0.0, "count": 0})
+            by_year[d.year]["card_kr"] += _card_signed_kr(r)
+            by_year[d.year]["count"]   += 1
     # Filtrer bort år før 2025 (ingen data eldre enn januar 2025)
     years_list = sorted([y for y in by_year.keys() if y >= 2025], reverse=True)
     by_year_out = [{
         "year":      y,
-        "total_kr":  round(by_year[y]["web_kr"] + by_year[y]["vipps_kr"], 2),
+        "total_kr":  round(by_year[y]["web_kr"] + by_year[y]["vipps_kr"] + by_year[y].get("card_kr", 0.0), 2),
         "web_kr":    round(by_year[y]["web_kr"], 2),
         "vipps_kr":  round(by_year[y]["vipps_kr"], 2),
+        "card_kr":   round(by_year[y].get("card_kr", 0.0), 2),
         "count":     by_year[y]["count"],
     } for y in years_list]
 
@@ -2186,6 +2346,8 @@ def api_economy_stats():
             "vipps_website_kr": round(sum((r.get("amount_ore") or 0) for r in website_period) / 100.0, 2),
             "vipps_count":      len(vipps_period_rows),
             "web_count":        len(web_period_rows),
+            "card_kr":          round(period_card_kr, 2),
+            "card_count":       len(card_period_rows),
         },
         "by_year": by_year_out,
         "totals": {
@@ -2219,6 +2381,13 @@ def api_economy_stats():
             "all_time_kr":    round(_sum_kr(vipps_website), 2),
             "this_week_kr":   round(_sum_kr(vipps_website, start_week), 2),
             "this_month_kr":  round(_sum_kr(vipps_website, start_month), 2),
+        },
+        "card_payments": {
+            "count":          len(card_imported),
+            "all_time_kr":    round(card_total, 2),
+            "this_week_kr":   round(card_total_week, 2),
+            "this_month_kr":  round(card_total_month, 2),
+            "this_year_kr":   round(card_total_year, 2),
         },
         "stripe": {
             "count":          len(stripe_paid),
