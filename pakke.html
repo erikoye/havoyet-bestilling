@@ -1052,10 +1052,16 @@ function serverPost(endpoint, data) {
 }
 
 function mergeManualOrders() {
+  // Kun staff-laget ordre (manual:true). Ubetalte kunde-ordre fra havoyet.no
+  // skal ikke vises — de filtreres bort på server-siden i /api/orders.
   try {
     const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
-    const existingIds = new Set(ORDERS.map(o => o.id));
-    manual.forEach(o => { if (!existingIds.has(o.id)) ORDERS.push(o); });
+    const existingIds = new Set(ORDERS.map(o => o.id || o.ordrenr));
+    manual.forEach(o => {
+      if (!o || o.manual !== true) return;
+      const oid = o.id || o.ordrenr;
+      if (oid && !existingIds.has(oid)) ORDERS.push(o);
+    });
   } catch(e) {}
 }
 
@@ -1190,7 +1196,7 @@ async function loadFromFlask() {
       initState(ORDERS);
       restoreState(); restoreNotes();
       localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
-      setBanner(true, `Koblet til Shopify – ${ORDERS.length} bestilling${ORDERS.length !== 1 ? 'er' : ''} hentet`);
+      setBanner(true, `Koblet til havoyet.no – ${ORDERS.length} bestilling${ORDERS.length !== 1 ? 'er' : ''} hentet`);
 
       const params = new URLSearchParams(location.search);
       const targetId = params.get('ordre');
@@ -1218,7 +1224,7 @@ async function loadFromFlask() {
       setBanner(false, `Flask ikke tilgjengelig – viser sist lagrede bestillinger. Start app.py for å oppdatere.`);
     } catch(e) {}
   } else {
-    setBanner(false, `Flask ikke kjørende. Start app.py for å hente Shopify-bestillinger.`);
+    setBanner(false, `Flask ikke kjørende. Start app.py for å hente bestillinger fra havoyet.no.`);
   }
 
   // Sjekk om en spesifikk ordre skal åpnes direkte
@@ -1857,7 +1863,7 @@ function renderProductList() {
   const countEl  = document.getElementById('prodListCount');
   countEl.textContent = products.size + ' produkt' + (products.size !== 1 ? 'er' : '');
   if (products.size === 0) {
-    listEl.innerHTML = `<div class="empty-state"><h2>Ingen bestillinger</h2><p>Hent bestillinger fra Shopify for å se innkjøpslisten.</p></div>`;
+    listEl.innerHTML = `<div class="empty-state"><h2>Ingen bestillinger</h2><p>Når kunder bestiller på havoyet.no vises innkjøpslisten her.</p></div>`;
     return;
   }
   listEl.innerHTML = '';

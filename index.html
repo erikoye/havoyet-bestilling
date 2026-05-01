@@ -738,25 +738,10 @@ function dayOffset(n){ const d=new Date(_TODAY); d.setDate(d.getDate()+n); retur
 const todayISO = isoDate(_TODAY);
 const tmrwISO  = dayOffset(1);
 
-// ─── MOCK-DATA (fallback) ────────────────────
-const MOCK_ORDERS = [
-  { id:'#4821', customer:'Ingrid Bakke',    delivery:dayOffset(1), slot:'a', seen:false,
-    items:[{name:'Atlanterhavslaks, hel',weight:null,expiry:null},{name:'Kongekrabbe, klør',weight:null,expiry:null},{name:'Reker, ferske',weight:null,expiry:null}] },
-  { id:'#4820', customer:'Lars Johansen',   delivery:dayOffset(1), slot:'b', seen:false,
-    items:[{name:'Torsk, loins',weight:820,expiry:dayOffset(4)},{name:'Sei, filet',weight:650,expiry:dayOffset(4)},{name:'Blåskjell, nett 1 kg',weight:null,expiry:null},{name:'Krabbe, hel kokt',weight:null,expiry:null},{name:'Reker, ferske',weight:null,expiry:null}] },
-  { id:'#4819', customer:'Eva Mikkelsen',   delivery:dayOffset(1), slot:'a', seen:true,
-    items:[{name:'Laks, røkt',weight:400,expiry:dayOffset(6)},{name:'Ørret, hel',weight:1100,expiry:dayOffset(3)}] },
-  { id:'#4818', customer:'Marte Lund',      delivery:dayOffset(2), slot:'a', seen:false,
-    items:[{name:'Kveite, steak',weight:560,expiry:dayOffset(5)},{name:'Reker, ferske',weight:null,expiry:null}] },
-  { id:'#4817', customer:'Petter Holm',     delivery:dayOffset(2), slot:'b', seen:true,
-    items:[{name:'Torsk, loins',weight:null,expiry:null},{name:'Sei, filet',weight:null,expiry:null},{name:'Laks, hel',weight:null,expiry:null}] },
-  { id:'#4808', customer:'Fredrik Løkke',   delivery:dayOffset(0), slot:'b', seen:false,
-    items:[{name:'Kongekrabbe, klør',weight:null,expiry:null},{name:'Hummer, hel',weight:null,expiry:null}] },
-  { id:'#4807', customer:'Cecilie Moen',    delivery:dayOffset(0), slot:'a', seen:true,
-    items:[{name:'Torsk, loins',weight:800,expiry:dayOffset(2)},{name:'Laks, røkt',weight:400,expiry:dayOffset(5)}] },
-];
-
-let ORDERS = MOCK_ORDERS;
+// ─── ORDRE-DATA ────────────────────────────────
+// Ingen mock/demodata — kun betalte ordre fra havoyet.no.
+// /api/orders filtrerer ut ubetalte ordre på server-siden.
+let ORDERS = [];
 let fromLive = false;
 
 // ─── BUTIKKFILTER ─────────────────────────────
@@ -836,6 +821,12 @@ function renderAll(){
   const sorted=visible.filter(o=>o.delivery>=todayISO)
     .sort((a,b)=>a.delivery.localeCompare(b.delivery));
 
+  if (sorted.length === 0) {
+    document.getElementById('ordreTabell').innerHTML =
+      `<tr><td colspan="6" style="text-align:center;padding:32px 0;color:var(--muted);font-size:13px;">Ingen betalte bestillinger ennå. Når kunder fullfører kjøp på havoyet.no dukker de opp her.</td></tr>`;
+    window._sets = sets;
+    return;
+  }
   document.getElementById('ordreTabell').innerHTML=sorted.slice(0,10).map(o=>{
     const cls=confClass(o), pct=confPct(o), conf=confCount(o), total=(o.items||[]).length;
     const slotLabel=o.slot==='a'?'13–15':'15–18';
@@ -911,10 +902,18 @@ function serverSaveHiddenOrders(list) {
 
 // ─── FLASK-HENTING ────────────────────────────
 function mergeManualOrders() {
+  // Slå bare sammen ordre som staff har laget på iPad-en selv (manual:true).
+  // Kunde-ordre fra havoyet.no/kasse kommer via /api/orders som allerede er
+  // filtrert til kun betalte. Ubetalte havoyet.no-ordre i localStorage skal
+  // IKKE vises.
   try {
     const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
-    const existingIds = new Set(ORDERS.map(o => o.id));
-    manual.forEach(o => { if (!existingIds.has(o.id)) ORDERS.push(o); });
+    const existingIds = new Set(ORDERS.map(o => o.id || o.ordrenr));
+    manual.forEach(o => {
+      if (!o || o.manual !== true) return; // hopp over kunde-checkout-ordre
+      const oid = o.id || o.ordrenr;
+      if (oid && !existingIds.has(oid)) ORDERS.push(o);
+    });
   } catch(e) {}
 }
 
@@ -982,7 +981,7 @@ function updateSyncBadge(ok, ts, err){
   if (!el) return;
   if (ok) {
     const tid = ts ? new Date(ts).toLocaleTimeString('nb',{hour:'2-digit',minute:'2-digit'}) : '';
-    el.textContent = `● Live fra Shopify ${tid ? '· sist synk ' + tid : ''}`;
+    el.textContent = `● Live fra havoyet.no ${tid ? '· sist synk ' + tid : ''}`;
     el.style.color = '#22c55e';
   } else {
     el.textContent = `○ ${err || 'Demodata'}`;
@@ -1064,7 +1063,7 @@ mergeManualOrders();
 filterHiddenOrders();
 renderAll();          // vis mock-data umiddelbart
 loadFromFlask();      // erstatt med live-data om Flask er oppe
-setInterval(loadFromFlask, 5 * 60 * 1000);  // poll hvert 5 min
+setInterval(loadFromFlask, 30 * 1000);  // poll hvert 30. sekund — kontinuerlig live fra havoyet.no
 setInterval(pollPackingState, 15000);        // sync pakkingstilstand hvert 15 sek
 
 // ─── NY BESTILLING MODAL ───────────────────────

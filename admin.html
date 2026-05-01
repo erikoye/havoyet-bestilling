@@ -256,8 +256,8 @@
     }
     #toast.show { opacity: 1; transform: translateY(0); }
 
-    /* ── SHOPIFY STATUS ── */
-    .shopify-bar {
+    /* ── LIVE STATUS ── */
+    .live-bar {
       display: flex;
       align-items: center;
       gap: 10px;
@@ -269,11 +269,11 @@
       font-size: 13px;
       color: var(--muted);
     }
-    .shopify-bar .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-    .shopify-bar.ok .dot    { background: var(--c-green); }
-    .shopify-bar.err .dot   { background: var(--c-red); }
-    .shopify-bar.pend .dot  { background: var(--c-orange); }
-    .shopify-bar strong { color: var(--dark); }
+    .live-bar .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .live-bar.ok  .dot { background: var(--c-green); animation: live-pulse 2s infinite; }
+    .live-bar.err .dot { background: var(--c-red); }
+    .live-bar strong { color: var(--dark); }
+    @keyframes live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
     /* ── TOUCH & MOBIL ── */
     button, a { touch-action: manipulation; }
@@ -324,24 +324,22 @@
   <h1 class="page-title">Adminpanel</h1>
   <p class="page-sub">Info du sender her vises direkte i butikkvisningen.</p>
 
-  <!-- SHOPIFY STATUS -->
+  <!-- LIVE-TILKOBLING TIL ny.havoyet.no -->
   <div class="section">
     <div class="section-header">
-      <span class="section-title">Shopify-tilkobling</span>
-      <button class="btn btn-ghost btn-sm" onclick="syncShopify()">↻ Synk nå</button>
+      <span class="section-title">havoyet.no-tilkobling</span>
     </div>
-    <div id="shopifyBar" class="shopify-bar pend">
+    <div id="liveBar" class="live-bar ok">
       <div class="dot"></div>
-      <span id="shopifyMsg">Kobler til backend...</span>
+      <span id="liveMsg">Kobler til havoyet.no…</span>
     </div>
     <div class="card" id="flaskHelpCard" style="background:#f8fafc;display:none;">
       <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">
-        Dobbeltklikk <strong>Start Flask.command</strong> i Bestillingsside-mappen for å starte serveren. Eller kjør i Terminal:
+        Backend ikke nådd. På Render redeployer det automatisk. Lokalt:
       </div>
       <code style="display:block;background:var(--dark);color:#7dd3fc;padding:10px 14px;border-radius:8px;font-family:'DM Mono',monospace;font-size:12px;line-height:1.7;">
         pip3 install flask flask-cors requests<br>
-        cd "/Users/eriko/Desktop/Havøyet AS/Claud Cowork/Bestillingsside"<br>
-        python3 app.py
+        cd Bestillingsside && python3 app.py
       </code>
     </div>
   </div>
@@ -386,21 +384,6 @@
     </div>
   </div>
 
-  <!-- ORDRE FRA SHOPIFY -->
-  <div class="section">
-    <div class="section-header">
-      <span class="section-title">Ordre fra Shopify</span>
-      <button class="btn btn-ghost btn-sm" onclick="syncShopify()">↻ Oppdater</button>
-    </div>
-    <div class="card">
-      <div class="ordre-scroll">
-        <div class="ordre-status-row" id="ordreStatusPlaceholder" style="color:var(--muted);font-size:14px;padding:20px 0;justify-content:center;">
-          Ingen ordre hentet ennå. Koble til Shopify.
-        </div>
-        <div id="ordreStatusList"></div>
-      </div>
-    </div>
-  </div>
 
 </main>
 
@@ -442,8 +425,6 @@ if (!STATE.avail) {
 }
 if (!STATE.varsler) STATE.varsler = [];
 if (!STATE.melding) STATE.melding = { text: '', ts: null };
-if (!STATE.shopifyDomain) STATE.shopifyDomain = '';
-if (!STATE.shopifyOrders) STATE.shopifyOrders = [];
 
 // ── KLOKKE ──────────────────────────────────────────────────────────────────
 function updateClock() {
@@ -575,45 +556,10 @@ function updateVarselType(i, val) {
   saveState(STATE);
 }
 
-// ── SHOPIFY VIA FLASK-BACKEND ─────────────────────────────────────────────────
-async function syncShopify() {
-  setShopifyBar('pend', 'Synkroniserer med Shopify...');
-  try {
-    const r = await fetch(`${FLASK_BASE}/api/sync`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(10000)
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-
-    if (data.error) throw new Error(data.error);
-
-    const orders = data.count > 0 ? await loadOrders() : [];
-    renderShopifyOrders(orders);
-    const tid = data.last_sync ? new Date(data.last_sync).toLocaleTimeString('nb', {hour:'2-digit',minute:'2-digit'}) : '';
-    setShopifyBar('ok', `Koblet til Shopify — ${data.count} ordre hentet kl. ${tid}`);
-    toast(`${data.count} ordre hentet fra Shopify ✓`);
-
-    // Synk admin-tilstand til Flask så butikk.html kan hente den
-    syncAdminStateToFlask();
-
-  } catch (err) {
-    if (err.name === 'TimeoutError' || err.message.includes('Failed to fetch') || err.name === 'TypeError') {
-      setShopifyBar('err', 'Flask ikke kjørende – dobbeltklikk «Start Flask.command» i Bestillingsside-mappen');
-    } else {
-      setShopifyBar('err', `Feil fra backend: ${err.message}`);
-    }
-  }
-}
-
-async function loadOrders() {
-  try {
-    const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(5000) });
-    if (!r.ok) return [];
-    const data = await r.json();
-    return data.orders || [];
-  } catch { return []; }
-}
+// ── LIVE-TILKOBLING TIL HAVOYET.NO ───────────────────────────────────────────
+// Backend tar imot bestillinger fra ny.havoyet.no/kasse via /api/orders/new
+// og lagrer dem i _manual_orders. Denne kontinuerlige helsesjekken viser at
+// linja er åpen — ingen manuell synk er nødvendig.
 
 async function syncAdminStateToFlask() {
   try {
@@ -626,83 +572,37 @@ async function syncAdminStateToFlask() {
   } catch { /* backend ikke oppe */ }
 }
 
-async function checkBackendStatus() {
-  try {
-    const r = await fetch(`${FLASK_BASE}/api/status`, { signal: AbortSignal.timeout(3000) });
-    if (!r.ok) throw new Error();
-    const data = await r.json();
-    const tid = data.last_sync ? new Date(data.last_sync).toLocaleTimeString('nb', {hour:'2-digit',minute:'2-digit'}) : null;
-
-    if (data.error) {
-      setShopifyBar('err', `Backend oppe, men Shopify-feil: ${data.error}`);
-    } else if (tid) {
-      setShopifyBar('ok', `Backend koblet — ${data.count} ordre, sist synk kl. ${tid}`);
-      const orders = await loadOrders();
-      renderShopifyOrders(orders);
-    } else {
-      setShopifyBar('pend', `Backend oppe — klikk «Synk nå» for å hente ordre`);
-    }
-  } catch {
-    setShopifyBar('err', 'Flask ikke kjørende – dobbeltklikk «Start Flask.command» i Bestillingsside-mappen');
-  }
-}
-
-function setShopifyBar(status, msg) {
-  const bar = document.getElementById('shopifyBar');
-  bar.className = `shopify-bar ${status}`;
-  document.getElementById('shopifyMsg').textContent = msg;
+function setLiveBar(status, msg) {
+  const bar = document.getElementById('liveBar');
+  if (!bar) return;
+  bar.className = `live-bar ${status}`;
+  const m = document.getElementById('liveMsg');
+  if (m) m.textContent = msg;
   const help = document.getElementById('flaskHelpCard');
   if (help) help.style.display = status === 'err' ? 'block' : 'none';
 }
 
-function renderShopifyOrders(orders) {
-  const list = document.getElementById('ordreStatusList');
-  const placeholder = document.getElementById('ordreStatusPlaceholder');
-
-  if (!orders || orders.length === 0) {
-    placeholder.style.display = '';
-    list.innerHTML = '';
-    return;
+async function checkLiveStatus() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const tid = new Date().toLocaleTimeString('nb', { hour: '2-digit', minute: '2-digit' });
+    const n = data.count || 0;
+    setLiveBar('ok', `Live fra havoyet.no — ${n} aktiv${n === 1 ? '' : 'e'} bestilling${n === 1 ? '' : 'er'} · sist sjekket ${tid}`);
+  } catch {
+    setLiveBar('err', 'Backend ikke nådd — sjekker igjen om 30 sek');
   }
-  placeholder.style.display = 'none';
-  list.innerHTML = '';
-
-  orders.forEach(o => {
-    const name = o.customer
-      ? `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim()
-      : o.shipping_address
-        ? `${o.shipping_address.first_name || ''} ${o.shipping_address.last_name || ''}`.trim()
-        : 'Ukjent';
-
-    let statusCls = 'new';
-    let statusTxt = 'Ny';
-    if (o.fulfillment_status === 'fulfilled') { statusCls = 'done'; statusTxt = 'Levert'; }
-    else if (o.fulfillment_status === 'partial') { statusCls = 'progress'; statusTxt = 'Delvis'; }
-    else if (o.financial_status === 'paid') { statusCls = 'progress'; statusTxt = 'Betalt'; }
-
-    const row = document.createElement('div');
-    row.className = 'ordre-status-row';
-    row.innerHTML = `
-      <span class="ost-id">${o.name}</span>
-      <span class="ost-name">${name}</span>
-      <span style="font-size:12px;color:var(--muted);flex:1;">${o.line_items ? o.line_items.length + ' varer' : ''}</span>
-      <span class="ost-badge ${statusCls}">${statusTxt}</span>
-    `;
-    list.appendChild(row);
-  });
 }
 
 // ── INIT ─────────────────────────────────────────────────────────────────────
 loadMelding();
 renderAvail();
 renderVarsler();
-checkBackendStatus();
+checkLiveStatus();
 
-// Synk endringer til Flask hver gang state oppdateres (override saveState)
-const _origSaveState = saveState;
-
-// Poll backend hvert 5 min
-setInterval(checkBackendStatus, 5 * 60 * 1000);
+// Kontinuerlig live-status hvert 30. sekund
+setInterval(checkLiveStatus, 30 * 1000);
 </script>
 </body>
 </html>
