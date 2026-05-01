@@ -1735,20 +1735,25 @@ def _parse_vipps_pdf(pdf_bytes):
             date_iso = date_str
 
         amount_ore = _parse_amount_ore(amount_str)
+        # Skille mellom direkte Vipps (kunde sender til oss via Vipps-app) og
+        # ePayment fra nettsiden. Heuristikk: hvis raden har navn+telefon er
+        # det direkte; ellers er det "Vipps-betaling hos Havøyet AS" fra epay.
+        payment_channel = "direct" if (name and phone_masked) else "website"
         transactions.append({
-            "transaction_id": synth_id,
-            "date":           date_iso,
-            "time":           time_str,
-            "amount_ore":     amount_ore,
-            "amount_kr":      amount_ore / 100.0,
-            "type":           "Kjøp" if status == "Belastet" else status,
-            "status":         status,
-            "description":    description,
-            "phone":          phone_masked,
-            "name":           name,
-            "fee_kr":         _parse_amount_ore(fee_str) / 100.0 if fee_str else 0.0,
-            "imported_at":    datetime.now().isoformat(),
-            "source":         "vipps_pdf",
+            "transaction_id":  synth_id,
+            "date":            date_iso,
+            "time":            time_str,
+            "amount_ore":      amount_ore,
+            "amount_kr":       amount_ore / 100.0,
+            "type":            "Kjøp" if status == "Belastet" else status,
+            "status":          status,
+            "description":     description,
+            "phone":           phone_masked,
+            "name":            name,
+            "fee_kr":          _parse_amount_ore(fee_str) / 100.0 if fee_str else 0.0,
+            "payment_channel": payment_channel,  # "direct" eller "website"
+            "imported_at":     datetime.now().isoformat(),
+            "source":          "vipps_pdf",
         })
     return transactions
 
@@ -1916,11 +1921,20 @@ def api_economy_stats():
     web_total_week  = sum(_order_total_kr(o) for o in web_orders if _in_range(_order_date(o), start_week))
     web_total_month = sum(_order_total_kr(o) for o in web_orders if _in_range(_order_date(o), start_month))
 
-    # Vipps CSV-import
-    vipps_csv = list(_vipps_imported_payments.values())
-    vipps_total       = sum((r.get("amount_ore") or 0) for r in vipps_csv) / 100.0
-    vipps_total_week  = sum((r.get("amount_ore") or 0) for r in vipps_csv if _in_range(r.get("date"), start_week)) / 100.0
-    vipps_total_month = sum((r.get("amount_ore") or 0) for r in vipps_csv if _in_range(r.get("date"), start_month)) / 100.0
+    # Vipps CSV/PDF-import — skille direkte (rader med navn+telefon) fra
+    # nettside-ePayment (rader uten navn — "Vipps-betaling hos Havøyet AS")
+    vipps_imported = list(_vipps_imported_payments.values())
+    vipps_direct  = [r for r in vipps_imported if r.get("payment_channel") == "direct"]
+    vipps_website = [r for r in vipps_imported if r.get("payment_channel") != "direct"]
+
+    def _sum_kr(rows, since=None):
+        if since is None:
+            return sum((r.get("amount_ore") or 0) for r in rows) / 100.0
+        return sum((r.get("amount_ore") or 0) for r in rows if _in_range(r.get("date"), since)) / 100.0
+
+    vipps_total       = _sum_kr(vipps_imported)
+    vipps_total_week  = _sum_kr(vipps_imported, start_week)
+    vipps_total_month = _sum_kr(vipps_imported, start_month)
 
     # Stripe ePayment
     stripe_paid = [p for p in _stripe_load_payments().values() if p.get("state") in _STRIPE_PAID_STATES]
@@ -1948,10 +1962,22 @@ def api_economy_stats():
             "this_month_kr":  round(web_total_month, 2),
         },
         "vipps_csv": {
-            "count":          len(vipps_csv),
+            "count":          len(vipps_imported),
             "all_time_kr":    round(vipps_total, 2),
             "this_week_kr":   round(vipps_total_week, 2),
             "this_month_kr":  round(vipps_total_month, 2),
+        },
+        "vipps_direct": {
+            "count":          len(vipps_direct),
+            "all_time_kr":    round(_sum_kr(vipps_direct), 2),
+            "this_week_kr":   round(_sum_kr(vipps_direct, start_week), 2),
+            "this_month_kr":  round(_sum_kr(vipps_direct, start_month), 2),
+        },
+        "vipps_website": {
+            "count":          len(vipps_website),
+            "all_time_kr":    round(_sum_kr(vipps_website), 2),
+            "this_week_kr":   round(_sum_kr(vipps_website, start_week), 2),
+            "this_month_kr":  round(_sum_kr(vipps_website, start_month), 2),
         },
         "stripe": {
             "count":          len(stripe_paid),
