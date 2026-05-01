@@ -3238,6 +3238,82 @@ def api_auth_logout():
         _save_sync_state()
     return jsonify({"ok": True})
 
+# ─── Glemt passord (passordreset via e-post) ────────────────────────────────
+_pwd_reset_tokens = {}   # token → {email, expires_at}
+PWD_RESET_TTL = 60 * 60  # 1 time
+
+@app.route("/api/auth/forgot-password", methods=["POST"])
+def api_auth_forgot_password():
+    """Genererer en reset-token og sender e-post med link. Avslører ALDRI om
+    e-posten finnes (returnerer alltid ok=true), for å unngå enumeration."""
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return jsonify({"ok": False, "error": "Ugyldig e-post"}), 400
+    user = _find_user(email)
+    if user:
+        # Rydd gamle tokens for samme bruker
+        for tok in list(_pwd_reset_tokens.keys()):
+            if _pwd_reset_tokens[tok].get("email") == email:
+                _pwd_reset_tokens.pop(tok, None)
+        token = secrets.token_urlsafe(32)
+        _pwd_reset_tokens[token] = {
+            "email": email,
+            "expires_at": int(time.time()) + PWD_RESET_TTL,
+        }
+        # Send e-post med reset-link
+        origin = (data.get("origin") or "").rstrip("/") or "https://havoyet.no"
+        link = f"{origin}/reset-passord?token={token}"
+        body = (
+            f"Hei,\n\n"
+            f"Vi mottok en forespørsel om å tilbakestille passordet for kontoen din ({email}).\n\n"
+            f"Klikk på lenken under for å velge nytt passord. Lenken er gyldig i 1 time.\n\n"
+            f"{link}\n\n"
+            f"Hvis du ikke ba om dette, kan du trygt ignorere denne e-posten — "
+            f"passordet ditt forblir uendret.\n\n"
+            f"Hilsen Havøyet"
+        )
+        try:
+            if SMTP_USER and SMTP_PASS:
+                _send_via_smtp(SMTP_USER, "Havøyet", "Tilbakestill passord", body, to_email=email)
+            else:
+                print(f"[PWD-RESET] Ingen SMTP konfigurert — link: {link}")
+        except Exception as e:
+            print(f"[PWD-RESET] Kunne ikke sende e-post: {e}")
+    # Svar likt uavhengig av om e-posten finnes
+    return jsonify({"ok": True, "message": "Hvis e-posten er registrert, har vi sendt deg en lenke."})
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def api_auth_reset_password():
+    """Bruker reset-token + nytt passord."""
+    data = request.get_json(silent=True) or {}
+    token = (data.get("token") or "").strip()
+    new_pwd = data.get("newPassword") or ""
+    if not token: return jsonify({"ok": False, "error": "Mangler token"}), 400
+    if len(new_pwd) < 8:
+        return jsonify({"ok": False, "error": "Passordet må være minst 8 tegn"}), 400
+    rec = _pwd_reset_tokens.get(token)
+    if not rec or rec.get("expires_at", 0) < int(time.time()):
+        _pwd_reset_tokens.pop(token, None)
+        return jsonify({"ok": False, "error": "Lenken er utløpt eller ugyldig. Be om en ny."}), 400
+    email = rec["email"]
+    user = _find_user(email)
+    if not user:
+        _pwd_reset_tokens.pop(token, None)
+        return jsonify({"ok": False, "error": "Bruker finnes ikke"}), 404
+    user["password_hash"] = generate_password_hash(new_pwd)
+    user["must_set_password"] = False
+    _pwd_reset_tokens.pop(token, None)
+    _save_sync_state()
+    # Logg automatisk inn
+    sess_token = secrets.token_urlsafe(32)
+    _auth_sessions[sess_token] = {
+        "email": user["email"], "role": user["role"], "created_at": int(time.time()),
+    }
+    _save_sync_state()
+    return jsonify({"ok": True, "token": sess_token, "user": _public_user(user)})
+
+
 @app.route("/api/customer/auth/register", methods=["POST"])
 def api_customer_auth_register():
     """Selvbetjent kunde-registrering med passord. Oppretter ny konto og logger inn."""
