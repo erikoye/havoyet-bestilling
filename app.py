@@ -1930,6 +1930,19 @@ def api_vipps_import_csv():
 
     if added:
         _save_sync_state()
+        # Skriv også oppdatert snapshot til data/vipps_baseline.json — denne
+        # blir lest ved Render-restart hvis /tmp er wipet. Gir permanent
+        # lagring uten persistent disk, så lenge fila er sjekket inn i git.
+        try:
+            _baseline_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          "data", "vipps_baseline.json")
+            os.makedirs(os.path.dirname(_baseline_path), exist_ok=True)
+            with open(_baseline_path, "w", encoding="utf-8") as bf:
+                json.dump(_vipps_imported_payments, bf, ensure_ascii=False, indent=2)
+            _commit_baseline_to_github(_baseline_path,
+                                       f"Vipps-baseline: auto-update etter import (+{added} nye)")
+        except Exception as e:
+            print(f"[BASELINE] Kunne ikke lagre baseline: {e}")
 
     return jsonify({
         "ok": True,
@@ -1941,6 +1954,46 @@ def api_vipps_import_csv():
         "total_amount_kr": total_ore / 100.0,
         "new":        new_records[:50],
     })
+
+
+def _commit_baseline_to_github(file_path, message):
+    """Commit oppdatert baseline-fil til GitHub via REST API.
+    Krever GITHUB_TOKEN env var med 'repo'-scope. Gjør INGENTING hvis token mangler.
+    Aktiveres ved å sette GITHUB_TOKEN på Render — én engangs-oppsett."""
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    repo  = os.environ.get("GITHUB_REPO", "erikoye/havoyet-bestilling").strip()
+    branch = os.environ.get("GITHUB_BRANCH", "main").strip()
+    if not token:
+        return  # auto-commit deaktivert — bruker må sette GITHUB_TOKEN
+    rel_path = "data/" + os.path.basename(file_path)
+    api = f"https://api.github.com/repos/{repo}/contents/{rel_path}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "havoyet-flask",
+    }
+    try:
+        # Hent nåværende SHA (kreves for update)
+        sha = None
+        r = requests.get(api, headers=headers, params={"ref": branch}, timeout=15)
+        if r.status_code == 200:
+            sha = r.json().get("sha")
+        with open(file_path, "rb") as f:
+            content_b64 = _base64.b64encode(f.read()).decode("ascii")
+        payload = {
+            "message": message,
+            "content": content_b64,
+            "branch":  branch,
+        }
+        if sha:
+            payload["sha"] = sha
+        r = requests.put(api, headers=headers, json=payload, timeout=20)
+        if r.status_code in (200, 201):
+            print(f"[BASELINE] ✓ Auto-committed {rel_path} til GitHub")
+        else:
+            print(f"[BASELINE] GitHub API svarte {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"[BASELINE] GitHub auto-commit feilet: {e}")
 
 
 @app.route("/api/vipps/imported")
