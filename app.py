@@ -1925,6 +1925,7 @@ def api_economy_stats():
     today = datetime.now().date()
     start_week = today - timedelta(days=today.weekday())  # mandag denne uken
     start_month = today.replace(day=1)
+    start_year = today.replace(month=1, day=1)
 
     def _parse_date(date_str):
         if not date_str:
@@ -1960,6 +1961,7 @@ def api_economy_stats():
     web_total       = sum(_order_total_kr(o) for o in web_orders)
     web_total_week  = sum(_order_total_kr(o) for o in web_orders if _in_range(_order_date(o), start_week))
     web_total_month = sum(_order_total_kr(o) for o in web_orders if _in_range(_order_date(o), start_month))
+    web_total_year  = sum(_order_total_kr(o) for o in web_orders if _in_range(_order_date(o), start_year))
 
     # Vipps CSV/PDF-import — skille direkte (rader med navn+telefon) fra
     # nettside-ePayment (rader uten navn — "Vipps-betaling hos Havøyet AS")
@@ -1975,6 +1977,7 @@ def api_economy_stats():
     vipps_total       = _sum_kr(vipps_imported)
     vipps_total_week  = _sum_kr(vipps_imported, start_week)
     vipps_total_month = _sum_kr(vipps_imported, start_month)
+    vipps_total_year  = _sum_kr(vipps_imported, start_year)
 
     # Stripe ePayment
     stripe_paid = [p for p in _stripe_load_payments().values() if p.get("state") in _STRIPE_PAID_STATES]
@@ -1987,25 +1990,30 @@ def api_economy_stats():
     grand_total       = web_total + vipps_total
     grand_total_week  = web_total_week + vipps_total_week
     grand_total_month = web_total_month + vipps_total_month
+    grand_total_year  = web_total_year + vipps_total_year
 
     return jsonify({
         "as_of": datetime.now().isoformat(),
+        "year":  today.year,
         "totals": {
             "all_time_kr":  round(grand_total, 2),
             "this_week_kr": round(grand_total_week, 2),
             "this_month_kr": round(grand_total_month, 2),
+            "this_year_kr":  round(grand_total_year, 2),
         },
         "web": {
             "count":          len(web_orders),
             "all_time_kr":    round(web_total, 2),
             "this_week_kr":   round(web_total_week, 2),
             "this_month_kr":  round(web_total_month, 2),
+            "this_year_kr":   round(web_total_year, 2),
         },
         "vipps_csv": {
             "count":          len(vipps_imported),
             "all_time_kr":    round(vipps_total, 2),
             "this_week_kr":   round(vipps_total_week, 2),
             "this_month_kr":  round(vipps_total_month, 2),
+            "this_year_kr":   round(vipps_total_year, 2),
         },
         "vipps_direct": {
             "count":          len(vipps_direct),
