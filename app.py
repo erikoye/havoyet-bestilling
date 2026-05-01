@@ -2005,34 +2005,46 @@ def api_webhook_stripe():
 # ikke restart, men det er greit (klienten ber bare om login på nytt).
 
 _AUTH_SEED = [
-    # env_hash_key: navnet på env-var som inneholder werkzeug-hash for denne brukeren.
-    # Når env-varen er satt overlever passordet container-restarts uten persistent disk.
-    {"email": "erik@havoyet.no",  "role": "admin", "env_hash_key": "ADMIN_PASSWORD_HASH"},
-    {"email": "stian@havoyet.no", "role": "user",  "env_hash_key": "USER_PASSWORD_HASH"},
+    # env_hash_key: navnet på env-var som overstyrer passord-hashen. Settes denne
+    # i Render brukes verdien fra env-var i stedet for default_hash under.
+    # default_hash: fallback brukt når env-var er tom OG ingen lagret password_hash
+    # finnes på disk (f.eks. etter at Render-/tmp er blanket). Dette er pbkdf2-hash
+    # av et fast standardpassord — sett ADMIN_PASSWORD_HASH i Render om du vil bytte.
+    {"email":        "erik@havoyet.no",
+     "role":         "admin",
+     "env_hash_key": "ADMIN_PASSWORD_HASH",
+     "default_hash": "pbkdf2:sha256:1000000$Dm6U42Oy58sz18gi$7875ac305ba424251042f3cebcd7f92a2b608c544b1433358262c1612a45e6e5"},
+    {"email":        "stian@havoyet.no",
+     "role":         "user",
+     "env_hash_key": "USER_PASSWORD_HASH",
+     "default_hash": None},
 ]
 
 def _seed_auth_users():
-    """Sett opp standard-brukere første gang serveren starter, eller legg til
-    seed-brukere som mangler i en eksisterende database. Hvis miljøvariabelen
-    angitt av env_hash_key er satt brukes den som passord-hash, slik at brukere
-    fortsatt har et gyldig passord etter at /tmp er slettet ved Render-restart."""
+    """Sett opp standard-brukere ved oppstart. Prioritet for passord-hash:
+       1) Miljøvariabel (env_hash_key)  — best, lett å rotere uten redeploy
+       2) default_hash fra _AUTH_SEED   — fallback, garanterer at admin alltid
+                                          kan logge inn selv etter Render-/tmp-wipe
+       3) None → must_set_password=True (bare hvis hverken env eller default finnes)"""
     global _auth_users
     by_email = {u.get("email", "").lower(): u for u in _auth_users}
     for s in _AUTH_SEED:
-        env_hash = os.environ.get(s.get("env_hash_key") or "") or None
-        existing = by_email.get(s["email"].lower())
+        env_hash    = os.environ.get(s.get("env_hash_key") or "") or None
+        default_h   = s.get("default_hash") or None
+        seed_hash   = env_hash or default_h
+        existing    = by_email.get(s["email"].lower())
         if existing is None:
             _auth_users.append({
                 "email": s["email"],
                 "role": s["role"],
-                "password_hash": env_hash,
-                "must_set_password": not bool(env_hash),
+                "password_hash": seed_hash,
+                "must_set_password": not bool(seed_hash),
                 "created_at": int(time.time()),
             })
-        elif env_hash and not existing.get("password_hash"):
-            # Eksisterende bruker uten hash (f.eks. nylig seedet med must_set_password)
-            # — fyll inn fra env slik at de ikke trenger førstegangs-flyt.
-            existing["password_hash"] = env_hash
+        elif seed_hash and not existing.get("password_hash"):
+            # Eksisterende bruker uten hash (etter en /tmp-wipe gjenoppstår
+            # med must_set_password=True). Fyll inn fra env eller default.
+            existing["password_hash"] = seed_hash
             existing["must_set_password"] = False
 
 def _find_user(email):
