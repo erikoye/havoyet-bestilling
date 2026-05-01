@@ -1733,16 +1733,21 @@ def api_subscription_create():
                 phone = (kunde.get("tlf") or "").replace(" ", "") or None,
                 metadata = {"havoyet_kunde": "1"},
             )
+        # Subscription.items.price_data støtter ikke product_data inline →
+        # opprett Product + Price først, så referer til Price-ID.
+        product = _stripe.Product.create(
+            name = description,
+            metadata = {"havoyet_kasse": (kasse.get("size") or "")[:30]},
+        )
+        price = _stripe.Price.create(
+            currency    = "nok",
+            unit_amount = amount,
+            recurring   = {"interval": "month", "interval_count": 1},
+            product     = product.id,
+        )
         subscription = _stripe.Subscription.create(
             customer = customer.id,
-            items    = [{
-                "price_data": {
-                    "currency":    "nok",
-                    "unit_amount": amount,
-                    "recurring":   {"interval": "month", "interval_count": 1},
-                    "product_data": {"name": description},
-                },
-            }],
+            items    = [{"price": price.id}],
             payment_behavior      = "default_incomplete",
             payment_settings      = {
                 "save_default_payment_method": "on_subscription",
