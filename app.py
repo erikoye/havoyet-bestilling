@@ -368,10 +368,59 @@ _customers = []  # [{id, navn, tlf, epost, adresse, kommentar, created_at}]
 #              imported_at, source: 'vipps_csv'}
 _vipps_imported_payments = {}
 _auth_users = []   # [{email, role, password_hash, must_set_password, created_at}]
-_auth_sessions = {}  # token → {email, role, created_at} — persisteres til disk via STATE_DIR
+_auth_sessions = {}  # legacy lookup — beholdes for bakoverkompatibilitet med eldre tokens
 # Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
 # selv logger ut. Fjern token manuelt via /api/auth/logout for å invalidere det.
 AUTH_SESSION_TTL = None
+
+# ── STATELESS AUTH-TOKEN (HMAC-signed) ───────────────────────────────────────
+# Tokens er nå selv-bekreftende slik at de overlever Render-restarts uten å
+# trenge persistent disk. Sett SECRET_KEY i Render-env for eksplisitt kontroll;
+# ellers utleder vi en stabil nøkkel fra Stripe/Vipps-secrets som allerede er
+# satt på serveren (de roteres aldri ved deploy).
+import hmac as _hmac_mod
+import hashlib as _hashlib_mod
+import base64 as _base64
+import json as _json_mod
+
+_AUTH_SECRET = os.environ.get("SECRET_KEY", "").strip()
+if not _AUTH_SECRET:
+    _seed = (STRIPE_SECRET_KEY or "") + (VIPPS_CLIENT_SECRET or "") + "havoyet-auth-2026-v1"
+    if _seed.strip("havoyet-auth-2026-v1"):
+        _AUTH_SECRET = _hashlib_mod.sha256(_seed.encode("utf-8")).hexdigest()
+        print("[AUTH] SECRET_KEY ikke satt — utledet stabil nøkkel fra Stripe/Vipps-secrets")
+    else:
+        # Worst case: helt frisk Render uten Stripe/Vipps-keys konfigurert.
+        # Bruk en hard-kodet konstant slik at sesjoner i det minste overlever
+        # innenfor én container-instans. Brukeren bør sette SECRET_KEY.
+        _AUTH_SECRET = "havoyet-fallback-secret-CHANGE-ME-via-SECRET_KEY-env"
+        print("[AUTH] ADVARSEL: ingen SECRET_KEY/Stripe/Vipps — sett SECRET_KEY i Render env!")
+
+
+def _make_stateless_token(email, role):
+    payload = {"email": email, "role": role, "iat": int(time.time())}
+    payload_json = _json_mod.dumps(payload, separators=(",", ":"), sort_keys=True)
+    payload_b64 = _base64.urlsafe_b64encode(payload_json.encode("utf-8")).rstrip(b"=").decode("ascii")
+    sig = _hmac_mod.new(_AUTH_SECRET.encode("utf-8"), payload_b64.encode("ascii"), "sha256").hexdigest()
+    return f"hv1.{payload_b64}.{sig}"
+
+
+def _verify_stateless_token(token):
+    if not token or not token.startswith("hv1."):
+        return None
+    parts = token.split(".", 2)
+    if len(parts) != 3:
+        return None
+    _, payload_b64, sig = parts
+    expected = _hmac_mod.new(_AUTH_SECRET.encode("utf-8"), payload_b64.encode("ascii"), "sha256").hexdigest()
+    if not _hmac_mod.compare_digest(sig, expected):
+        return None
+    try:
+        padding = "=" * (-len(payload_b64) % 4)
+        payload_json = _base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8")
+        return _json_mod.loads(payload_json)
+    except Exception:
+        return None
 
 def _save_sync_state():
     """Persist cross-device sync state to disk."""
@@ -2536,6 +2585,15 @@ def _user_from_request():
     if not auth.startswith("Bearer "):
         return None, None
     token = auth[7:].strip()
+
+    # Foretrukket: stateless HMAC-token (overlever Render-restart)
+    payload = _verify_stateless_token(token)
+    if payload:
+        user = _find_user(payload.get("email"))
+        if user:
+            return user, token
+
+    # Bakoverkompatibel: gammel _auth_sessions-lookup
     sess = _auth_sessions.get(token)
     if not sess:
         return None, None
@@ -2571,13 +2629,7 @@ def api_auth_login():
         })
     if not check_password_hash(user.get("password_hash") or "", password):
         return jsonify({"ok": False, "error": "Ugyldig e-post eller passord"}), 401
-    token = secrets.token_urlsafe(32)
-    _auth_sessions[token] = {
-        "email": user["email"],
-        "role": user["role"],
-        "created_at": int(time.time()),
-    }
-    _save_sync_state()
+    token = _make_stateless_token(user["email"], user["role"])
     return jsonify({"ok": True, "token": token, "user": _public_user(user)})
 
 @app.route("/api/auth/set-password", methods=["POST"])
@@ -2594,13 +2646,8 @@ def api_auth_set_password():
         return jsonify({"ok": False, "error": "Førstegangs-passord er allerede satt. Bruk «Endre passord» fra Min bruker."}), 400
     user["password_hash"] = generate_password_hash(new_password)
     user["must_set_password"] = False
-    token = secrets.token_urlsafe(32)
-    _auth_sessions[token] = {
-        "email": user["email"],
-        "role": user["role"],
-        "created_at": int(time.time()),
-    }
     _save_sync_state()
+    token = _make_stateless_token(user["email"], user["role"])
     return jsonify({"ok": True, "token": token, "user": _public_user(user)})
 
 @app.route("/api/auth/me", methods=["GET"])
