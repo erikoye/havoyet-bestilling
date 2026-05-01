@@ -362,6 +362,11 @@ _reviews = []  # [{id, slug, name, rating, text, date}]
 _customer_favorites = {}  # email → [slug, slug, ...]
 _admin_notifiers = []  # [{id, name, email, events:[...], created_at}]
 _customers = []  # [{id, navn, tlf, epost, adresse, kommentar, created_at}]
+# Vipps-betalinger importert fra Vipps Bedrift CSV. Keyed by Vipps transaction ID
+# slik at re-import av overlappende CSV ikke duplikerer rader.
+# Hver verdi: {transaction_id, date, time, amount_ore, type, description, phone,
+#              imported_at, source: 'vipps_csv'}
+_vipps_imported_payments = {}
 _auth_users = []   # [{email, role, password_hash, must_set_password, created_at}]
 _auth_sessions = {}  # token → {email, role, created_at} — persisteres til disk via STATE_DIR
 # Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
@@ -383,6 +388,7 @@ def _save_sync_state():
                 "customer_favorites":  _customer_favorites,
                 "admin_notifiers":     _admin_notifiers,
                 "customers":           _customers,
+                "vipps_imported_payments": _vipps_imported_payments,
                 "auth_users":          _auth_users,
                 "auth_sessions":       _auth_sessions,
             }, f, ensure_ascii=False)
@@ -391,7 +397,7 @@ def _save_sync_state():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _auth_users, _auth_sessions
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _vipps_imported_payments, _auth_users, _auth_sessions
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         return
@@ -408,6 +414,7 @@ def _load_sync_state():
         _customer_favorites = d.get("customer_favorites", {})
         _admin_notifiers    = d.get("admin_notifiers", [])
         _customers          = d.get("customers", [])
+        _vipps_imported_payments = d.get("vipps_imported_payments", {}) or {}
         _auth_users         = d.get("auth_users", [])
         loaded_sessions     = d.get("auth_sessions", {}) or {}
         if AUTH_SESSION_TTL is None:
@@ -1563,6 +1570,231 @@ def api_vipps_status(reference):
         payments[reference]["last_check"] = time.time()
         _vipps_save_payments(payments)
     return jsonify({"reference": reference, "state": state, "vipps": body})
+
+# ─── Vipps Bedrift CSV-import (drag-drop fra Økonomi-fanen) ───────────────
+import csv as _csv
+import io as _io
+
+# Mulige kolonnenavn fra portal.vipps.no — vi tester i prioritert rekkefølge
+_VIPPS_CSV_FIELDS = {
+    "transaction_id": ["Transaksjons-ID", "Transaction ID", "TransactionId", "Reference", "Referanse", "ID"],
+    "date":           ["Dato", "Date", "Salgsdato", "Booking date", "Bokført dato"],
+    "time":           ["Tidspunkt", "Time", "Klokkeslett"],
+    "amount":         ["Beløp", "Amount", "Sum", "Total"],
+    "type":           ["Type", "Transaksjonstype", "Transaction type"],
+    "description":    ["Beskrivelse", "Description", "Notat", "Note", "Melding"],
+    "phone":          ["Telefon", "Phone", "Telefonnummer", "Customer phone"],
+    "name":           ["Navn", "Name", "Kunde", "Customer"],
+}
+
+def _csv_get(row, key):
+    """Hent felt fra CSV-rad ved å prøve alle kjente kolonnenavn."""
+    for col in _VIPPS_CSV_FIELDS.get(key, []):
+        if col in row and row[col] is not None and str(row[col]).strip():
+            return str(row[col]).strip()
+    return ""
+
+def _parse_amount_ore(raw):
+    """Konverter '1 234,50' / '1234.50' / '1234,50 kr' → øre (int)."""
+    if not raw:
+        return 0
+    s = str(raw).strip().replace("kr", "").replace("NOK", "").replace(" ", "").replace(" ", "")
+    s = s.replace(",", ".")
+    try:
+        return int(round(float(s) * 100))
+    except (ValueError, TypeError):
+        return 0
+
+
+@app.route("/api/vipps/import-csv", methods=["POST"])
+def api_vipps_import_csv():
+    """Tar imot Vipps Bedrift CSV-eksport. Dedupliserer mot _vipps_imported_payments
+    på transaksjons-ID slik at re-import av overlappende periode er trygt.
+    Body: multipart/form-data med felt 'file', ELLER raw text/csv body."""
+    global _vipps_imported_payments
+
+    # Hent CSV-tekst — støtter både multipart (browser drag-drop) og raw body
+    csv_text = ""
+    if request.files and "file" in request.files:
+        try:
+            csv_text = request.files["file"].read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                csv_text = request.files["file"].read().decode("latin-1")
+            except Exception as e:
+                return jsonify({"error": f"Kan ikke dekode fil: {e}"}), 400
+    else:
+        try:
+            csv_text = request.get_data(as_text=True) or ""
+        except Exception:
+            csv_text = ""
+
+    if not csv_text.strip():
+        return jsonify({"error": "Tom fil eller manglende 'file'-felt"}), 400
+
+    # Auto-detekter delimiter (Vipps bruker både ; og ,)
+    sample = csv_text[:2048]
+    try:
+        dialect = _csv.Sniffer().sniff(sample, delimiters=";,\t")
+    except _csv.Error:
+        class _D: delimiter = ";"
+        dialect = _D()
+
+    reader = _csv.DictReader(_io.StringIO(csv_text), delimiter=dialect.delimiter)
+    rows = list(reader)
+    if not rows:
+        return jsonify({"error": "Ingen rader i CSV"}), 400
+
+    added, dup, skipped, total_ore = 0, 0, 0, 0
+    new_records = []
+    for row in rows:
+        tx_id = _csv_get(row, "transaction_id")
+        if not tx_id:
+            skipped += 1
+            continue
+        if tx_id in _vipps_imported_payments:
+            dup += 1
+            continue
+        amt_raw = _csv_get(row, "amount")
+        amount_ore = _parse_amount_ore(amt_raw)
+        rec = {
+            "transaction_id": tx_id,
+            "date":           _csv_get(row, "date"),
+            "time":           _csv_get(row, "time"),
+            "amount_ore":     amount_ore,
+            "amount_kr":      amount_ore / 100.0,
+            "type":           _csv_get(row, "type") or "Kjøp",
+            "description":    _csv_get(row, "description"),
+            "phone":          _csv_get(row, "phone"),
+            "name":           _csv_get(row, "name"),
+            "imported_at":    datetime.now().isoformat(),
+            "source":         "vipps_csv",
+        }
+        _vipps_imported_payments[tx_id] = rec
+        new_records.append(rec)
+        if amount_ore > 0:
+            total_ore += amount_ore
+        added += 1
+
+    if added:
+        _save_sync_state()
+
+    return jsonify({
+        "ok": True,
+        "added":      added,
+        "duplicates": dup,
+        "skipped":    skipped,
+        "total_rows": len(rows),
+        "total_amount_kr": total_ore / 100.0,
+        "new":        new_records[:50],  # forhåndsvisning
+    })
+
+
+@app.route("/api/vipps/imported")
+def api_vipps_imported():
+    """Liste alle Vipps-betalinger importert fra CSV. Sortert nyest først."""
+    items = list(_vipps_imported_payments.values())
+    items.sort(key=lambda r: (r.get("date") or "", r.get("time") or ""), reverse=True)
+    return jsonify({
+        "count":  len(items),
+        "items":  items,
+        "total_amount_kr": sum(r.get("amount_ore", 0) for r in items) / 100.0,
+    })
+
+
+@app.route("/api/vipps/imported/<tx_id>", methods=["DELETE"])
+def api_vipps_imported_delete(tx_id):
+    global _vipps_imported_payments
+    if tx_id in _vipps_imported_payments:
+        del _vipps_imported_payments[tx_id]
+        _save_sync_state()
+        return jsonify({"ok": True})
+    return jsonify({"error": "Ikke funnet"}), 404
+
+
+# ─── Økonomi/statistikk-endepunkt ─────────────────────────────────────────
+@app.route("/api/economy/stats")
+def api_economy_stats():
+    """Aggregert statistikk for økonomi-fanen.
+    Tre kilder: nettside-ordre (_manual_orders), Stripe-betalinger,
+    Vipps ePayment-betalinger, og Vipps CSV-importerte transaksjoner."""
+    today = datetime.now().date()
+    start_week = today - timedelta(days=today.weekday())
+    start_month = today.replace(day=1)
+
+    def _in_range(date_str, since):
+        if not date_str:
+            return False
+        try:
+            d = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+            return d >= since
+        except (ValueError, TypeError):
+            return False
+
+    # Nettside-ordre (kun betalte teller)
+    paid_set = _paid_ordrenrs()
+    web_orders = [o for o in _manual_orders
+                  if str(o.get("ordrenr") or o.get("id")) in paid_set]
+    def _order_total_kr(o):
+        try:
+            return float(o.get("sum") or o.get("total") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    def _order_date(o):
+        return o.get("dato") or o.get("created_at") or ""
+
+    web_total       = sum(_order_total_kr(o) for o in web_orders)
+    web_total_week  = sum(_order_total_kr(o) for o in web_orders if _in_range(_order_date(o), start_week))
+    web_total_month = sum(_order_total_kr(o) for o in web_orders if _in_range(_order_date(o), start_month))
+
+    # Vipps CSV-import
+    vipps_csv = list(_vipps_imported_payments.values())
+    vipps_total       = sum((r.get("amount_ore") or 0) for r in vipps_csv) / 100.0
+    vipps_total_week  = sum((r.get("amount_ore") or 0) for r in vipps_csv if _in_range(r.get("date"), start_week)) / 100.0
+    vipps_total_month = sum((r.get("amount_ore") or 0) for r in vipps_csv if _in_range(r.get("date"), start_month)) / 100.0
+
+    # Stripe ePayment
+    stripe_paid = [p for p in _stripe_load_payments().values() if p.get("state") in _STRIPE_PAID_STATES]
+    stripe_total = sum((p.get("amount") or 0) for p in stripe_paid) / 100.0
+
+    # Vipps ePayment (fra _vipps_payments — vår egen API-flyt)
+    vipps_epay = [p for p in _vipps_load_payments().values() if p.get("state") in _VIPPS_PAID_STATES]
+    vipps_epay_total = sum((p.get("amount") or 0) for p in vipps_epay) / 100.0
+
+    grand_total       = web_total + vipps_total
+    grand_total_week  = web_total_week + vipps_total_week
+    grand_total_month = web_total_month + vipps_total_month
+
+    return jsonify({
+        "as_of": datetime.now().isoformat(),
+        "totals": {
+            "all_time_kr":  round(grand_total, 2),
+            "this_week_kr": round(grand_total_week, 2),
+            "this_month_kr": round(grand_total_month, 2),
+        },
+        "web": {
+            "count":          len(web_orders),
+            "all_time_kr":    round(web_total, 2),
+            "this_week_kr":   round(web_total_week, 2),
+            "this_month_kr":  round(web_total_month, 2),
+        },
+        "vipps_csv": {
+            "count":          len(vipps_csv),
+            "all_time_kr":    round(vipps_total, 2),
+            "this_week_kr":   round(vipps_total_week, 2),
+            "this_month_kr":  round(vipps_total_month, 2),
+        },
+        "stripe": {
+            "count":          len(stripe_paid),
+            "all_time_kr":    round(stripe_total, 2),
+        },
+        "vipps_epay": {
+            "count":          len(vipps_epay),
+            "all_time_kr":    round(vipps_epay_total, 2),
+        },
+        "customers_count": len(_customers),
+    })
+
 
 @app.route("/api/vipps/callback", methods=["POST"])
 def api_vipps_callback():
