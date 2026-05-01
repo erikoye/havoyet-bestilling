@@ -1687,6 +1687,13 @@ def _parse_vipps_pdf(pdf_bytes):
         date_str = m.group(1)
         time_str = m.group(2)
         block_start = m.end()
+
+        # Hopp over side-footere: "DD.MM.YYYY, HH:MM Transaksjoner | Bedriftsportalen"
+        # er PDF-ens egen genereringstidspunkt, ikke en transaksjon.
+        next_chunk = full_text[block_start:block_start+80]
+        if "Bedriftsportalen" in next_chunk or "vippsmobilepay" in next_chunk or "Transaksjoner |" in next_chunk:
+            continue
+
         block_end = matches[i+1].start() if i+1 < len(matches) else len(full_text)
         block = full_text[block_start:block_end]
 
