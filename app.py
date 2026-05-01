@@ -467,25 +467,49 @@ def _save_sync_state():
     except Exception:
         pass
 
-def _restore_vipps_baseline():
-    """Auto-restore Vipps-transaksjoner fra committed baseline-snapshot
-    (data/vipps_baseline.json) hvis serveren ikke har data ennå. Dette gjør
-    at omsetnings-tall overlever Render-restarts som wiper /tmp."""
-    global _vipps_imported_payments
-    if _vipps_imported_payments:
-        return
+def _restore_baseline_if_empty(name, current, file_basename):
+    """Generic auto-restore fra committed baseline-snapshot. Returnerer
+    den lastede strukturen hvis 'current' er tom OG snapshot-fila finnes,
+    ellers None."""
+    if current:
+        return None
     baseline = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "data", "vipps_baseline.json")
+                            "data", file_basename)
     if not os.path.exists(baseline):
-        return
+        return None
     try:
         with open(baseline, "r", encoding="utf-8") as f:
-            _vipps_imported_payments = json.load(f) or {}
-        print(f"[STATE] Restored {len(_vipps_imported_payments)} Vipps-transaksjoner fra baseline")
-        # Lagre til /tmp så endringer i denne containeren også persisteres dit
-        _save_sync_state()
+            data = json.load(f)
+        size = len(data) if data else 0
+        print(f"[STATE] Restored {size} {name} fra baseline")
+        return data
     except Exception as e:
-        print(f"[STATE] Kunne ikke lese baseline: {e}")
+        print(f"[STATE] Kunne ikke lese {file_basename}: {e}")
+        return None
+
+
+def _restore_vipps_baseline():
+    """Auto-restore Vipps-transaksjoner og kunder fra committed baseline-
+    snapshots. Brukes som fall-back når Render-restart wiper /tmp."""
+    global _vipps_imported_payments, _customers
+    restored_any = False
+
+    vipps = _restore_baseline_if_empty("Vipps-transaksjoner",
+                                       _vipps_imported_payments,
+                                       "vipps_baseline.json")
+    if vipps is not None:
+        _vipps_imported_payments = vipps
+        restored_any = True
+
+    cust = _restore_baseline_if_empty("kunder",
+                                      _customers,
+                                      "customers_baseline.json")
+    if cust is not None and isinstance(cust, list):
+        _customers = cust
+        restored_any = True
+
+    if restored_any:
+        _save_sync_state()
 
 
 def _load_sync_state():
