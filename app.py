@@ -16,7 +16,7 @@ import time
 import json
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 app = Flask(__name__)
 CORS(app)  # Tillat kall fra HTML-filer åpnet lokalt
@@ -1969,12 +1969,43 @@ def api_vipps_imported_delete(tx_id):
 @app.route("/api/economy/stats")
 def api_economy_stats():
     """Aggregert statistikk for økonomi-fanen.
-    Tre kilder: nettside-ordre (_manual_orders), Stripe-betalinger,
-    Vipps ePayment-betalinger, og Vipps CSV-importerte transaksjoner."""
+    Query-parametre:
+      ?year=YYYY         filtrer til ett kalenderår (default: hittil i år)
+      ?from=YYYY-MM-DD   custom periode-start (overstyrer year)
+      ?to=YYYY-MM-DD     custom periode-slutt (default: i dag)
+
+    Responsen inkluderer alltid:
+      - totals: hittil-i-året (eller valgt periode)
+      - by_year: per-år-aggregat for ALLE kilder (gir historikk så langt bak data finnes)
+      - filter: hvilken periode som ble brukt
+    """
     today = datetime.now().date()
     start_week = today - timedelta(days=today.weekday())  # mandag denne uken
     start_month = today.replace(day=1)
     start_year = today.replace(month=1, day=1)
+
+    # Parse query-params for custom periode
+    q_year = request.args.get("year")
+    q_from = request.args.get("from")
+    q_to   = request.args.get("to")
+    period_from, period_to = start_year, today
+    period_label = f"Hittil i {today.year}"
+    try:
+        if q_from:
+            period_from = datetime.strptime(q_from, "%Y-%m-%d").date()
+            period_to   = datetime.strptime(q_to, "%Y-%m-%d").date() if q_to else today
+            period_label = f"{period_from.strftime('%d.%m.%Y')} – {period_to.strftime('%d.%m.%Y')}"
+        elif q_year:
+            y = int(q_year)
+            period_from = date(y, 1, 1)
+            period_to   = date(y, 12, 31)
+            if y == today.year:
+                period_to = today
+                period_label = f"Hittil i {y}"
+            else:
+                period_label = str(y)
+    except (ValueError, TypeError):
+        pass
 
     def _parse_date(date_str):
         if not date_str:
@@ -2041,9 +2072,59 @@ def api_economy_stats():
     grand_total_month = web_total_month + vipps_total_month
     grand_total_year  = web_total_year + vipps_total_year
 
+    # === PERIODE-FILTRERTE SUMMER (basert på from/to fra query-params) ===
+    def _in_period(date_str):
+        d = _parse_date(date_str)
+        return d is not None and period_from <= d <= period_to
+
+    web_period_rows   = [o for o in web_orders if _in_period(_order_date(o))]
+    vipps_period_rows = [r for r in vipps_imported if _in_period(r.get("date"))]
+    direct_period     = [r for r in vipps_period_rows if r.get("payment_channel") == "direct"]
+    website_period    = [r for r in vipps_period_rows if r.get("payment_channel") != "direct"]
+
+    period_web_kr   = sum(_order_total_kr(o) for o in web_period_rows)
+    period_vipps_kr = sum((r.get("amount_ore") or 0) for r in vipps_period_rows) / 100.0
+    period_total_kr = period_web_kr + period_vipps_kr
+
+    # === ÅR-OVERSIKT (alle år hvor vi har data) ===
+    by_year = {}
+    for o in web_orders:
+        d = _parse_date(_order_date(o))
+        if d:
+            by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "count": 0})
+            by_year[d.year]["web_kr"]   += _order_total_kr(o)
+            by_year[d.year]["count"]    += 1
+    for r in vipps_imported:
+        d = _parse_date(r.get("date"))
+        if d:
+            by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "count": 0})
+            by_year[d.year]["vipps_kr"] += (r.get("amount_ore") or 0) / 100.0
+            by_year[d.year]["count"]    += 1
+    years_list = sorted(by_year.keys(), reverse=True)
+    by_year_out = [{
+        "year":      y,
+        "total_kr":  round(by_year[y]["web_kr"] + by_year[y]["vipps_kr"], 2),
+        "web_kr":    round(by_year[y]["web_kr"], 2),
+        "vipps_kr":  round(by_year[y]["vipps_kr"], 2),
+        "count":     by_year[y]["count"],
+    } for y in years_list]
+
     return jsonify({
         "as_of": datetime.now().isoformat(),
         "year":  today.year,
+        "period": {
+            "from":      period_from.strftime("%Y-%m-%d"),
+            "to":        period_to.strftime("%Y-%m-%d"),
+            "label":     period_label,
+            "total_kr":  round(period_total_kr, 2),
+            "web_kr":    round(period_web_kr, 2),
+            "vipps_kr":  round(period_vipps_kr, 2),
+            "vipps_direct_kr":  round(sum((r.get("amount_ore") or 0) for r in direct_period) / 100.0, 2),
+            "vipps_website_kr": round(sum((r.get("amount_ore") or 0) for r in website_period) / 100.0, 2),
+            "vipps_count":      len(vipps_period_rows),
+            "web_count":        len(web_period_rows),
+        },
+        "by_year": by_year_out,
         "totals": {
             "all_time_kr":  round(grand_total, 2),
             "this_week_kr": round(grand_total_week, 2),
