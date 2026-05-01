@@ -1571,9 +1571,11 @@ def api_vipps_status(reference):
         _vipps_save_payments(payments)
     return jsonify({"reference": reference, "state": state, "vipps": body})
 
-# ─── Vipps Bedrift CSV-import (drag-drop fra Økonomi-fanen) ───────────────
+# ─── Vipps Bedrift CSV/PDF-import (drag-drop fra Økonomi-fanen) ────────────
 import csv as _csv
 import io as _io
+import re as _re
+import hashlib as _hashlib
 
 # Mulige kolonnenavn fra portal.vipps.no — vi tester i prioritert rekkefølge
 _VIPPS_CSV_FIELDS = {
@@ -1606,74 +1608,191 @@ def _parse_amount_ore(raw):
         return 0
 
 
+def _parse_vipps_pdf(pdf_bytes):
+    """Parse Vipps Bedriftsportal-PDF til list av transaksjons-dicts.
+    PDF-en har ikke transaksjons-ID-er, så vi bygger en stabil synthetic ID
+    fra hash av (dato+tid+beløp+melding) — det gjør re-import av samme PDF trygt.
+
+    Format eksempel (utdrag fra portal.vippsmobilepay.com):
+        27.04.2026,
+        17:10
+        Havøyet AS         Vipps        Belastet     -44,33    1 740,00
+                           betaling hos
+                           Havøyet AS
+    """
+    try:
+        import pypdf
+    except ImportError:
+        raise RuntimeError("pypdf ikke installert (kjør: pip install pypdf)")
+
+    reader = pypdf.PdfReader(_io.BytesIO(pdf_bytes))
+    full_text = "\n".join(p.extract_text() or "" for p in reader.pages)
+
+    # Splitt på datolinjer: "DD.MM.YYYY,"
+    date_pat = _re.compile(r"\b(\d{2}\.\d{2}\.\d{4}),?\s*\n?\s*(\d{1,2}:\d{2})", _re.MULTILINE)
+
+    # Finn alle dato-anker først, slå sammen tekst mellom dem til én transaksjon
+    matches = list(date_pat.finditer(full_text))
+    transactions = []
+    for i, m in enumerate(matches):
+        date_str = m.group(1)
+        time_str = m.group(2)
+        block_start = m.end()
+        block_end = matches[i+1].start() if i+1 < len(matches) else len(full_text)
+        block = full_text[block_start:block_end]
+
+        # Status: "Belastet" = paid/captured, "Refundert" = refund
+        status = "Belastet"
+        if _re.search(r"\bRefundert\b", block, _re.IGNORECASE):
+            status = "Refundert"
+        elif _re.search(r"\bBelastet\b", block, _re.IGNORECASE):
+            status = "Belastet"
+        elif _re.search(r"\bAvbrutt\b", block, _re.IGNORECASE):
+            status = "Avbrutt"
+
+        # Beløp: alle tallgrupper "1 234,56" eller "1234,56" — siste er typisk total
+        amounts = _re.findall(r"-?\d{1,3}(?:\s\d{3})*(?:,\d{2})?(?!\d)", block)
+        amounts = [a for a in amounts if "," in a or len(a) >= 3]
+        amount_str = amounts[-1] if amounts else "0"
+        fee_str = amounts[-2] if len(amounts) >= 2 else ""
+
+        # Navn + masked telefon: f.eks. "Arvid\nMellingen\n+47****9707"
+        # Navnet kan strekke seg over flere linjer i Vipps PDF.
+        name = ""
+        phone_masked = ""
+        nm = _re.search(r"((?:[A-ZÆØÅ][A-Za-zÆØÅæøå\-]+\s*\n?\s*){1,4})(\+47\*+\d{4})", block)
+        if nm:
+            name = _re.sub(r"\s+", " ", nm.group(1)).strip()
+            phone_masked = nm.group(2)
+
+        # Melding: tekst etter "Havøyet AS" på samme/neste linje, før status
+        # Forenklet: ta linjer som ikke er navn/status/beløp
+        msg_match = _re.search(r"Havøyet AS\s+(.+?)(?:\s+(?:Belastet|Refundert|Avbrutt))", block, _re.DOTALL)
+        description = ""
+        if msg_match:
+            description = _re.sub(r"\s+", " ", msg_match.group(1)).strip()
+            if description.startswith("Vipps"):
+                description = "Vipps-betaling"
+
+        # Synthetic ID: hash av (dato + tid + beløp + beskrivelse + navn)
+        seed = f"{date_str}|{time_str}|{amount_str}|{description}|{name}"
+        synth_id = "vipps-pdf-" + _hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
+
+        # Konverter dato DD.MM.YYYY → YYYY-MM-DD
+        try:
+            dd, mm, yyyy = date_str.split(".")
+            date_iso = f"{yyyy}-{mm}-{dd}"
+        except Exception:
+            date_iso = date_str
+
+        amount_ore = _parse_amount_ore(amount_str)
+        transactions.append({
+            "transaction_id": synth_id,
+            "date":           date_iso,
+            "time":           time_str,
+            "amount_ore":     amount_ore,
+            "amount_kr":      amount_ore / 100.0,
+            "type":           "Kjøp" if status == "Belastet" else status,
+            "status":         status,
+            "description":    description,
+            "phone":          phone_masked,
+            "name":           name,
+            "fee_kr":         _parse_amount_ore(fee_str) / 100.0 if fee_str else 0.0,
+            "imported_at":    datetime.now().isoformat(),
+            "source":         "vipps_pdf",
+        })
+    return transactions
+
+
 @app.route("/api/vipps/import-csv", methods=["POST"])
 def api_vipps_import_csv():
-    """Tar imot Vipps Bedrift CSV-eksport. Dedupliserer mot _vipps_imported_payments
-    på transaksjons-ID slik at re-import av overlappende periode er trygt.
-    Body: multipart/form-data med felt 'file', ELLER raw text/csv body."""
+    """Tar imot Vipps Bedrift CSV- eller PDF-eksport.
+    Dedupliserer mot _vipps_imported_payments på transaksjons-ID slik at
+    re-import av overlappende periode er trygt.
+
+    CSV: dedup på Vipps' egen Transaksjons-ID-kolonne.
+    PDF: dedup på synthetic ID (hash av dato+tid+beløp+melding+navn) siden
+         Vipps Bedriftsportal-PDF ikke har transaksjons-ID-er.
+
+    Body: multipart/form-data med felt 'file'."""
     global _vipps_imported_payments
 
-    # Hent CSV-tekst — støtter både multipart (browser drag-drop) og raw body
-    csv_text = ""
-    if request.files and "file" in request.files:
+    if not (request.files and "file" in request.files):
+        return jsonify({"error": "Ingen fil i 'file'-feltet"}), 400
+
+    file = request.files["file"]
+    filename = (file.filename or "").lower()
+    raw = file.read()
+
+    if not raw:
+        return jsonify({"error": "Tom fil"}), 400
+
+    is_pdf = filename.endswith(".pdf") or raw[:4] == b"%PDF"
+
+    parsed_records = []
+    if is_pdf:
         try:
-            csv_text = request.files["file"].read().decode("utf-8-sig")
-        except UnicodeDecodeError:
-            try:
-                csv_text = request.files["file"].read().decode("latin-1")
-            except Exception as e:
-                return jsonify({"error": f"Kan ikke dekode fil: {e}"}), 400
+            parsed_records = _parse_vipps_pdf(raw)
+        except RuntimeError as e:
+            return jsonify({"error": str(e)}), 503
+        except Exception as e:
+            return jsonify({"error": f"Kan ikke lese PDF: {e}"}), 400
+        if not parsed_records:
+            return jsonify({"error": "Fant ingen transaksjoner i PDF — er dette en Vipps Bedriftsportal-eksport?"}), 400
     else:
+        # CSV-flyt
         try:
-            csv_text = request.get_data(as_text=True) or ""
-        except Exception:
-            csv_text = ""
+            csv_text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            csv_text = raw.decode("latin-1", errors="replace")
 
-    if not csv_text.strip():
-        return jsonify({"error": "Tom fil eller manglende 'file'-felt"}), 400
+        sample = csv_text[:2048]
+        try:
+            dialect = _csv.Sniffer().sniff(sample, delimiters=";,\t")
+        except _csv.Error:
+            class _D: delimiter = ";"
+            dialect = _D()
 
-    # Auto-detekter delimiter (Vipps bruker både ; og ,)
-    sample = csv_text[:2048]
-    try:
-        dialect = _csv.Sniffer().sniff(sample, delimiters=";,\t")
-    except _csv.Error:
-        class _D: delimiter = ";"
-        dialect = _D()
+        reader = _csv.DictReader(_io.StringIO(csv_text), delimiter=dialect.delimiter)
+        rows = list(reader)
+        if not rows:
+            return jsonify({"error": "Ingen rader i CSV"}), 400
 
-    reader = _csv.DictReader(_io.StringIO(csv_text), delimiter=dialect.delimiter)
-    rows = list(reader)
-    if not rows:
-        return jsonify({"error": "Ingen rader i CSV"}), 400
+        for row in rows:
+            tx_id = _csv_get(row, "transaction_id")
+            if not tx_id:
+                continue
+            amt_raw = _csv_get(row, "amount")
+            amount_ore = _parse_amount_ore(amt_raw)
+            parsed_records.append({
+                "transaction_id": tx_id,
+                "date":           _csv_get(row, "date"),
+                "time":           _csv_get(row, "time"),
+                "amount_ore":     amount_ore,
+                "amount_kr":      amount_ore / 100.0,
+                "type":           _csv_get(row, "type") or "Kjøp",
+                "description":    _csv_get(row, "description"),
+                "phone":          _csv_get(row, "phone"),
+                "name":           _csv_get(row, "name"),
+                "imported_at":    datetime.now().isoformat(),
+                "source":         "vipps_csv",
+            })
 
+    # Dedup + lagre
     added, dup, skipped, total_ore = 0, 0, 0, 0
     new_records = []
-    for row in rows:
-        tx_id = _csv_get(row, "transaction_id")
+    for rec in parsed_records:
+        tx_id = rec.get("transaction_id")
         if not tx_id:
             skipped += 1
             continue
         if tx_id in _vipps_imported_payments:
             dup += 1
             continue
-        amt_raw = _csv_get(row, "amount")
-        amount_ore = _parse_amount_ore(amt_raw)
-        rec = {
-            "transaction_id": tx_id,
-            "date":           _csv_get(row, "date"),
-            "time":           _csv_get(row, "time"),
-            "amount_ore":     amount_ore,
-            "amount_kr":      amount_ore / 100.0,
-            "type":           _csv_get(row, "type") or "Kjøp",
-            "description":    _csv_get(row, "description"),
-            "phone":          _csv_get(row, "phone"),
-            "name":           _csv_get(row, "name"),
-            "imported_at":    datetime.now().isoformat(),
-            "source":         "vipps_csv",
-        }
         _vipps_imported_payments[tx_id] = rec
         new_records.append(rec)
-        if amount_ore > 0:
-            total_ore += amount_ore
+        if rec.get("amount_ore", 0) > 0:
+            total_ore += rec["amount_ore"]
         added += 1
 
     if added:
@@ -1681,12 +1800,13 @@ def api_vipps_import_csv():
 
     return jsonify({
         "ok": True,
+        "format":     "pdf" if is_pdf else "csv",
         "added":      added,
         "duplicates": dup,
         "skipped":    skipped,
-        "total_rows": len(rows),
+        "total_rows": len(parsed_records),
         "total_amount_kr": total_ore / 100.0,
-        "new":        new_records[:50],  # forhåndsvisning
+        "new":        new_records[:50],
     })
 
 
