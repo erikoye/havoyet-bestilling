@@ -1766,10 +1766,20 @@ def api_subscription_create():
             },
         )
     except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
         return jsonify({"error": f"Kunne ikke opprette abonnement: {e}"}), 502
 
-    pi = subscription.latest_invoice and subscription.latest_invoice.payment_intent
-    client_secret = pi.client_secret if pi else None
+    # Defensiv håndtering — Stripe SDK kan returnere ulike former for latest_invoice
+    client_secret = None
+    try:
+        latest = subscription.latest_invoice
+        if latest is not None:
+            pi = latest.payment_intent if hasattr(latest, "payment_intent") else None
+            if pi is not None and hasattr(pi, "client_secret"):
+                client_secret = pi.client_secret
+    except Exception as _e:
+        print(f"[SUBS] Kunne ikke hente client_secret: {_e}")
 
     _subscriptions[subscription.id] = {
         "subscription_id":    subscription.id,
