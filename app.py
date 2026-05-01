@@ -253,24 +253,58 @@ def serve_static(filename):
     return send_from_directory(_BASE_DIR, filename)
 
 # ── API ────────────────────────────────────────────────────────────────────────
-def _all_orders_normalized():
-    """Bygger den normaliserte ordre-listen fra _manual_orders, sortert
-    på leveringsdato. Felles for /api/orders og /api/orders/<id>."""
-    orders = [_normalize_manual_order(o) for o in _manual_orders]
+_VIPPS_PAID_STATES   = {"AUTHORIZED", "CAPTURED", "CHARGED", "COMPLETED", "RESERVED"}
+_STRIPE_PAID_STATES  = {"PAID"}
+
+def _paid_ordrenrs():
+    """Returnerer settet av ordrenumre som har bekreftet betaling
+    via Stripe eller Vipps. Brukes til å filtrere bort ubetalte ordre
+    fra iPad-dashbordet (butikken skal kun se betalte bestillinger)."""
+    paid = set()
+    try:
+        for rec in _stripe_load_payments().values():
+            if rec.get("state") in _STRIPE_PAID_STATES and rec.get("ordrenr"):
+                paid.add(str(rec["ordrenr"]))
+    except Exception:
+        pass
+    try:
+        for rec in _vipps_load_payments().values():
+            if rec.get("state") in _VIPPS_PAID_STATES and rec.get("ordrenr"):
+                paid.add(str(rec["ordrenr"]))
+    except Exception:
+        pass
+    return paid
+
+
+def _all_orders_normalized(only_paid=True):
+    """Bygger den normaliserte ordre-listen fra _manual_orders.
+    Default: kun betalte ordre (Stripe/Vipps PAID/AUTHORIZED).
+    Settes only_paid=False for å få alle (admin-tools)."""
+    if only_paid:
+        paid = _paid_ordrenrs()
+        source = [o for o in _manual_orders
+                  if str(o.get("ordrenr") or o.get("id")) in paid
+                     or o.get("status") in ("PAID", "paid")]
+    else:
+        source = list(_manual_orders)
+    orders = [_normalize_manual_order(o) for o in source]
     orders.sort(key=lambda o: (o.get("delivery") or "9999-99-99"))
     return orders
 
 
 @app.route("/api/orders")
 def api_orders():
-    """Aktive ordre fra ny.havoyet.no/kasse i iPad-shape."""
-    orders = _all_orders_normalized()
+    """Aktive, BETALTE ordre fra ny.havoyet.no/kasse i iPad-shape.
+    Sett ?include_unpaid=1 for å inkludere ubetalte (kun til admin-bruk)."""
+    only_paid = request.args.get("include_unpaid") != "1"
+    orders = _all_orders_normalized(only_paid=only_paid)
     return jsonify({
         "orders":    orders,
         "last_sync": datetime.now().isoformat(),
         "error":     None,
         "count":     len(orders),
         "source":    "havoyet.no",
+        "filter":    "paid_only" if only_paid else "all",
     })
 
 
@@ -1770,15 +1804,26 @@ def api_subscription_create():
         _tb.print_exc()
         return jsonify({"error": f"Kunne ikke opprette abonnement: {e}"}), 502
 
-    # Defensiv håndtering — Stripe SDK kan returnere ulike former for latest_invoice
+    # Robust ekstraksjon av client_secret — hent invoicen + PaymentIntent eksplisitt
+    # for å håndtere ulike Stripe SDK-versjoner som varierer i expand-formatet.
     client_secret = None
     try:
         latest = subscription.latest_invoice
-        if latest is not None:
-            pi = latest.payment_intent if hasattr(latest, "payment_intent") else None
-            if pi is not None and hasattr(pi, "client_secret"):
-                client_secret = pi.client_secret
+        invoice_id = latest if isinstance(latest, str) else (getattr(latest, "id", None) if latest else None)
+        if invoice_id:
+            invoice = _stripe.Invoice.retrieve(invoice_id, expand=["payment_intent", "confirmation_secret"])
+            pi = getattr(invoice, "payment_intent", None)
+            if isinstance(pi, str):
+                pi = _stripe.PaymentIntent.retrieve(pi)
+            if pi is not None:
+                client_secret = getattr(pi, "client_secret", None)
+            if not client_secret:
+                conf = getattr(invoice, "confirmation_secret", None)
+                if conf is not None:
+                    client_secret = getattr(conf, "client_secret", None)
     except Exception as _e:
+        import traceback as _tb
+        _tb.print_exc()
         print(f"[SUBS] Kunne ikke hente client_secret: {_e}")
 
     _subscriptions[subscription.id] = {
