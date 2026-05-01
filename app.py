@@ -2298,10 +2298,15 @@ def api_economy_stats():
     website_period    = [r for r in vipps_period_rows if r.get("payment_channel") != "direct"]
 
     card_period_rows = [r for r in card_imported if _in_period(r.get("date"))]
+    # Refusjoner trekkes fra totalsum, men telles ikke som transaksjoner i snittet.
+    card_period_charges = [r for r in card_period_rows if r.get("type") != "Refusjon"]
     period_web_kr   = sum(_order_total_kr(o) for o in web_period_rows)
     period_vipps_kr = sum((r.get("amount_ore") or 0) for r in vipps_period_rows) / 100.0
     period_card_kr  = sum(_card_signed_kr(r) for r in card_period_rows)
     period_total_kr = period_web_kr + period_vipps_kr + period_card_kr
+    # Snitt-ordresum for valgt periode
+    period_charge_count = len(web_period_rows) + len(vipps_period_rows) + len(card_period_charges)
+    period_avg_kr = (period_total_kr / period_charge_count) if period_charge_count > 0 else 0.0
 
     # === ÅR-OVERSIKT (alle år hvor vi har data) ===
     by_year = {}
@@ -2350,6 +2355,8 @@ def api_economy_stats():
             "web_count":        len(web_period_rows),
             "card_kr":          round(period_card_kr, 2),
             "card_count":       len(card_period_rows),
+            "avg_kr":           round(period_avg_kr, 2),
+            "total_count":      period_charge_count,
         },
         "by_year": by_year_out,
         "totals": {
