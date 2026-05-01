@@ -1,7 +1,7 @@
 """
 Havøyet AS — Flask backend
-Kjøres på Raspberry Pi 5. Henter ordre fra Shopify Admin API og
-eksponerer dem for frontend via /api/orders.
+Eksponerer ordre fra ny.havoyet.no/kasse via /api/orders.
+Kunde-checkout poster til /api/orders/new → lagres i _manual_orders.
 
 Start: python3 app.py
 Krav:  pip install flask flask-cors requests
@@ -32,14 +32,6 @@ if os.path.exists(_env_file):
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
-SHOPIFY_SHOP    = os.environ.get("SHOPIFY_SHOP",  "havoyet.myshopify.com")
-SHOPIFY_TOKEN   = os.environ.get("SHOPIFY_TOKEN", "")
-SHOPIFY_VERSION = os.environ.get("SHOPIFY_API_VERSION", "2024-01")
-POLL_INTERVAL   = int(os.environ.get("POLL_INTERVAL", "300"))  # sekunder (5 min)
-# SHOPIFY_ENABLED: sett til "1" på Render for å reaktivere Shopify-polling.
-# Default av: ny.havoyet.no/kasse er primær ordrekanal, ordre lagres i _manual_orders.
-SHOPIFY_ENABLED = os.environ.get("SHOPIFY_ENABLED", "0") == "1"
-
 PORT            = int(os.environ.get("PORT", 5001))
 # STATE_DIR: hvor vedvarende data (brukere, sesjoner, manuelle ordre, osv.) lagres.
 # På Render må dette peke til en mountet persistent disk (f.eks. /var/data),
@@ -50,7 +42,6 @@ try:
     os.makedirs(STATE_DIR, exist_ok=True)
 except Exception:
     pass
-CACHE_FILE      = os.path.join("/tmp", "havoyet_orders_cache.json")
 SYNC_STATE_FILE = os.path.join(STATE_DIR, "havoyet_sync_state.json")
 
 # PowerOffice GO
@@ -88,147 +79,16 @@ except Exception:
     _stripe = None
 _vipps_token_cache      = {"access_token": None, "expires_at": 0.0}
 
-# In-memory cache
-_cache = {
-    "orders": [],
-    "last_sync": None,
-    "error": None,
-}
-
 # PowerOffice token-cache
 _po_token = {"access_token": None, "expires_at": 0.0}
 
 # Prisliste-cache
 _prisliste = {"items": [], "last_sync": None, "error": None, "faktura": None}
 
-# ── SHOPIFY-HENTING ────────────────────────────────────────────────────────────
-def shopify_get(endpoint, params=None):
-    url = f"https://{SHOPIFY_SHOP}/admin/api/{SHOPIFY_VERSION}/{endpoint}"
-    headers = {
-        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
-        "Content-Type": "application/json",
-    }
-    r = requests.get(url, headers=headers, params=params, timeout=15)
-    r.raise_for_status()
-    return r.json()
-
-
-def extract_delivery_info(order):
-    """
-    Henter leveringsdato og tidsluke fra order.note_attributes.
-    Bird Pickup Delivery-appen bruker følgende nøkler:
-      - "Delivery Date"            → f.eks. "Apr 13, 2026"
-      - "Translated Delivery Time" → f.eks. "13:00 - 15:00" eller "15:00 - 18:00"
-    """
-    delivery_date = None
-    delivery_slot = None
-
-    attrs = {a.get("name", ""): a.get("value", "").strip()
-             for a in order.get("note_attributes", [])}
-
-    # 1. Leveringsdato: "Delivery Date" → "Apr 13, 2026" → "2026-04-13"
-    raw_date = attrs.get("Delivery Date", "")
-    if raw_date:
-        try:
-            parsed = datetime.strptime(raw_date, "%b %d, %Y")
-            delivery_date = (parsed - timedelta(days=1)).strftime("%Y-%m-%d")
-        except ValueError:
-            pass
-
-    # 2. Fallback: prøv norske nøkler (DD.MM.YYYY)
-    if not delivery_date:
-        for key in ("Leveringsdato", "leveringsdato", "delivery_date"):
-            raw = attrs.get(key, "")
-            if raw:
-                if "." in raw:
-                    parts = raw.split(".")
-                    if len(parts) == 3:
-                        try:
-                            delivery_date = f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
-                        except Exception:
-                            pass
-                else:
-                    delivery_date = raw
-                break
-
-    # 3. Siste fallback: dagens dato
-    if not delivery_date:
-        delivery_date = datetime.now().strftime("%Y-%m-%d")
-
-    # 4. Tidsluke: "Translated Delivery Time" → "15:00 - 18:00"
-    raw_time = attrs.get("Translated Delivery Time", "") or attrs.get("Delivery Time", "")
-    if raw_time:
-        # Normaliser til 24-timers format hvis nødvendig (f.eks. "3:00 PM")
-        if "PM" in raw_time or "AM" in raw_time:
-            pass  # bruk start-timetallet etter konvertering nedenfor
-        start = raw_time.split("-")[0].strip().replace("PM", "").replace("AM", "").strip()
-        try:
-            hour = int(start.split(":")[0])
-            if "PM" in raw_time and hour != 12:
-                hour += 12
-            delivery_slot = "a" if hour < 15 else "b"
-        except (ValueError, IndexError):
-            delivery_slot = "a"
-    else:
-        delivery_slot = "a"
-
-    return delivery_date, delivery_slot
-
-
-def map_order(order):
-    """Mapper Shopify-ordre til appens interne datamodell."""
-    customer = order.get("customer") or {}
-    shipping = order.get("shipping_address") or {}
-
-    first = customer.get("first_name") or shipping.get("first_name") or ""
-    last  = customer.get("last_name")  or shipping.get("last_name")  or ""
-    name  = f"{first} {last}".strip() or customer.get("email", "Ukjent")
-
-    delivery_date, delivery_slot = extract_delivery_info(order)
-
-    items = []
-    for li in order.get("line_items", []):
-        items.append({
-            "id":       li.get("id"),
-            "name":     li.get("title", ""),
-            "quantity": li.get("quantity", 1),
-            "weight":   None,   # Fylles inn i Pakke & Merk
-            "expiry":   None,   # Fylles inn i Pakke & Merk
-            "variant":  li.get("variant_title"),
-            "sku":      li.get("sku"),
-            "grams":    li.get("grams", 0),
-        })
-
-    # Status-mapping
-    fs = order.get("fulfillment_status") or ""
-    fin = order.get("financial_status") or ""
-    if fs == "fulfilled":
-        status = "DONE"
-    elif fs in ("partial", "in_progress"):
-        status = "IN_PROGRESS"
-    else:
-        status = "NEW"
-
-    return {
-        "id":           order.get("name", str(order.get("id"))),
-        "shopify_id":   order.get("id"),
-        "customer":     name,
-        "email":        customer.get("email", ""),
-        "phone":        customer.get("phone") or shipping.get("phone") or "",
-        "delivery":     delivery_date,
-        "slot":         delivery_slot,
-        "status":       status,
-        "items":        items,
-        "note":         order.get("note") or "",
-        "financial":    fin,
-        "created_at":   order.get("created_at", ""),
-    }
-
-
+# ── ORDRE-NORMALISERING ───────────────────────────────────────────────────────
 def _normalize_manual_order(o):
     """Konverter ny.havoyet.no/kasse-ordre (fra _manual_orders) til iPad-shapen
-    som tidligere kom fra Shopify. Beholder bakoverkompatibilitet med
-    index.html / pakke.html som forventer Shopify-felt."""
+    som index.html / pakke.html forventer (id, customer, delivery, items, ...)."""
     kunde = o.get("kunde") or {}
     varer = o.get("varer") or o.get("items") or []
     items = []
@@ -260,72 +120,6 @@ def _normalize_manual_order(o):
         # (boxSelection, fee, sum osv.) er fortsatt tilgjengelig for iPad-en.
         "_raw":       o,
     }
-
-
-def fetch_orders():
-    """Henter alle åpne ordre fra Shopify og oppdaterer cache."""
-    global _cache, _shopify_seen_ids
-    try:
-        data = shopify_get("orders.json", params={
-            "status": "open",
-            "limit":  250,
-            "fields": "id,name,customer,line_items,note_attributes,note,"
-                      "financial_status,fulfillment_status,created_at,"
-                      "shipping_address",
-        })
-        orders = [map_order(o) for o in data.get("orders", [])]
-
-        # Sorter: nærmeste leveringsdato øverst
-        orders.sort(key=lambda o: o.get("delivery") or "9999-99-99")
-
-        # Detekter nye Shopify-ordre. Første gang vi henter ordre i denne
-        # prosessen seedes settet uten å varsle (unngår å spamme alle åpne).
-        current_ids = {str(o.get("id")) for o in orders if o.get("id")}
-        if _shopify_seen_ids:
-            new_ids = current_ids - _shopify_seen_ids
-            for o in orders:
-                if str(o.get("id")) in new_ids:
-                    nr = o.get("name") or o.get("id") or "?"
-                    _notify_admins(
-                        "new_order",
-                        f"[Havøyet] Ny bestilling {nr} (Shopify)",
-                        "Ny ordre kom inn fra Shopify.\n"
-                        + "=" * 54 + "\n\n"
-                        + _format_order_lines(o),
-                    )
-        _shopify_seen_ids = current_ids
-
-        _cache["orders"]    = orders
-        _cache["last_sync"] = datetime.now().isoformat()
-        _cache["error"]     = None
-
-        # Lagre til disk slik at frontend kan laste ved oppstart
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_cache, f, ensure_ascii=False, indent=2)
-
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Hentet {len(orders)} ordre fra Shopify")
-        return orders
-
-    except requests.exceptions.HTTPError as e:
-        msg = f"Shopify HTTP-feil: {e.response.status_code} — {e.response.text[:200]}"
-        _cache["error"] = msg
-        print(f"[FEIL] {msg}")
-    except Exception as e:
-        _cache["error"] = str(e)
-        print(f"[FEIL] {e}")
-
-    return _cache.get("orders", [])
-
-
-def poll_loop():
-    """Bakgrunns-tråd som poller Shopify hvert POLL_INTERVAL sekund.
-    Hopper over hvis SHOPIFY_ENABLED er 0 (default)."""
-    if not SHOPIFY_ENABLED:
-        print("[Shopify] Polling deaktivert (SHOPIFY_ENABLED=0). Kilde: _manual_orders.")
-        return
-    while True:
-        fetch_orders()
-        time.sleep(POLL_INTERVAL)
 
 
 # ── POWEROFFICE INTEGRASJON ────────────────────────────────────────────────────
@@ -459,20 +253,18 @@ def serve_static(filename):
     return send_from_directory(_BASE_DIR, filename)
 
 # ── API ────────────────────────────────────────────────────────────────────────
-@app.route("/api/orders")
-def api_orders():
-    """Returnerer aktive ordre i iPad-shape.
-    SHOPIFY_ENABLED=1: cachet Shopify-data fra poll_loop.
-    SHOPIFY_ENABLED=0 (default): normaliserte _manual_orders fra ny.havoyet.no/kasse."""
-    if SHOPIFY_ENABLED:
-        return jsonify({
-            "orders":    _cache["orders"],
-            "last_sync": _cache["last_sync"],
-            "error":     _cache["error"],
-            "count":     len(_cache["orders"]),
-        })
+def _all_orders_normalized():
+    """Bygger den normaliserte ordre-listen fra _manual_orders, sortert
+    på leveringsdato. Felles for /api/orders og /api/orders/<id>."""
     orders = [_normalize_manual_order(o) for o in _manual_orders]
     orders.sort(key=lambda o: (o.get("delivery") or "9999-99-99"))
+    return orders
+
+
+@app.route("/api/orders")
+def api_orders():
+    """Aktive ordre fra ny.havoyet.no/kasse i iPad-shape."""
+    orders = _all_orders_normalized()
     return jsonify({
         "orders":    orders,
         "last_sync": datetime.now().isoformat(),
@@ -484,30 +276,17 @@ def api_orders():
 
 @app.route("/api/orders/<order_id>")
 def api_order(order_id):
-    if SHOPIFY_ENABLED:
-        order = next((o for o in _cache["orders"]
-                      if o["id"] == order_id or str(o.get("shopify_id")) == order_id), None)
-    else:
-        match = next((o for o in _manual_orders
-                      if str(o.get("ordrenr") or o.get("id")) == str(order_id)), None)
-        order = _normalize_manual_order(match) if match else None
-    if not order:
+    match = next((o for o in _manual_orders
+                  if str(o.get("ordrenr") or o.get("id")) == str(order_id)), None)
+    if not match:
         return jsonify({"error": "Ikke funnet"}), 404
-    return jsonify(order)
+    return jsonify(_normalize_manual_order(match))
 
 
 @app.route("/api/sync", methods=["POST"])
 def api_sync():
-    """Manuell synk-trigger fra frontend."""
-    if SHOPIFY_ENABLED:
-        orders = fetch_orders()
-        return jsonify({
-            "ok":        True,
-            "count":     len(orders),
-            "last_sync": _cache["last_sync"],
-            "error":     _cache["error"],
-        })
-    # Når Shopify er av: ordrene ligger allerede i _manual_orders (skrives ved checkout).
+    """Helsesjekk-endepunkt — kunde-checkout skriver direkte til _manual_orders,
+    så det er ingenting å hente. Beholdt for bakoverkompatibilitet."""
     return jsonify({
         "ok":        True,
         "count":     len(_manual_orders),
@@ -517,33 +296,13 @@ def api_sync():
     })
 
 
-@app.route("/api/debug/order/<shopify_id>")
-def api_debug_order(shopify_id):
-    """Returnerer rå note_attributes og shipping_lines for én ordre."""
-    try:
-        data = shopify_get(f"orders/{shopify_id}.json", params={
-            "fields": "id,name,note,note_attributes,shipping_lines,delivery_instructions"
-        })
-        o = data.get("order", {})
-        return jsonify({
-            "id":              o.get("id"),
-            "name":            o.get("name"),
-            "note":            o.get("note"),
-            "note_attributes": o.get("note_attributes", []),
-            "shipping_lines":  o.get("shipping_lines", []),
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route("/api/status")
 def api_status():
     return jsonify({
-        "shop":      SHOPIFY_SHOP,
-        "last_sync": _cache["last_sync"],
-        "count":     len(_cache["orders"]),
-        "error":     _cache["error"],
-        "poll_interval_sec": POLL_INTERVAL,
+        "source":    "havoyet.no",
+        "last_sync": datetime.now().isoformat(),
+        "count":     len(_manual_orders),
+        "error":     None,
     })
 
 
@@ -574,7 +333,6 @@ _auth_sessions = {}  # token → {email, role, created_at} — persisteres til d
 # Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
 # selv logger ut. Fjern token manuelt via /api/auth/logout for å invalidere det.
 AUTH_SESSION_TTL = None
-_shopify_seen_ids = set()  # spor sett Shopify-ordre for å oppdage nye i poll-loop
 
 def _save_sync_state():
     """Persist cross-device sync state to disk."""
@@ -1088,9 +846,8 @@ def _notify_admins(event, subject, body):
 
 
 def _format_order_lines(order):
-    """Tekstoppsummering av en ordre — håndterer både manuelle og Shopify-ordre."""
+    """Tekstoppsummering av en ordre fra ny.havoyet.no/kasse."""
     nr = order.get("ordrenr") or order.get("name") or order.get("id") or "?"
-    # Kunde kan være dict (manuelle) eller streng (Shopify-mappede)
     raw_kunde = order.get("kunde")
     if isinstance(raw_kunde, dict):
         navn = raw_kunde.get("navn") or raw_kunde.get("name") or "Ukjent"
@@ -1102,7 +859,7 @@ def _format_order_lines(order):
     else:
         navn = order.get("customer") or raw_kunde or "Ukjent"
         tlf  = order.get("phone") or ""
-        adr  = ""  # Shopify shipping_address blir ikke med via map_order
+        adr  = ""
         dag  = order.get("delivery") or ""
         tid  = order.get("slot") or ""
         merk = order.get("note") or ""
@@ -1506,10 +1263,6 @@ def _orders_for_email(email):
     for o in _manual_orders:
         kunde_epost = ((o.get("kunde") or {}).get("epost") or "").lower()
         if kunde_epost == email:
-            orders.append(o)
-    # Shopify-ordre (fra _cache["orders"])
-    for o in _cache.get("orders", []):
-        if (o.get("email") or "").lower() == email:
             orders.append(o)
     # Sorter nyeste først
     def _key(o):
@@ -1927,6 +1680,150 @@ def api_stripe_config():
         "configured": _stripe_configured() and bool(STRIPE_PUBLISHABLE_KEY),
     })
 
+
+# ─── ABONNEMENT (Stripe Subscriptions for sjømatkasse) ────────────────────────
+SUBSCRIPTIONS_FILE = os.path.join(STATE_DIR, "havoyet_subscriptions.json")
+_subscriptions     = {}   # subscription_id → metadata
+
+def _load_subscriptions():
+    global _subscriptions
+    if not os.path.exists(SUBSCRIPTIONS_FILE):
+        return
+    try:
+        with open(SUBSCRIPTIONS_FILE, "r", encoding="utf-8") as f:
+            _subscriptions = json.load(f) or {}
+        print(f"[SUBS] Lastet {len(_subscriptions)} abonnementer")
+    except Exception as e:
+        print(f"[SUBS] Kunne ikke laste: {e}")
+
+def _save_subscriptions():
+    try:
+        tmp = SUBSCRIPTIONS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_subscriptions, f, ensure_ascii=False)
+        os.replace(tmp, SUBSCRIPTIONS_FILE)
+    except Exception:
+        pass
+
+@app.route("/api/subscription/create", methods=["POST"])
+def api_subscription_create():
+    """Oppretter Stripe-Customer (eller henter eksisterende på e-post) + månedlig
+    Subscription. Returnerer client_secret for første invoice slik at frontend
+    kan bekrefte kortet. Stripe trekker automatisk hver måned etterpå."""
+    if not _stripe_configured():
+        return jsonify({"error": "Kortbetaling er ikke konfigurert"}), 503
+    data    = request.get_json(silent=True) or {}
+    amount  = int(data.get("amount", 0))     # i øre — månedlig beløp
+    if amount < 100:
+        return jsonify({"error": "Beløp må være minst 1 kr"}), 400
+    kunde   = data.get("kunde") or {}
+    kasse   = data.get("kasse") or {}
+    email   = (kunde.get("epost") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "E-post kreves"}), 400
+    description = data.get("description") or "Sjømatkasse — månedlig abonnement"
+    try:
+        existing = _stripe.Customer.list(email=email, limit=1)
+        if existing.data:
+            customer = existing.data[0]
+        else:
+            customer = _stripe.Customer.create(
+                email = email,
+                name  = kunde.get("navn") or None,
+                phone = (kunde.get("tlf") or "").replace(" ", "") or None,
+                metadata = {"havoyet_kunde": "1"},
+            )
+        subscription = _stripe.Subscription.create(
+            customer = customer.id,
+            items    = [{
+                "price_data": {
+                    "currency":    "nok",
+                    "unit_amount": amount,
+                    "recurring":   {"interval": "month", "interval_count": 1},
+                    "product_data": {"name": description},
+                },
+            }],
+            payment_behavior      = "default_incomplete",
+            payment_settings      = {
+                "save_default_payment_method": "on_subscription",
+                "payment_method_types": ["card"],
+            },
+            expand   = ["latest_invoice.payment_intent"],
+            metadata = {
+                "havoyet_kasse_config": json.dumps(kasse, ensure_ascii=False)[:500],
+                "kunde_navn":           (kunde.get("navn") or "")[:200],
+                "kunde_tlf":            (kunde.get("tlf") or "")[:30],
+                "leveringsadresse":     (kunde.get("adresse") or "")[:200],
+                "leveringspostnr":      (kunde.get("postnr") or "")[:10],
+                "leveringssted":        (kunde.get("sted") or "")[:60],
+                "leveringsdag":         (kunde.get("leveringsdag") or "")[:30],
+                "kommentar":            (kunde.get("kommentar") or "")[:300],
+            },
+        )
+    except Exception as e:
+        return jsonify({"error": f"Kunne ikke opprette abonnement: {e}"}), 502
+
+    pi = subscription.latest_invoice and subscription.latest_invoice.payment_intent
+    client_secret = pi.client_secret if pi else None
+
+    _subscriptions[subscription.id] = {
+        "subscription_id":    subscription.id,
+        "customer_id":        customer.id,
+        "email":              email,
+        "amount":             amount,
+        "currency":           "nok",
+        "interval":           "month",
+        "status":             subscription.status,
+        "current_period_end": getattr(subscription, "current_period_end", None),
+        "kunde":              kunde,
+        "kasse":              kasse,
+        "description":        description,
+        "created_at":         int(time.time()),
+        "last_charged_at":    None,
+        "charges_count":      0,
+    }
+    _save_subscriptions()
+
+    return jsonify({
+        "ok":             True,
+        "subscriptionId": subscription.id,
+        "customerId":     customer.id,
+        "clientSecret":   client_secret,
+        "status":         subscription.status,
+    })
+
+def _subscription_admin_required():
+    user, _ = _user_from_request()
+    if not user:
+        return None, (jsonify({"ok": False, "error": "Ikke innlogget"}), 401)
+    if user.get("role") != "admin":
+        return None, (jsonify({"ok": False, "error": "Bare admin"}), 403)
+    return user, None
+
+@app.route("/api/subscription/list", methods=["GET"])
+def api_subscription_list():
+    user, err = _subscription_admin_required()
+    if err: return err
+    rows = sorted(_subscriptions.values(), key=lambda s: -(s.get("created_at") or 0))
+    return jsonify({"ok": True, "rows": rows})
+
+@app.route("/api/subscription/<sub_id>", methods=["DELETE"])
+def api_subscription_cancel(sub_id):
+    user, err = _subscription_admin_required()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"error": "Stripe ikke konfigurert"}), 503
+    try:
+        cancelled = _stripe.Subscription.cancel(sub_id)
+    except Exception as e:
+        return jsonify({"error": f"Kunne ikke kansellere: {e}"}), 502
+    if sub_id in _subscriptions:
+        _subscriptions[sub_id]["status"]       = cancelled.status
+        _subscriptions[sub_id]["cancelled_at"] = int(time.time())
+        _save_subscriptions()
+    return jsonify({"ok": True, "status": cancelled.status})
+
+
 @app.route("/api/checkout/card-payment-intent", methods=["POST"])
 def api_checkout_card_payment_intent():
     """Stripe Elements-flyt: oppretter en PaymentIntent og returnerer client_secret
@@ -2128,6 +2025,42 @@ def api_webhook_stripe():
         if sess_id in payments:
             payments[sess_id]["state"] = "EXPIRED"
             _stripe_save_payments(payments)
+
+    elif etype == "invoice.payment_succeeded":
+        # Månedlig trekk på abonnement gikk gjennom
+        sub_id = obj.get("subscription")
+        amt    = obj.get("amount_paid") or 0
+        if sub_id and sub_id in _subscriptions:
+            sub = _subscriptions[sub_id]
+            sub["status"]          = "active"
+            sub["last_charged_at"] = int(time.time())
+            sub["charges_count"]   = (sub.get("charges_count") or 0) + 1
+            sub["last_invoice_id"] = obj.get("id")
+            sub["last_amount"]     = amt
+            _save_subscriptions()
+            _notify_admins(
+                "subscription_charge",
+                f"[Havøyet] Abonnement trukket ({amt/100:.0f} kr)",
+                f"Kunde: {sub.get('email')}\nBeløp: {amt/100:.2f} kr\nSubscription: {sub_id}\nTrekk #{sub['charges_count']}",
+            )
+
+    elif etype == "invoice.payment_failed":
+        sub_id = obj.get("subscription")
+        if sub_id and sub_id in _subscriptions:
+            _subscriptions[sub_id]["status"] = "past_due"
+            _save_subscriptions()
+            _notify_admins(
+                "subscription_failed",
+                f"[Havøyet] Abonnementsbetaling FEILET",
+                f"Kunde: {_subscriptions[sub_id].get('email')}\nSubscription: {sub_id}\nKortet ble avvist — kunden bør oppdatere kort.",
+            )
+
+    elif etype == "customer.subscription.deleted":
+        sub_id = obj.get("id")
+        if sub_id in _subscriptions:
+            _subscriptions[sub_id]["status"]       = "cancelled"
+            _subscriptions[sub_id]["cancelled_at"] = int(time.time())
+            _save_subscriptions()
 
     return jsonify({"received": True})
 
@@ -2829,21 +2762,18 @@ try:
 except Exception as _e:
     print(f"[BOOT-WSGI] _load_replays feilet: {_e}")
 
+try:
+    _load_subscriptions()
+except Exception as _e:
+    print(f"[BOOT-WSGI] _load_subscriptions feilet: {_e}")
+
 
 if __name__ == "__main__":
-    # Last cache fra disk ved oppstart (om den finnes)
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                _cache = json.load(f)
-            print(f"Lastet {len(_cache.get('orders', []))} ordre fra disk-cache")
-        except Exception:
-            pass
-
     # Last sync-state (pakkingstilstand, manuelle ordre, etc.)
     _load_sync_state()
     _load_analytics()
     _load_replays()
+    _load_subscriptions()
 
     # Last prisliste fra disk
     if os.path.exists(PRISLISTE_FILE):
@@ -2854,11 +2784,8 @@ if __name__ == "__main__":
         except Exception:
             pass
 
-    # Start poller i bakgrunnen
-    t = threading.Thread(target=poll_loop, daemon=True)
-    t.start()
-    print(f"Havøyet backend starter — http://0.0.0.0:5000")
-    print(f"Shopify: {SHOPIFY_SHOP} | Poll: hvert {POLL_INTERVAL}s")
+    print(f"Havøyet backend starter — http://0.0.0.0:{PORT}")
+    print(f"Kilde: ny.havoyet.no/kasse → /api/orders/new → _manual_orders")
 
     is_cloud = os.environ.get("RENDER") or os.environ.get("RAILWAY_ENVIRONMENT")
     app.run(host="0.0.0.0", port=PORT, debug=not is_cloud, use_reloader=not is_cloud)
