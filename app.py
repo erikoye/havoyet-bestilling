@@ -2170,7 +2170,9 @@ def api_economy_stats():
       - filter: hvilken periode som ble brukt
     """
     today = datetime.now().date()
-    start_week = today - timedelta(days=today.weekday())  # mandag denne uken
+    # this_week_kr er nå rullerende siste 7 dager (i dag minus 6 = totalt 7 inkl. i dag),
+    # slik at kortet alltid viser et like langt vindu uavhengig av ukedag.
+    start_week = today - timedelta(days=6)
     start_month = today.replace(day=1)
     start_year = today.replace(month=1, day=1)
 
