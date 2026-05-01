@@ -467,11 +467,33 @@ def _save_sync_state():
     except Exception:
         pass
 
+def _restore_vipps_baseline():
+    """Auto-restore Vipps-transaksjoner fra committed baseline-snapshot
+    (data/vipps_baseline.json) hvis serveren ikke har data ennå. Dette gjør
+    at omsetnings-tall overlever Render-restarts som wiper /tmp."""
+    global _vipps_imported_payments
+    if _vipps_imported_payments:
+        return
+    baseline = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "data", "vipps_baseline.json")
+    if not os.path.exists(baseline):
+        return
+    try:
+        with open(baseline, "r", encoding="utf-8") as f:
+            _vipps_imported_payments = json.load(f) or {}
+        print(f"[STATE] Restored {len(_vipps_imported_payments)} Vipps-transaksjoner fra baseline")
+        # Lagre til /tmp så endringer i denne containeren også persisteres dit
+        _save_sync_state()
+    except Exception as e:
+        print(f"[STATE] Kunne ikke lese baseline: {e}")
+
+
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
     global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _vipps_imported_payments, _auth_users, _auth_sessions
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
+        _restore_vipps_baseline()
         return
     try:
         with open(SYNC_STATE_FILE, "r", encoding="utf-8") as f:
@@ -487,6 +509,9 @@ def _load_sync_state():
         _admin_notifiers    = d.get("admin_notifiers", [])
         _customers          = d.get("customers", [])
         _vipps_imported_payments = d.get("vipps_imported_payments", {}) or {}
+        # Auto-restore baseline hvis ingen Vipps-data ble lastet
+        if not _vipps_imported_payments:
+            _restore_vipps_baseline()
         _auth_users         = d.get("auth_users", [])
         loaded_sessions     = d.get("auth_sessions", {}) or {}
         if AUTH_SESSION_TTL is None:
