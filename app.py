@@ -1990,6 +1990,8 @@ def api_economy_stats():
     q_to   = request.args.get("to")
     period_from, period_to = start_year, today
     period_label = f"Hittil i {today.year}"
+    # Hardgrense: ingen periode kan gå lenger tilbake enn januar 2025
+    EARLIEST = date(2025, 1, 1)
     try:
         if q_from:
             period_from = datetime.strptime(q_from, "%Y-%m-%d").date()
@@ -1997,6 +1999,8 @@ def api_economy_stats():
             period_label = f"{period_from.strftime('%d.%m.%Y')} – {period_to.strftime('%d.%m.%Y')}"
         elif q_year:
             y = int(q_year)
+            if y < 2025:
+                y = 2025
             period_from = date(y, 1, 1)
             period_to   = date(y, 12, 31)
             if y == today.year:
@@ -2006,6 +2010,11 @@ def api_economy_stats():
                 period_label = str(y)
     except (ValueError, TypeError):
         pass
+    # Clamp uansett — selv om noe ber om eldre data, kuttes det her
+    if period_from < EARLIEST:
+        period_from = EARLIEST
+        if q_from:
+            period_label = f"01.01.2025 – {period_to.strftime('%d.%m.%Y')}"
 
     def _parse_date(date_str):
         if not date_str:
@@ -2100,7 +2109,8 @@ def api_economy_stats():
             by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "count": 0})
             by_year[d.year]["vipps_kr"] += (r.get("amount_ore") or 0) / 100.0
             by_year[d.year]["count"]    += 1
-    years_list = sorted(by_year.keys(), reverse=True)
+    # Filtrer bort år før 2025 (ingen data eldre enn januar 2025)
+    years_list = sorted([y for y in by_year.keys() if y >= 2025], reverse=True)
     by_year_out = [{
         "year":      y,
         "total_kr":  round(by_year[y]["web_kr"] + by_year[y]["vipps_kr"], 2),
@@ -2487,6 +2497,134 @@ def api_subscription_cancel(sub_id):
         _subscriptions[sub_id]["cancelled_at"] = int(time.time())
         _save_subscriptions()
     return jsonify({"ok": True, "status": cancelled.status})
+
+
+# ─── Kunde-vendte subscription-endepunkter (Min side) ──────────────────────────
+# Sikkerhet: kunden identifiseres via e-post i body/query. Operasjoner sjekker
+# at e-posten matcher subscription. Tidsfrist-regler håndheves serversiden.
+SKIP_DEADLINE_DAYS    = 14   # Hopp over leveranse — minst 14 dager før
+CANCEL_REFUND_DEADLINE_DAYS = 7  # Refusjon ved kansellering — minst 7 dager før neste trekk
+
+def _subscription_for_email(sub_id, email):
+    """Returner sub om eposten matcher, ellers (None, response)."""
+    sub = _subscriptions.get(sub_id)
+    if not sub:
+        return None, (jsonify({"error": "Ikke funnet"}), 404)
+    if (sub.get("email") or "").lower() != (email or "").strip().lower():
+        return None, (jsonify({"error": "Tilhører ikke denne e-posten"}), 403)
+    return sub, None
+
+def _next_charge_ts(sub):
+    """Beste estimat for neste-trekk-tidspunkt (ms). Bruker current_period_end
+    fra Stripe om vi har det, ellers en måned etter siste trekk."""
+    if sub.get("current_period_end"):
+        return int(sub["current_period_end"]) * 1000
+    last = sub.get("last_charged_at") or sub.get("created_at") or 0
+    return int(last) * 1000 + 30 * 24 * 60 * 60 * 1000
+
+@app.route("/api/subscription/mine", methods=["GET"])
+def api_subscription_mine():
+    """Lister abonnement(er) for én e-post. Brukes på Min side."""
+    email = (request.args.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"ok": True, "rows": []})
+    rows = []
+    for sub in _subscriptions.values():
+        if (sub.get("email") or "").lower() != email: continue
+        rows.append({
+            "subscription_id":   sub.get("subscription_id"),
+            "status":            sub.get("status"),
+            "amount":            sub.get("amount"),
+            "description":       sub.get("description"),
+            "kasse":             sub.get("kasse"),
+            "interval":          sub.get("interval"),
+            "created_at":        sub.get("created_at"),
+            "last_charged_at":   sub.get("last_charged_at"),
+            "next_charge_at":    int(_next_charge_ts(sub) / 1000),
+            "charges_count":     sub.get("charges_count") or 0,
+            "skipped_dates":     sub.get("skipped_dates") or [],
+            "cancel_at_period_end": bool(sub.get("cancel_at_period_end")),
+        })
+    rows.sort(key=lambda r: -(r.get("created_at") or 0))
+    return jsonify({"ok": True, "rows": rows})
+
+@app.route("/api/subscription/<sub_id>/skip", methods=["POST"])
+def api_subscription_skip(sub_id):
+    """Kunden hopper over neste leveranse. Krever min 2 ukers varsel.
+    Pauser Stripe-collection til perioden etter den hoppede leveransen."""
+    if not _stripe_configured():
+        return jsonify({"error": "Stripe ikke konfigurert"}), 503
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    sub, err = _subscription_for_email(sub_id, email)
+    if err: return err
+    next_ms  = _next_charge_ts(sub)
+    days_left = (next_ms - int(time.time() * 1000)) / 86400000.0
+    if days_left < SKIP_DEADLINE_DAYS:
+        return jsonify({
+            "ok": False,
+            "error": f"For sent å hoppe over neste levering. Frist: {SKIP_DEADLINE_DAYS} dager før (du er {days_left:.1f} dager unna).",
+            "deadline_days": SKIP_DEADLINE_DAYS,
+            "days_left": round(days_left, 1),
+        }), 400
+    # Pauser Stripe-collection til etter skip-perioden
+    try:
+        resume_at = int((next_ms + 24 * 60 * 60 * 1000) / 1000)  # dagen etter neste trekk
+        _stripe.Subscription.modify(sub_id, pause_collection={"behavior": "void", "resumes_at": resume_at})
+    except Exception as e:
+        return jsonify({"error": f"Kunne ikke pause: {e}"}), 502
+    sub.setdefault("skipped_dates", []).append(int(next_ms / 1000))
+    _save_subscriptions()
+    return jsonify({"ok": True, "skipped_at": int(next_ms / 1000), "next_normal_charge": resume_at + 30 * 86400})
+
+@app.route("/api/subscription/<sub_id>/customer-cancel", methods=["POST"])
+def api_subscription_customer_cancel(sub_id):
+    """Kunden kansellerer selv. Refusjon hvis > 1 uke før neste trekk;
+    ellers kansellering uten refusjon (siste trekk gjelder)."""
+    if not _stripe_configured():
+        return jsonify({"error": "Stripe ikke konfigurert"}), 503
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    sub, err = _subscription_for_email(sub_id, email)
+    if err: return err
+    next_ms  = _next_charge_ts(sub)
+    days_left = (next_ms - int(time.time() * 1000)) / 86400000.0
+    refund_eligible = days_left >= CANCEL_REFUND_DEADLINE_DAYS
+    try:
+        if refund_eligible:
+            # Kanseller umiddelbart + refunder siste vellykkede betaling
+            cancelled = _stripe.Subscription.cancel(sub_id)
+            try:
+                # Refunder siste invoice om den finnes
+                invoices = _stripe.Invoice.list(subscription=sub_id, limit=1)
+                if invoices.data and invoices.data[0].status == "paid" and invoices.data[0].payment_intent:
+                    _stripe.Refund.create(payment_intent=invoices.data[0].payment_intent)
+            except Exception as _e:
+                print(f"[SUBS] Refund-feil: {_e}")
+            sub["status"]       = cancelled.status
+            sub["cancelled_at"] = int(time.time())
+            sub["refunded"]     = True
+        else:
+            # Sett til kanseller ved periode-slutt — siste trekk gjennomføres
+            modified = _stripe.Subscription.modify(sub_id, cancel_at_period_end=True)
+            sub["status"]               = modified.status
+            sub["cancel_at_period_end"] = True
+            sub["cancelled_at"]         = int(time.time())
+            sub["refunded"]             = False
+    except Exception as e:
+        return jsonify({"error": f"Kunne ikke kansellere: {e}"}), 502
+    _save_subscriptions()
+    return jsonify({
+        "ok": True,
+        "refunded":        refund_eligible,
+        "days_left":       round(days_left, 1),
+        "refund_deadline": CANCEL_REFUND_DEADLINE_DAYS,
+        "message": (
+            "Abonnementet er kansellert og siste trekk er refundert."
+            if refund_eligible else
+            f"Abonnementet er kansellert, men det siste trekket ({sub.get('amount',0)/100:.0f} kr) blir gjennomført fordi det er mindre enn {CANCEL_REFUND_DEADLINE_DAYS} dager til neste trekk."
+        ),
+    })
 
 
 @app.route("/api/checkout/card-payment-intent", methods=["POST"])
