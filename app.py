@@ -4285,8 +4285,13 @@ def api_chat_knowledge():
             if changed:
                 _save_chat_knowledge()
         # Returner i nyeste-først rekkefølge for admin-UI
-        return jsonify({"ok": True, "items": list(reversed(out))})
-    return jsonify({"ok": True, "items": items})
+        resp = jsonify({"ok": True, "items": list(reversed(out)), "ts": datetime.now().isoformat()})
+    else:
+        resp = jsonify({"ok": True, "items": items, "ts": datetime.now().isoformat()})
+    # Aldri cache — chat-ai.js skal alltid se siste trening umiddelbart
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 @app.route("/api/chat/knowledge/<kid>", methods=["DELETE"])
