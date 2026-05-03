@@ -4242,14 +4242,65 @@ def api_chat_poll(sid):
         })
 
 
-@app.route("/api/chat/knowledge", methods=["GET"])
+@app.route("/api/chat/knowledge", methods=["GET", "POST"])
 def api_chat_knowledge():
-    """Returnerer lært Q&A-base. Public — brukes av AI-proxy som kontekst.
-    Begrens til siste N for å holde token-bruk lavt."""
-    limit = min(int(request.args.get("limit", "60") or 60), 200)
+    """GET (public): lært Q&A-base — brukes av AI-proxy som kontekst.
+       POST (admin): legg til en manuell Q&A-entry."""
+    if request.method == "POST":
+        user, _ = _user_from_request()
+        if not user:
+            return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+        data = request.get_json(silent=True) or {}
+        q = (data.get("q") or "").strip()
+        a = (data.get("a") or "").strip()
+        if not q or not a:
+            return jsonify({"ok": False, "error": "Mangler q eller a"}), 400
+        entry = {
+            "id": "k_" + secrets.token_urlsafe(8),
+            "q": q[:1000],
+            "a": a[:4000],
+            "learned_at": datetime.now().isoformat(),
+            "session_id": None,
+            "source": "manual",
+        }
+        with _chat_lock:
+            _chat_knowledge.append(entry)
+            _save_chat_knowledge()
+        return jsonify({"ok": True, "item": entry})
+
+    limit = min(int(request.args.get("limit", "60") or 60), 500)
+    with_meta = request.args.get("with_meta") == "1"
     with _chat_lock:
         items = list(_chat_knowledge)[-limit:]
+    if with_meta:
+        # Sørg for at alle items har id (legacy-entries har det ikke)
+        out = []
+        changed = False
+        with _chat_lock:
+            for it in _chat_knowledge:
+                if not it.get("id"):
+                    it["id"] = "k_" + secrets.token_urlsafe(8)
+                    changed = True
+                out.append(it)
+            if changed:
+                _save_chat_knowledge()
+        # Returner i nyeste-først rekkefølge for admin-UI
+        return jsonify({"ok": True, "items": list(reversed(out))})
     return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/chat/knowledge/<kid>", methods=["DELETE"])
+def api_chat_knowledge_delete(kid):
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+    with _chat_lock:
+        before = len(_chat_knowledge)
+        _chat_knowledge[:] = [k for k in _chat_knowledge if k.get("id") != kid]
+        removed = before - len(_chat_knowledge)
+        if removed:
+            _save_chat_knowledge()
+    return jsonify({"ok": True, "removed": removed})
 
 
 # Last chat-state ved boot
