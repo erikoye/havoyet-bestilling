@@ -3930,6 +3930,55 @@ def _chat_session_summary(s):
     }
 
 
+def _notify_customer_on_admin_reply(session, msg_text):
+    """Sender e-post (alltid hvis e-post er oppgitt) + SMS (hvis telefon er
+    oppgitt OG twilio er konfigurert) til kunden når admin svarer i chat.
+    Skipper varsling hvis kunden er aktiv akkurat nå (har pollet < 30 sek
+    siden) — da ser de meldingen i widget uansett."""
+    cust = session.get("customer") or {}
+    email = (cust.get("email") or "").strip()
+    phone = (cust.get("phone") or "").strip()
+    notify_pref = cust.get("notify") or {}
+    if notify_pref.get("opted_out"):
+        return
+    # Skip hvis kunden er aktivt på chat-siden
+    last_read = session.get("last_customer_read")
+    if last_read:
+        try:
+            dt = datetime.fromisoformat(last_read)
+            if (datetime.now() - dt).total_seconds() < 30:
+                return
+        except Exception:
+            pass
+    sid = session.get("id")
+    name = (cust.get("name") or "Hei").split(" ")[0] or "Hei"
+    short = (msg_text or "").strip()
+    if len(short) > 240:
+        short = short[:237] + "…"
+    chat_url = "https://www.havoyet.no/?reopen-chat=" + str(sid)
+
+    if email and notify_pref.get("email", True):
+        subj = "Nytt svar i din Havøyet-chat"
+        body = (
+            f"{name},\n\n"
+            f"Du har fått et nytt svar i chatten din med oss:\n\n"
+            f'"{short}"\n\n'
+            f"Åpne chatten for å svare:\n{chat_url}\n\n"
+            f"— Havøyet"
+        )
+        try:
+            _send_admin_mail(email, subj, body)
+        except Exception as e:
+            print(f"[CHAT] kunde-mail feilet: {e}")
+
+    if phone and notify_pref.get("sms", True):
+        sms = f"Havøyet: nytt chat-svar — \"{short[:90]}\"... Åpne: {chat_url}"
+        try:
+            _send_admin_sms(phone, sms)
+        except Exception as e:
+            print(f"[CHAT] kunde-sms feilet: {e}")
+
+
 def _send_human_handoff_mail(session, customer_question):
     """Sender mail til erik+stian når AI escalerer en samtale."""
     name = (session.get("customer") or {}).get("name") or "Ukjent"
@@ -4095,6 +4144,12 @@ def api_chat_messages(sid):
             _send_human_handoff_mail(out_sess, text)
         except Exception as e:
             print(f"[CHAT] handoff-mail feilet: {e}")
+    # Når admin svarer, varsle kunden via e-post/SMS (hvis ikke aktivt tilstede)
+    if role == "admin":
+        try:
+            _notify_customer_on_admin_reply(out_sess, text)
+        except Exception as e:
+            print(f"[CHAT] kunde-varsling feilet: {e}")
 
     return jsonify({"ok": True, "message": msg, "session": out_sess})
 
@@ -4135,6 +4190,32 @@ def api_chat_escalate(sid):
     return jsonify({"ok": True, "session": out})
 
 
+@app.route("/api/chat/sessions/<sid>/notify", methods=["POST"])
+def api_chat_notify_preference(sid):
+    """Kunden kan oppdatere kontakt-info og varslings-preferanse uten å eskalere.
+    Body: {customer:{name?, email?, phone?}, notify:{email?, sms?, opted_out?}}"""
+    data = request.get_json(silent=True) or {}
+    cust_in = data.get("customer") or {}
+    notify_in = data.get("notify") or {}
+    with _chat_lock:
+        sess = _chat_sessions.get(sid)
+        if not sess:
+            return jsonify({"ok": False, "error": "Samtale ikke funnet"}), 404
+        cust = sess.setdefault("customer", {})
+        for k in ("name", "email", "phone"):
+            v = (cust_in.get(k) or "").strip()
+            if v:
+                cust[k] = v[:120]
+        if isinstance(notify_in, dict):
+            pref = cust.setdefault("notify", {})
+            for k in ("email", "sms", "opted_out"):
+                if k in notify_in:
+                    pref[k] = bool(notify_in[k])
+        sess["updated_at"] = datetime.now().isoformat()
+        _save_chat_sessions()
+    return jsonify({"ok": True, "customer": cust, "notify": cust.get("notify") or {}})
+
+
 @app.route("/api/chat/sessions/<sid>/poll", methods=["GET"])
 def api_chat_poll(sid):
     """Lett polling-endpoint for kunde-widget — returnerer kun nye admin/AI-meldinger
@@ -4149,6 +4230,9 @@ def api_chat_poll(sid):
             if not since or (m.get("at") or "") > since:
                 if m.get("role") in ("admin", "ai"):
                     new_msgs.append(m)
+        # Marker at kunden er aktiv akkurat nå (slipper push-varsel ved live-svar)
+        sess["last_customer_read"] = datetime.now().isoformat()
+        _save_chat_sessions()
         return jsonify({
             "ok": True,
             "messages": new_msgs,
