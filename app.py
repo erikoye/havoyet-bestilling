@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, date
 
 app = Flask(__name__)
 CORS(app)  # Tillat kall fra HTML-filer åpnet lokalt
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 2 MB body — rom for 512KB-fil + JSON-overhead
 
 # ── KONFIG ────────────────────────────────────────────────────────────────────
 # Les fra .env-fil om den finnes
@@ -3849,6 +3850,424 @@ def api_analytics_replay_delete():
             _replays.clear()
         _maybe_persist_replays(force=True)
     return jsonify({"ok": True})
+
+
+# ── CHATBOT ───────────────────────────────────────────────────────────────────
+# Self-service chat på nettsiden. Kunde får AI-svar; når AI er usikker
+# foreslår den å koble til menneske → kunde svarer Ja → e-post til Erik+Stian
+# og samtalen åpnes i admin-panelet for to-veis svar.
+#
+# Persistent storage på samme STATE_DIR som annen sync-state. Ingen separate
+# load/save funksjoner — vi fsync-er per skriving (fil er liten).
+CHAT_SESSIONS_FILE  = os.path.join(STATE_DIR, "havoyet_chat_sessions.json")
+CHAT_KNOWLEDGE_FILE = os.path.join(STATE_DIR, "havoyet_chat_knowledge.json")
+CHAT_HUMAN_RECIPIENTS = ["erik@havoyet.no", "stian@havoyet.no"]
+_chat_sessions = {}     # id → {id, customer:{name,email}, messages:[], status, created_at, updated_at, escalated, last_admin_read, last_customer_read}
+_chat_knowledge = []    # [{q, a, learned_at, session_id}]
+_chat_lock = threading.Lock()
+
+
+def _load_chat_state():
+    global _chat_sessions, _chat_knowledge
+    try:
+        if os.path.exists(CHAT_SESSIONS_FILE):
+            with open(CHAT_SESSIONS_FILE, "r", encoding="utf-8") as f:
+                _chat_sessions = json.load(f) or {}
+    except Exception as e:
+        print(f"[CHAT] Kunne ikke laste sessions: {e}")
+        _chat_sessions = {}
+    try:
+        if os.path.exists(CHAT_KNOWLEDGE_FILE):
+            with open(CHAT_KNOWLEDGE_FILE, "r", encoding="utf-8") as f:
+                _chat_knowledge = json.load(f) or []
+    except Exception as e:
+        print(f"[CHAT] Kunne ikke laste knowledge: {e}")
+        _chat_knowledge = []
+
+
+def _save_chat_sessions():
+    try:
+        tmp = CHAT_SESSIONS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_chat_sessions, f, ensure_ascii=False)
+        os.replace(tmp, CHAT_SESSIONS_FILE)
+    except Exception as e:
+        print(f"[CHAT] save sessions feilet: {e}")
+
+
+def _save_chat_knowledge():
+    try:
+        tmp = CHAT_KNOWLEDGE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_chat_knowledge, f, ensure_ascii=False)
+        os.replace(tmp, CHAT_KNOWLEDGE_FILE)
+    except Exception as e:
+        print(f"[CHAT] save knowledge feilet: {e}")
+
+
+def _chat_new_id():
+    return secrets.token_urlsafe(12)
+
+
+def _chat_session_summary(s):
+    msgs = s.get("messages") or []
+    last = msgs[-1] if msgs else None
+    customer_msgs = [m for m in msgs if m.get("role") == "customer"]
+    last_customer_at = customer_msgs[-1].get("at") if customer_msgs else None
+    return {
+        "id": s.get("id"),
+        "customer": s.get("customer", {}),
+        "status": s.get("status", "open"),
+        "escalated": bool(s.get("escalated")),
+        "created_at": s.get("created_at"),
+        "updated_at": s.get("updated_at"),
+        "last_message": (last or {}).get("text", "")[:200],
+        "last_message_at": (last or {}).get("at"),
+        "last_message_role": (last or {}).get("role"),
+        "last_customer_at": last_customer_at,
+        "message_count": len(msgs),
+        "unread_for_admin": int(s.get("unread_for_admin", 0)),
+    }
+
+
+def _send_human_handoff_mail(session, customer_question):
+    """Sender mail til erik+stian når AI escalerer en samtale."""
+    name = (session.get("customer") or {}).get("name") or "Ukjent"
+    email = (session.get("customer") or {}).get("email") or ""
+    sid = session.get("id")
+    subj = f"[Havøyet chat] {name} ber om hjelp"
+    history_text = ""
+    for m in (session.get("messages") or [])[-12:]:
+        who = {"customer": name or "Kunde", "ai": "Bot", "admin": "Admin"}.get(m.get("role"), m.get("role"))
+        history_text += f"{who}: {m.get('text','')}\n\n"
+    body = (
+        f"Ny chat-henvendelse fra havoyet.no\n"
+        f"{'='*54}\n\n"
+        f"Navn:    {name}\n"
+        f"E-post:  {email or '(ikke oppgitt)'}\n"
+        f"Tid:     {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"Kundens spørsmål:\n{'-'*54}\n{customer_question}\n{'-'*54}\n\n"
+        f"Samtalehistorikk:\n{'-'*54}\n{history_text}\n"
+        f"Åpne i admin: https://www.havoyet.no/admin.html#chat\n"
+        f"Session-ID: {sid}\n"
+    )
+    sent_any = False
+    for to in CHAT_HUMAN_RECIPIENTS:
+        try:
+            ok, _ = _send_admin_mail(to, subj, body)
+            if ok:
+                sent_any = True
+        except Exception as e:
+            print(f"[CHAT] mail til {to} feilet: {e}")
+    return sent_any
+
+
+@app.route("/api/chat/sessions", methods=["GET", "POST"])
+def api_chat_sessions():
+    """GET (admin): liste alle samtaler. POST: opprett ny samtale."""
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        cust = data.get("customer") or {}
+        with _chat_lock:
+            sid = _chat_new_id()
+            now = datetime.now().isoformat()
+            sess = {
+                "id": sid,
+                "customer": {
+                    "name":  (cust.get("name") or "").strip()[:80],
+                    "email": (cust.get("email") or "").strip()[:120],
+                    "phone": (cust.get("phone") or "").strip()[:30],
+                },
+                "messages": [],
+                "status": "open",
+                "escalated": False,
+                "created_at": now,
+                "updated_at": now,
+                "unread_for_admin": 0,
+                "last_customer_read": now,
+            }
+            _chat_sessions[sid] = sess
+            _save_chat_sessions()
+        return jsonify({"ok": True, "session": sess})
+
+    # GET → admin-liste (krever auth)
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+    with _chat_lock:
+        items = [_chat_session_summary(s) for s in _chat_sessions.values()]
+    items.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+    return jsonify({"ok": True, "sessions": items})
+
+
+@app.route("/api/chat/sessions/<sid>", methods=["GET", "DELETE"])
+def api_chat_session_one(sid):
+    """GET: full samtale (kunde eller admin). DELETE: admin sletter."""
+    with _chat_lock:
+        sess = _chat_sessions.get(sid)
+    if not sess:
+        return jsonify({"ok": False, "error": "Samtale ikke funnet"}), 404
+
+    if request.method == "DELETE":
+        user, _ = _user_from_request()
+        if not user:
+            return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+        with _chat_lock:
+            _chat_sessions.pop(sid, None)
+            _save_chat_sessions()
+        return jsonify({"ok": True})
+
+    # GET — om admin er innlogget, marker som lest
+    user, _ = _user_from_request()
+    out = dict(sess)
+    if user:
+        with _chat_lock:
+            sess["unread_for_admin"] = 0
+            sess["last_admin_read"] = datetime.now().isoformat()
+            _save_chat_sessions()
+        out = dict(sess)
+    return jsonify({"ok": True, "session": out})
+
+
+@app.route("/api/chat/sessions/<sid>/messages", methods=["POST"])
+def api_chat_messages(sid):
+    """Legg til melding. role=customer|ai|admin. Auto-escalering via flagget
+    'escalate' i body, eller hvis AI markerer suggest_human=true. Når admin
+    sender melding i en escalert tråd og forrige kunde-melding mangler svar,
+    auto-lagrer vi Q&A til lærings-base."""
+    data = request.get_json(silent=True) or {}
+    role = (data.get("role") or "customer").strip().lower()
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "Tom melding"}), 400
+    if role not in ("customer", "ai", "admin"):
+        return jsonify({"ok": False, "error": "Ugyldig role"}), 400
+    if role == "admin":
+        user, _ = _user_from_request()
+        if not user:
+            return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+
+    with _chat_lock:
+        sess = _chat_sessions.get(sid)
+        if not sess:
+            return jsonify({"ok": False, "error": "Samtale ikke funnet"}), 404
+
+        now = datetime.now().isoformat()
+        msg = {
+            "id": _chat_new_id(),
+            "role": role,
+            "text": text[:4000],
+            "at": now,
+        }
+        if role == "ai":
+            msg["meta"] = {
+                "confidence": data.get("confidence"),
+                "suggest_human": bool(data.get("suggest_human")),
+            }
+        sess.setdefault("messages", []).append(msg)
+        sess["updated_at"] = now
+
+        if role == "customer":
+            sess["unread_for_admin"] = int(sess.get("unread_for_admin", 0)) + 1
+        elif role == "admin":
+            sess["unread_for_admin"] = 0
+            # Auto-lær: forrige kunde-melding + dette admin-svaret
+            prev_customer = None
+            for m in reversed(sess["messages"][:-1]):
+                if m.get("role") == "customer":
+                    prev_customer = m
+                    break
+            if prev_customer and sess.get("escalated"):
+                _chat_knowledge.append({
+                    "q": prev_customer.get("text", ""),
+                    "a": text,
+                    "learned_at": now,
+                    "session_id": sid,
+                })
+                _save_chat_knowledge()
+
+        _save_chat_sessions()
+        out_sess = dict(sess)
+
+    # Hvis kunden sender melding i en aktiv escalert tråd, varsle admin på mail
+    if role == "customer" and out_sess.get("escalated"):
+        try:
+            _send_human_handoff_mail(out_sess, text)
+        except Exception as e:
+            print(f"[CHAT] handoff-mail feilet: {e}")
+
+    return jsonify({"ok": True, "message": msg, "session": out_sess})
+
+
+@app.route("/api/chat/sessions/<sid>/escalate", methods=["POST"])
+def api_chat_escalate(sid):
+    """Markér samtale for menneske og send mail til erik+stian."""
+    data = request.get_json(silent=True) or {}
+    customer_update = data.get("customer") or {}
+    with _chat_lock:
+        sess = _chat_sessions.get(sid)
+        if not sess:
+            return jsonify({"ok": False, "error": "Samtale ikke funnet"}), 404
+        # Tillat oppdatering av kontaktinfo ved escalering
+        if customer_update:
+            cust = sess.setdefault("customer", {})
+            for k in ("name", "email", "phone"):
+                v = (customer_update.get(k) or "").strip()
+                if v:
+                    cust[k] = v[:120]
+        sess["escalated"] = True
+        sess["status"] = "needs_human"
+        sess["updated_at"] = datetime.now().isoformat()
+        sess["unread_for_admin"] = int(sess.get("unread_for_admin", 0)) + 1
+        _save_chat_sessions()
+        out = dict(sess)
+
+    # Finn siste kunde-spørsmål til mail-body
+    last_q = ""
+    for m in reversed(out.get("messages") or []):
+        if m.get("role") == "customer":
+            last_q = m.get("text", "")
+            break
+    try:
+        _send_human_handoff_mail(out, last_q)
+    except Exception as e:
+        print(f"[CHAT] escalate-mail feilet: {e}")
+    return jsonify({"ok": True, "session": out})
+
+
+@app.route("/api/chat/sessions/<sid>/poll", methods=["GET"])
+def api_chat_poll(sid):
+    """Lett polling-endpoint for kunde-widget — returnerer kun nye admin/AI-meldinger
+    og status. Bruker query-param `since` (ISO-tid). Ingen auth."""
+    since = request.args.get("since") or ""
+    with _chat_lock:
+        sess = _chat_sessions.get(sid)
+        if not sess:
+            return jsonify({"ok": False, "error": "Samtale ikke funnet"}), 404
+        new_msgs = []
+        for m in sess.get("messages", []):
+            if not since or (m.get("at") or "") > since:
+                if m.get("role") in ("admin", "ai"):
+                    new_msgs.append(m)
+        return jsonify({
+            "ok": True,
+            "messages": new_msgs,
+            "status": sess.get("status"),
+            "escalated": bool(sess.get("escalated")),
+            "updated_at": sess.get("updated_at"),
+        })
+
+
+@app.route("/api/chat/knowledge", methods=["GET"])
+def api_chat_knowledge():
+    """Returnerer lært Q&A-base. Public — brukes av AI-proxy som kontekst.
+    Begrens til siste N for å holde token-bruk lavt."""
+    limit = min(int(request.args.get("limit", "60") or 60), 200)
+    with _chat_lock:
+        items = list(_chat_knowledge)[-limit:]
+    return jsonify({"ok": True, "items": items})
+
+
+# Last chat-state ved boot
+try:
+    _load_chat_state()
+    print(f"[BOOT-WSGI] chat-state lastet: {len(_chat_sessions)} samtaler, {len(_chat_knowledge)} Q&A")
+except Exception as _e:
+    print(f"[BOOT-WSGI] _load_chat_state feilet: {_e}")
+
+
+# ── NYHETSBREV-ARKIV ───────────────────────────────────────────────────────────
+# Cross-device referansefiler som sendes med hver Claude-prompt i admin →
+# Nyhetsbrev. Lagres på serveren slik at alle admin-brukere ser samme arkiv
+# uansett hvor de logger seg inn. Filinnhold er tekst (utf-8).
+NEWSLETTER_ARCHIVE_FILE = os.path.join(STATE_DIR, "havoyet_newsletter_archive.json")
+NEWSLETTER_ARCHIVE_FILE_MAX  = 512 * 1024          # 512 KB per fil
+NEWSLETTER_ARCHIVE_TOTAL_MAX = 16 * 1024 * 1024    # 16 MB totalt på serveren
+_newsletter_archive = []   # [{id, name, bytes, ts, content}]
+_archive_lock = threading.Lock()
+
+
+def _load_newsletter_archive():
+    global _newsletter_archive
+    try:
+        if os.path.exists(NEWSLETTER_ARCHIVE_FILE):
+            with open(NEWSLETTER_ARCHIVE_FILE, "r", encoding="utf-8") as f:
+                _newsletter_archive = json.load(f) or []
+    except Exception as e:
+        print(f"[ARCHIVE] Kunne ikke laste: {e}")
+        _newsletter_archive = []
+
+
+def _save_newsletter_archive():
+    try:
+        tmp = NEWSLETTER_ARCHIVE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_newsletter_archive, f, ensure_ascii=False)
+        os.replace(tmp, NEWSLETTER_ARCHIVE_FILE)
+    except Exception as e:
+        print(f"[ARCHIVE] save feilet: {e}")
+
+
+def _archive_total_bytes():
+    return sum(int(f.get("bytes") or 0) for f in _newsletter_archive)
+
+
+@app.route("/api/newsletter-archive", methods=["GET", "POST", "DELETE"])
+def api_newsletter_archive():
+    if request.method == "GET":
+        with _archive_lock:
+            return jsonify({"ok": True, "files": list(_newsletter_archive),
+                            "total_bytes": _archive_total_bytes()})
+    if request.method == "DELETE":
+        with _archive_lock:
+            _newsletter_archive.clear()
+            _save_newsletter_archive()
+        return jsonify({"ok": True})
+    # POST = legg til én fil
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    content = data.get("content")
+    if not name or content is None:
+        return jsonify({"error": "Mangler 'name' eller 'content'"}), 400
+    if not isinstance(content, str):
+        return jsonify({"error": "'content' må være tekst"}), 400
+    raw_bytes = len(content.encode("utf-8"))
+    if raw_bytes > NEWSLETTER_ARCHIVE_FILE_MAX:
+        return jsonify({"error": f"Filen er for stor ({raw_bytes} bytes, maks {NEWSLETTER_ARCHIVE_FILE_MAX})"}), 413
+    with _archive_lock:
+        if _archive_total_bytes() + raw_bytes > NEWSLETTER_ARCHIVE_TOTAL_MAX:
+            return jsonify({"error": "Arkivet er fullt — slett noen filer først"}), 413
+        entry = {
+            "id": "a_" + _uuid.uuid4().hex[:12],
+            "name": name[:512],
+            "bytes": raw_bytes,
+            "ts": int(time.time() * 1000),
+            "content": content,
+        }
+        _newsletter_archive.insert(0, entry)
+        _save_newsletter_archive()
+    # Returner uten content for å spare bandwidth — klienten har det allerede
+    meta = {k: v for k, v in entry.items() if k != "content"}
+    return jsonify({"ok": True, "file": meta})
+
+
+@app.route("/api/newsletter-archive/<file_id>", methods=["DELETE"])
+def api_newsletter_archive_delete(file_id):
+    with _archive_lock:
+        before = len(_newsletter_archive)
+        _newsletter_archive[:] = [f for f in _newsletter_archive if f.get("id") != file_id]
+        removed = before - len(_newsletter_archive)
+        if removed:
+            _save_newsletter_archive()
+    return jsonify({"ok": True, "removed": removed})
+
+
+# Last arkiv ved boot
+try:
+    _load_newsletter_archive()
+    print(f"[BOOT-WSGI] nyhetsbrev-arkiv lastet: {len(_newsletter_archive)} filer ({_archive_total_bytes()} bytes)")
+except Exception as _e:
+    print(f"[BOOT-WSGI] _load_newsletter_archive feilet: {_e}")
 
 
 # ── WSGI-bootstrap ────────────────────────────────────────────────────────────
