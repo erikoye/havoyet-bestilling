@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Hav&oslash;yet AS &mdash; Betalinger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --primary: #0d9488; --primary-dk: #0f766e;
+      --bg: #f1f5f9; --dark: #0f172a; --surface: #ffffff;
+      --border: #e2e8f0; --muted: #64748b;
+      --c-red: #ef4444; --c-orange: #f59e0b; --c-green: #22c55e;
+    }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--dark); min-height: 100vh; }
+
+    header { background: var(--dark); display: flex; align-items: center; justify-content: space-between; padding: 0 32px; height: 60px; position: sticky; top: 0; z-index: 100; }
+    .logo-text { font-family: 'Montserrat', sans-serif; font-weight: 900; font-size: 22px; letter-spacing: 2px; color: #fff; }
+    .header-right { display: flex; align-items: center; gap: 16px; color: #94a3b8; font-size: 13px; font-family: 'DM Mono', monospace; }
+    .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c-green); margin-right: 6px; animation: pulse 2s infinite; }
+    .live-dot.offline { background: #475569; animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .back-btn { color: #94a3b8; text-decoration: none; font-size: 13px; display: flex; align-items: center; gap: 6px; font-family: 'DM Mono', monospace; }
+    .back-btn:hover { color: #fff; }
+    .logout-btn { background: none; border: 1px solid #334155; color: #94a3b8; font-size: 12px; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-family: 'DM Mono', monospace; }
+    .logout-btn:hover { color: #fff; border-color: var(--primary); }
+
+    main { max-width: 1100px; margin: 0 auto; padding: 28px 24px 80px; }
+    h1.page-title { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+    .page-sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; font-family: 'DM Mono', monospace; }
+
+    /* Balance hero */
+    .balance-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 28px; }
+    .balance-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+    .balance-card .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; }
+    .balance-card .val { font-size: 26px; font-weight: 700; margin-top: 4px; font-family: 'Montserrat', sans-serif; }
+    .balance-card.pending .val { color: var(--c-orange); }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+    .tab { padding: 10px 18px; cursor: pointer; font-size: 14px; font-weight: 500; color: var(--muted); border-bottom: 2px solid transparent; transition: all .15s; }
+    .tab:hover { color: var(--dark); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
+    /* Table */
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .panel-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .panel-toolbar .meta { font-size: 12px; color: var(--muted); font-family: 'DM Mono', monospace; }
+    .refresh-btn { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; color: var(--muted); }
+    .refresh-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    thead { background: #f8fafc; }
+    th { text-align: left; padding: 10px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+    td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+
+    .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; font-family: 'DM Mono', monospace; }
+    .pill-green { background: #dcfce7; color: #166534; }
+    .pill-orange { background: #fef3c7; color: #92400e; }
+    .pill-red { background: #fee2e2; color: #991b1b; }
+    .pill-gray { background: #e2e8f0; color: #475569; }
+    .pill-blue { background: #dbeafe; color: #1e40af; }
+
+    .num { font-family: 'DM Mono', monospace; }
+    .right { text-align: right; }
+    .id { font-family: 'DM Mono', monospace; font-size: 11.5px; color: var(--muted); }
+    .empty { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 14px; }
+    .err { background: #fee2e2; color: #991b1b; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+
+    .btn-action { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; color: var(--dark); margin-left: 4px; }
+    .btn-action:hover { border-color: var(--primary); color: var(--primary); }
+    .btn-action.danger:hover { border-color: var(--c-red); color: var(--c-red); }
+
+    /* Login overlay */
+    .login-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.85); display: flex; align-items: center; justify-content: center; z-index: 200; }
+    .login-card { background: var(--surface); border-radius: 14px; padding: 32px; width: 360px; max-width: calc(100vw - 32px); }
+    .login-card h2 { font-size: 20px; margin-bottom: 6px; }
+    .login-card p { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+    .login-card label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; font-weight: 500; }
+    .login-card input { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; outline: none; }
+    .login-card input:focus { border-color: var(--primary); }
+    .login-card .btn { width: 100%; background: var(--primary); color: #fff; border: none; border-radius: 8px; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 16px; }
+    .login-card .btn:hover { background: var(--primary-dk); }
+    .login-card .err { margin-top: 12px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo-text">Havøyet</div>
+  <div class="header-right">
+    <a href="index.html" class="back-btn">← Ordrer</a>
+    <span><span id="liveDot" class="live-dot offline"></span><span id="liveLabel">Kobler til</span></span>
+    <span id="userBadge" style="display:none">—</span>
+    <button id="logoutBtn" class="logout-btn" style="display:none" onclick="logout()">Logg ut</button>
+  </div>
+</header>
+
+<main id="mainView" style="display:none">
+  <h1 class="page-title">Betalinger</h1>
+  <p class="page-sub">Live fra Stripe — speilet direkte fra havoyet-bestilling.onrender.com</p>
+
+  <div class="balance-row">
+    <div class="balance-card">
+      <div class="lbl">Tilgjengelig saldo</div>
+      <div class="val num" id="balAvail">—</div>
+    </div>
+    <div class="balance-card pending">
+      <div class="lbl">Ventende (clearing)</div>
+      <div class="val num" id="balPending">—</div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="payments" onclick="switchTab('payments')">Betalinger</div>
+    <div class="tab" data-tab="subscriptions" onclick="switchTab('subscriptions')">Abonnementer</div>
+    <div class="tab" data-tab="customers" onclick="switchTab('customers')">Kunder</div>
+    <div class="tab" data-tab="disputes" onclick="switchTab('disputes')">Disputes</div>
+  </div>
+
+  <div id="errBox" class="err" style="display:none"></div>
+
+  <div class="panel">
+    <div class="panel-toolbar">
+      <span class="meta" id="panelMeta">—</span>
+      <button class="refresh-btn" onclick="loadActiveTab(true)">↻ Oppdater</button>
+    </div>
+    <div id="tableWrap"></div>
+  </div>
+</main>
+
+<!-- Login overlay -->
+<div id="loginOverlay" class="login-overlay" style="display:none">
+  <div class="login-card">
+    <h2>Admin-pålogging</h2>
+    <p>Stripe-data krever admin-tilgang.</p>
+    <form id="loginForm" onsubmit="event.preventDefault(); doLogin();">
+      <label>E-post</label>
+      <input type="email" id="loginEmail" autocomplete="email" required />
+      <label>Passord</label>
+      <input type="password" id="loginPassword" autocomplete="current-password" required />
+      <button type="submit" class="btn">Logg inn</button>
+      <div id="loginErr" class="err" style="display:none"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+// ──────────────────────────────────────────────────────────────────────────────
+// API base — samme som andre admin-sider
+const API_BASE = (() => {
+  if (location.protocol === "file:") return "https://havoyet-bestilling.onrender.com";
+  if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
+    return location.origin;  // lokal Flask
+  }
+  return location.origin;  // produksjon — samme host
+})();
+
+const TOKEN_KEY = "hv_admin_token";
+const getToken  = () => localStorage.getItem(TOKEN_KEY) || "";
+const setToken  = (t) => localStorage.setItem(TOKEN_KEY, t);
+const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+let activeTab  = "payments";
+let userInfo   = null;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Auth
+async function doLogin() {
+  const email = document.getElementById("loginEmail").value.trim().toLowerCase();
+  const password = document.getElementById("loginPassword").value;
+  const errEl = document.getElementById("loginErr");
+  errEl.style.display = "none";
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok || !d.token) {
+      errEl.textContent = d.error || "Feil e-post eller passord";
+      errEl.style.display = "block";
+      return;
+    }
+    setToken(d.token);
+    userInfo = d.user || null;
+    if (userInfo && userInfo.role !== "admin") {
+      errEl.textContent = "Bare admin har tilgang her.";
+      errEl.style.display = "block";
+      clearToken();
+      return;
+    }
+    initApp();
+  } catch (e) {
+    errEl.textContent = "Kunne ikke kontakte server.";
+    errEl.style.display = "block";
+  }
+}
+
+function logout() {
+  clearToken();
+  location.reload();
+}
+
+async function checkAuth() {
+  const token = getToken();
+  if (!token) return false;
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/me`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    if (!r.ok) return false;
+    const d = await r.json();
+    userInfo = d.user || d;
+    return userInfo && userInfo.role === "admin";
+  } catch (e) { return false; }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Helpers
+function authHeaders() {
+  return { "Authorization": `Bearer ${getToken()}`, "Content-Type": "application/json" };
+}
+function fmtNok(amountInOre, currency) {
+  if (amountInOre == null) return "—";
+  const cur = (currency || "nok").toUpperCase();
+  const v = (amountInOre / 100).toLocaleString("nb-NO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${v} ${cur}`;
+}
+function fmtDate(unixSec) {
+  if (!unixSec) return "—";
+  const d = new Date(unixSec * 1000);
+  return d.toLocaleString("nb-NO", { dateStyle: "short", timeStyle: "short" });
+}
+function statusPill(status) {
+  const s = (status || "").toLowerCase();
+  if (s === "succeeded" || s === "paid" || s === "active") return `<span class="pill pill-green">${s}</span>`;
+  if (s === "processing" || s === "trialing") return `<span class="pill pill-blue">${s}</span>`;
+  if (s === "requires_payment_method" || s === "requires_action" || s === "past_due") return `<span class="pill pill-orange">${s}</span>`;
+  if (s === "canceled" || s === "cancelled" || s === "failed") return `<span class="pill pill-red">${s}</span>`;
+  return `<span class="pill pill-gray">${s || "—"}</span>`;
+}
+function showErr(msg) {
+  const el = document.getElementById("errBox");
+  el.textContent = msg;
+  el.style.display = "block";
+}
+function clearErr() { document.getElementById("errBox").style.display = "none"; }
+function setLive(on, label) {
+  document.getElementById("liveDot").classList.toggle("offline", !on);
+  document.getElementById("liveLabel").textContent = label || (on ? "Live" : "Frakoblet");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Tabs
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
+  loadActiveTab();
+}
+
+async function loadActiveTab(force) {
+  clearErr();
+  const wrap = document.getElementById("tableWrap");
+  wrap.innerHTML = `<div class="empty">Henter fra Stripe…</div>`;
+  document.getElementById("panelMeta").textContent = "—";
+  try {
+    if (activeTab === "payments")       await loadPayments();
+    else if (activeTab === "subscriptions") await loadSubscriptions();
+    else if (activeTab === "customers") await loadCustomers();
+    else if (activeTab === "disputes")  await loadDisputes();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty">Klarte ikke laste data.</div>`;
+    showErr(e.message || String(e));
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Balance
+async function loadBalance() {
+  try {
+    const r = await fetch(`${API_BASE}/api/admin/stripe/balance`, { headers: authHeaders() });
+    const d = await r.json();
+    if (!d.ok) return;
+    const sumOre = (arr) => (arr || []).reduce((s, x) => s + (x.amount || 0), 0);
+    const cur = ((d.available && d.available[0]) || (d.pending && d.pending[0]) || {}).currency || "nok";
+    document.getElementById("balAvail").textContent   = fmtNok(sumOre(d.available), cur);
+    document.getElementById("balPending").textContent = fmtNok(sumOre(d.pending),   cur);
+  } catch (e) { /* silent */ }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Payments
+async function loadPayments() {
+  const r = await fetch(`${API_BASE}/api/admin/stripe/payments?limit=50`, { headers: authHeaders() });
+  if (r.status === 401) { clearToken(); location.reload(); return; }
+  const d = await r.json();
+  if (!d.ok) throw new Error(d.error || "Stripe-feil");
+  const rows = d.rows || [];
+  document.getElementById("panelMeta").textContent = `${rows.length} betalinger (siste 50)`;
+
+  if (!rows.length) {
+    document.getElementById("tableWrap").innerHTML = `<div class="empty">Ingen betalinger ennå.</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead>
+        <tr>
+          <th>Tidspunkt</th>
+          <th>Beløp</th>
+          <th>Status</th>
+          <th>Kunde / e-post</th>
+          <th>Beskrivelse</th>
+          <th>ID</th>
+          <th class="right"></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(p => `
+          <tr>
+            <td>${fmtDate(p.created)}</td>
+            <td class="num"><strong>${fmtNok(p.amount, p.currency)}</strong>${p.amount_refunded ? `<br><span style="font-size:11px;color:var(--c-red)">−${fmtNok(p.amount_refunded, p.currency)} refundert</span>` : ""}</td>
+            <td>${statusPill(p.status)}${p.refunded ? ' <span class="pill pill-gray">refundert</span>' : ""}</td>
+            <td>${escapeHtml(p.receipt_email || "—")}</td>
+            <td>${escapeHtml(p.description || (p.metadata && p.metadata.ordrenr ? "Ordre #" + p.metadata.ordrenr : "—"))}</td>
+            <td class="id">${p.id}</td>
+            <td class="right">
+              ${p.receipt_url ? `<a class="btn-action" href="${p.receipt_url}" target="_blank" rel="noopener">Kvittering</a>` : ""}
+              ${(p.status === "succeeded" && !p.refunded) ? `<button class="btn-action danger" onclick="askRefund('${p.id}', ${p.amount - (p.amount_refunded||0)}, '${(p.currency||'nok')}')">Refundér</button>` : ""}
+            </td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+  document.getElementById("tableWrap").innerHTML = html;
+}
+
+async function askRefund(piId, maxOre, currency) {
+  const ans = prompt(`Refusjonsbeløp i ${currency.toUpperCase()} (tom = full ${fmtNok(maxOre, currency)}):`, "");
+  if (ans === null) return;
+  let amount = null;
+  if (ans.trim()) {
+    const v = parseFloat(ans.replace(",", "."));
+    if (isNaN(v) || v <= 0) return alert("Ugyldig beløp");
+    amount = Math.round(v * 100);
+    if (amount > maxOre) return alert(`Beløpet kan ikke overstige ${fmtNok(maxOre, currency)}`);
+  }
+  if (!confirm(`Bekreft refusjon: ${amount ? fmtNok(amount, currency) : "Full ("+fmtNok(maxOre, currency)+")"}\n\nDette kan ikke angres.`)) return;
+  try {
+    const r = await fetch(`${API_BASE}/api/admin/stripe/payments/${piId}/refund`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ amount, reason: "requested_by_customer" }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || "Refusjon feilet");
+    alert("Refusjon utført ✓");
+    loadActiveTab(true);
+  } catch (e) { alert("Feil: " + e.message); }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Subscriptions
+async function loadSubscriptions() {
+  const r = await fetch(`${API_BASE}/api/admin/stripe/subscriptions?status=all&limit=50`, { headers: authHeaders() });
+  if (r.status === 401) { clearToken(); location.reload(); return; }
+  const d = await r.json();
+  if (!d.ok) throw new Error(d.error || "Stripe-feil");
+  const rows = d.rows || [];
+  document.getElementById("panelMeta").textContent = `${rows.length} abonnementer (siste 50)`;
+
+  if (!rows.length) {
+    document.getElementById("tableWrap").innerHTML = `<div class="empty">Ingen abonnementer ennå.</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead>
+        <tr>
+          <th>Opprettet</th>
+          <th>Kunde</th>
+          <th>Beløp / mnd</th>
+          <th>Status</th>
+          <th>Neste trekk</th>
+          <th>ID</th>
+          <th class="right"></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(s => `
+          <tr>
+            <td>${fmtDate(s.created)}</td>
+            <td>${escapeHtml(s.customer_name || s.customer_email || s.customer || "—")}<br><span class="id">${escapeHtml(s.customer_email || "")}</span></td>
+            <td class="num"><strong>${fmtNok(s.amount, s.currency)}</strong></td>
+            <td>${statusPill(s.status)}${s.cancel_at_period_end ? ' <span class="pill pill-orange">avsluttes</span>' : ""}</td>
+            <td>${fmtDate(s.current_period_end)}</td>
+            <td class="id">${s.id}</td>
+            <td class="right">
+              ${(s.status === "active" || s.status === "trialing") && !s.cancel_at_period_end ?
+                `<button class="btn-action danger" onclick="askCancelSub('${s.id}')">Kanseller</button>` : ""}
+            </td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+  document.getElementById("tableWrap").innerHTML = html;
+}
+
+async function askCancelSub(subId) {
+  const choice = prompt("Hvordan kansellere?\n1 = Ved periodens slutt (kunden får leveransen de har betalt for)\n2 = Umiddelbart (uten refusjon)\n\nSkriv 1 eller 2:", "1");
+  if (choice === null) return;
+  const at_period_end = choice.trim() !== "2";
+  if (!confirm(`Bekreft kansellering ${at_period_end ? "ved periodens slutt" : "UMIDDELBART"}.`)) return;
+  try {
+    const r = await fetch(`${API_BASE}/api/admin/stripe/subscriptions/${subId}/cancel`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ at_period_end }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || "Kansellering feilet");
+    alert("Kansellering registrert ✓");
+    loadActiveTab(true);
+  } catch (e) { alert("Feil: " + e.message); }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Customers
+async function loadCustomers() {
+  const r = await fetch(`${API_BASE}/api/admin/stripe/customers?limit=50`, { headers: authHeaders() });
+  if (r.status === 401) { clearToken(); location.reload(); return; }
+  const d = await r.json();
+  if (!d.ok) throw new Error(d.error || "Stripe-feil");
+  const rows = d.rows || [];
+  document.getElementById("panelMeta").textContent = `${rows.length} kunder (siste 50)`;
+
+  if (!rows.length) {
+    document.getElementById("tableWrap").innerHTML = `<div class="empty">Ingen kunder ennå.</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead>
+        <tr>
+          <th>Opprettet</th>
+          <th>Navn</th>
+          <th>E-post</th>
+          <th>Telefon</th>
+          <th>Saldo</th>
+          <th>ID</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(c => `
+          <tr>
+            <td>${fmtDate(c.created)}</td>
+            <td>${escapeHtml(c.name || "—")}</td>
+            <td>${escapeHtml(c.email || "—")}</td>
+            <td>${escapeHtml(c.phone || "—")}</td>
+            <td class="num">${c.balance ? fmtNok(c.balance, c.currency) : "—"}${c.delinquent ? ' <span class="pill pill-red">delinquent</span>' : ""}</td>
+            <td class="id">${c.id}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+  document.getElementById("tableWrap").innerHTML = html;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Disputes
+async function loadDisputes() {
+  const r = await fetch(`${API_BASE}/api/admin/stripe/disputes?limit=50`, { headers: authHeaders() });
+  if (r.status === 401) { clearToken(); location.reload(); return; }
+  const d = await r.json();
+  if (!d.ok) throw new Error(d.error || "Stripe-feil");
+  const rows = d.rows || [];
+  document.getElementById("panelMeta").textContent = `${rows.length} disputes`;
+
+  if (!rows.length) {
+    document.getElementById("tableWrap").innerHTML = `<div class="empty">Ingen åpne saker ✓</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead>
+        <tr>
+          <th>Opprettet</th>
+          <th>Beløp</th>
+          <th>Årsak</th>
+          <th>Status</th>
+          <th>Frist</th>
+          <th>Charge / PI</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(x => `
+          <tr>
+            <td>${fmtDate(x.created)}</td>
+            <td class="num"><strong>${fmtNok(x.amount, x.currency)}</strong></td>
+            <td>${escapeHtml(x.reason || "—")}</td>
+            <td>${statusPill(x.status)}</td>
+            <td>${fmtDate(x.due_by)}</td>
+            <td class="id">${x.payment_intent || x.charge || "—"}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+  document.getElementById("tableWrap").innerHTML = html;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Escaping
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Init
+async function initApp() {
+  document.getElementById("loginOverlay").style.display = "none";
+  document.getElementById("mainView").style.display = "block";
+  if (userInfo) {
+    document.getElementById("userBadge").textContent = userInfo.email || "";
+    document.getElementById("userBadge").style.display = "";
+    document.getElementById("logoutBtn").style.display = "";
+  }
+  setLive(true, "Live");
+  await loadBalance();
+  await loadActiveTab();
+}
+
+(async () => {
+  const ok = await checkAuth();
+  if (ok) {
+    initApp();
+  } else {
+    clearToken();
+    document.getElementById("loginOverlay").style.display = "flex";
+    document.getElementById("loginEmail").focus();
+  }
+})();
+</script>
+
+</body>
+</html>

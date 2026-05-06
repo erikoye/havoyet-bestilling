@@ -7,7 +7,7 @@ Start: python3 app.py
 Krav:  pip install flask flask-cors requests
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
@@ -846,6 +846,12 @@ TWILIO_FROM        = os.environ.get("TWILIO_FROM", "")  # f.eks. "+4790000000"
 # overstyres via NTFY_SERVER for selv-hostet versjon.
 NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
 
+# Telegram bot — gratis push med rik formatering. Opprettes via @BotFather
+# på Telegram. Sett TELEGRAM_BOT_TOKEN i .env / Render-env. Hver admin-mottaker
+# starter en chat med boten og registrerer sin chat_id i admin-UI.
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_API       = "https://api.telegram.org"
+
 
 def _normalize_phone(raw):
     """Normaliser norsk telefonnr til E.164-format (+47XXXXXXXX).
@@ -928,6 +934,66 @@ def _send_admin_push(topic, subject, body):
         return False, f"ntfy-exception: {e}"
 
 
+def _normalize_telegram_chat_id(raw):
+    """Telegram chat_id er enten et tall (privat chat / kanal) eller en
+    @kanalbrukernavn-streng. Aksepter begge. Returner str eller None."""
+    if raw is None:
+        return None
+    t = str(raw).strip()
+    if not t:
+        return None
+    if t.startswith("@"):
+        # Kanal-brukernavn — Telegram krever bokstaver/tall/_ og 5–32 tegn
+        import re as _re
+        if _re.fullmatch(r"@[A-Za-z][A-Za-z0-9_]{4,31}", t):
+            return t
+        return None
+    # Tall (kan være negativt for grupper). Tillat valgfritt fortegn.
+    if t.lstrip("-").isdigit():
+        return t
+    return None
+
+
+def _send_admin_telegram(chat_id, subject, body):
+    """Send melding via Telegram-bot. Bruker Markdown-format med fet skrift
+    på subject. Trimmer til 4096 tegn (Telegrams maks)."""
+    if not TELEGRAM_BOT_TOKEN:
+        return False, "telegram-not-configured"
+    norm = _normalize_telegram_chat_id(chat_id)
+    if not norm:
+        return False, "telegram-invalid-chat-id"
+    # Bygg en lesbar melding. Bruk MarkdownV2 ville krevd escaping av mange tegn,
+    # så vi bruker plain HTML som er enklere og likevel støtter <b>.
+    safe_subject = (subject or "Havøyet")
+    for k, v in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;")):
+        safe_subject = safe_subject.replace(k, v)
+    safe_body = body or ""
+    for k, v in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;")):
+        safe_body = safe_body.replace(k, v)
+    text = f"<b>{safe_subject}</b>\n\n<pre>{safe_body}</pre>"
+    if len(text) > 4096:
+        text = text[:4090] + "…</pre>"
+    try:
+        r = requests.post(
+            f"{TELEGRAM_API}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": norm,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=10,
+        )
+        if 200 <= r.status_code < 300:
+            data = r.json()
+            if data.get("ok"):
+                return True, "sent-via-telegram"
+            return False, f"telegram-api-error: {data.get('description','')[:200]}"
+        return False, f"telegram-{r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, f"telegram-exception: {e}"
+
+
 def _send_admin_sms(to_phone, body):
     """Send SMS via Twilio. Trimmer til 1 SMS-segment (160 tegn) for å holde
     kostnaden lav. Returnerer (ok, detail)."""
@@ -979,18 +1045,20 @@ def _notify_admins(event, subject, body):
                 "at": datetime.now().isoformat(),
                 "event": event, "subject": subject, "body": body,
                 "recipients": [{"email": n.get("email"), "phone": n.get("phone"),
-                                "ntfy": n.get("ntfy_topic")} for n in matching],
+                                "ntfy": n.get("ntfy_topic"),
+                                "telegram": n.get("telegram_chat_id")} for n in matching],
             }, ensure_ascii=False) + "\n")
     except Exception as e:
         print(f"[ADMIN-NOTIFY] Logg-feil: {e}")
 
     sms_text = _short_sms_for(event, subject, body)
-    mail_sent = sms_sent = push_sent = 0
-    mail_failed = sms_failed = push_failed = 0
+    mail_sent = sms_sent = push_sent = tg_sent = 0
+    mail_failed = sms_failed = push_failed = tg_failed = 0
     for n in matching:
         email = (n.get("email") or "").strip()
         phone = (n.get("phone") or "").strip()
         ntfy  = (n.get("ntfy_topic") or "").strip()
+        tg    = (n.get("telegram_chat_id") or "").strip()
         if email:
             ok, detail = _send_admin_mail(email, subject, body)
             if ok: mail_sent += 1
@@ -1014,10 +1082,17 @@ def _notify_admins(event, subject, body):
             else:
                 push_failed += 1
                 print(f"[ADMIN-NOTIFY] push {ntfy}: {detail}")
+        if tg:
+            ok, detail = _send_admin_telegram(tg, subject, body)
+            if ok: tg_sent += 1
+            else:
+                tg_failed += 1
+                print(f"[ADMIN-NOTIFY] telegram {tg}: {detail}")
     print(f"[ADMIN-NOTIFY] {event}: "
           f"mail={mail_sent}/{mail_sent+mail_failed}, "
           f"sms={sms_sent}/{sms_sent+sms_failed}, "
-          f"push={push_sent}/{push_sent+push_failed}")
+          f"push={push_sent}/{push_sent+push_failed}, "
+          f"telegram={tg_sent}/{tg_sent+tg_failed}")
 
 
 def _format_order_lines(order):
@@ -1150,11 +1225,12 @@ def api_admin_notifiers():
         email = (data.get("email") or "").strip().lower()
         phone_raw = (data.get("phone") or "").strip()
         ntfy_raw  = (data.get("ntfy_topic") or "").strip()
+        tg_raw    = (data.get("telegram_chat_id") or "").strip()
         name  = (data.get("name") or "").strip()
         events = data.get("events") or list(ADMIN_EVENTS)
         # Minst én kanal må være fylt ut
-        if not email and not phone_raw and not ntfy_raw:
-            return jsonify({"error": "Du må fylle inn e-post, telefon eller ntfy-topic"}), 400
+        if not email and not phone_raw and not ntfy_raw and not tg_raw:
+            return jsonify({"error": "Du må fylle inn e-post, telefon, ntfy-topic eller Telegram chat-ID"}), 400
         if email and "@" not in email:
             return jsonify({"error": "Ugyldig e-postadresse"}), 400
         phone = ""
@@ -1169,6 +1245,12 @@ def api_admin_notifiers():
             if not n_norm:
                 return jsonify({"error": "Ugyldig ntfy-topic (bruk bokstaver, tall, _ og -)"}), 400
             ntfy = n_norm
+        tg_chat = ""
+        if tg_raw:
+            tg_norm = _normalize_telegram_chat_id(tg_raw)
+            if not tg_norm:
+                return jsonify({"error": "Ugyldig Telegram chat-ID (tall som 123456789 eller @kanalnavn)"}), 400
+            tg_chat = tg_norm
         # Filtrer bare gyldige events
         events = [e for e in events if e in ADMIN_EVENTS]
         if not events:
@@ -1181,12 +1263,15 @@ def api_admin_notifiers():
                 return jsonify({"error": "Telefonnummeret er allerede registrert"}), 409
             if ntfy and n.get("ntfy_topic", "") == ntfy:
                 return jsonify({"error": "Ntfy-topicen er allerede registrert"}), 409
+            if tg_chat and n.get("telegram_chat_id", "") == tg_chat:
+                return jsonify({"error": "Telegram chat-ID er allerede registrert"}), 409
         new = {
             "id": str(_uuid.uuid4()),
             "name": name,
             "email": email,
             "phone": phone,
             "ntfy_topic": ntfy,
+            "telegram_chat_id": tg_chat,
             "events": events,
             "created_at": datetime.now().isoformat(),
         }
@@ -1239,9 +1324,18 @@ def api_admin_notifier_one(notifier_id):
                     if not nt_norm:
                         return jsonify({"error": "Ugyldig ntfy-topic"}), 400
                     n["ntfy_topic"] = nt_norm
+            if "telegram_chat_id" in data:
+                tg_raw = (data.get("telegram_chat_id") or "").strip()
+                if tg_raw == "":
+                    n["telegram_chat_id"] = ""
+                else:
+                    tg_norm = _normalize_telegram_chat_id(tg_raw)
+                    if not tg_norm:
+                        return jsonify({"error": "Ugyldig Telegram chat-ID"}), 400
+                    n["telegram_chat_id"] = tg_norm
             # Sikkerhetssjekk: minst én kanal må gjenstå
-            if not (n.get("email") or n.get("phone") or n.get("ntfy_topic")):
-                return jsonify({"error": "Mottakeren må ha minst én kanal (e-post, telefon eller ntfy)"}), 400
+            if not (n.get("email") or n.get("phone") or n.get("ntfy_topic") or n.get("telegram_chat_id")):
+                return jsonify({"error": "Mottakeren må ha minst én kanal (e-post, telefon, ntfy eller Telegram)"}), 400
             _save_sync_state()
             return jsonify({"ok": True, "notifier": n})
     return jsonify({"error": "Ikke funnet"}), 404
@@ -1257,10 +1351,12 @@ def api_admin_notifier_test():
         targets = [n for n in _admin_notifiers if n.get("id") == target_id]
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     mail_sent = mail_failed = sms_sent = sms_failed = push_sent = push_failed = 0
+    tg_sent = tg_failed = 0
     for n in targets:
         email = (n.get("email") or "").strip()
         phone = (n.get("phone") or "").strip()
         ntfy  = (n.get("ntfy_topic") or "").strip()
+        tg    = (n.get("telegram_chat_id") or "").strip()
         if email:
             ok, _ = _send_admin_mail(
                 email,
@@ -1286,14 +1382,23 @@ def api_admin_notifier_test():
             )
             if ok: push_sent += 1
             else:  push_failed += 1
+        if tg:
+            ok, _ = _send_admin_telegram(
+                tg,
+                "[Havøyet] Testvarsel",
+                f"Telegram-varsel sendt {ts}.\n\nNår du ser dette i Telegram, fungerer admin-varsler.",
+            )
+            if ok: tg_sent += 1
+            else:  tg_failed += 1
     return jsonify({
         "ok": True,
         "mail_sent": mail_sent, "mail_failed": mail_failed,
         "sms_sent":  sms_sent,  "sms_failed":  sms_failed,
         "push_sent": push_sent, "push_failed": push_failed,
+        "telegram_sent": tg_sent, "telegram_failed": tg_failed,
         # Bakoverkompatibilitet
-        "sent": mail_sent + sms_sent + push_sent,
-        "failed": mail_failed + sms_failed + push_failed,
+        "sent": mail_sent + sms_sent + push_sent + tg_sent,
+        "failed": mail_failed + sms_failed + push_failed + tg_failed,
     })
 
 
@@ -1316,7 +1421,67 @@ def api_admin_notifier_status():
             "server":    NTFY_SERVER,
             "available": True,
         },
+        "telegram": {
+            "bot":       bool(TELEGRAM_BOT_TOKEN),
+            "available": bool(TELEGRAM_BOT_TOKEN),
+        },
     })
+
+
+@app.route("/api/admin/telegram/setup", methods=["GET"])
+def api_admin_telegram_setup():
+    """Hjelp-endepunkt for å finne chat-IDen din.
+
+    1. Bruker oppretter bot via @BotFather og setter TELEGRAM_BOT_TOKEN.
+    2. Bruker åpner Telegram, søker opp boten og trykker "Start" / sender
+       en melding (f.eks. "hei").
+    3. Bruker åpner admin-UI som kaller dette endepunktet — vi spør
+       Telegram getUpdates og returnerer alle chat-IDer som har snakket
+       med boten siden sist.
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        return jsonify({"ok": False, "error": "TELEGRAM_BOT_TOKEN er ikke satt på serveren."}), 400
+    try:
+        r = requests.get(
+            f"{TELEGRAM_API}/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
+            params={"timeout": 0, "limit": 50},
+            timeout=10,
+        )
+        if not (200 <= r.status_code < 300):
+            return jsonify({"ok": False, "error": f"Telegram API svarte {r.status_code}: {r.text[:200]}"}), 502
+        data = r.json()
+        if not data.get("ok"):
+            return jsonify({"ok": False, "error": data.get("description", "Ukjent Telegram-feil")}), 502
+        # Trekk ut unike chats fra siste meldinger
+        chats = {}
+        for upd in data.get("result", []):
+            msg = upd.get("message") or upd.get("edited_message") or {}
+            chat = msg.get("chat") or {}
+            cid = chat.get("id")
+            if cid is None:
+                continue
+            key = str(cid)
+            if key not in chats:
+                first = (chat.get("first_name") or "").strip()
+                last  = (chat.get("last_name") or "").strip()
+                user  = (chat.get("username") or "").strip()
+                title = (chat.get("title") or "").strip()
+                full = title or " ".join(p for p in (first, last) if p) or (f"@{user}" if user else "")
+                chats[key] = {
+                    "chat_id": key,
+                    "name":    full or "(ukjent)",
+                    "type":    chat.get("type", ""),
+                    "username": user,
+                    "last_text": (msg.get("text") or "")[:80],
+                }
+        return jsonify({
+            "ok": True,
+            "chats": list(chats.values()),
+            "hint": "Send en melding til boten på Telegram, så dukker chat-IDen opp her. "
+                    "Trykk på den for å fylle ut feltet automatisk.",
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Kunne ikke hente updates: {e}"}), 502
 
 
 @app.route("/api/contact", methods=["POST"])
@@ -1424,6 +1589,19 @@ def api_orders_new():
 
     emne = f"[Bestilling {data['ordrenr']}] {navn} – {data.get('sum', 0)} kr"
     ok, detail = _send_contact_mail(epost, navn, emne, "\n".join(lines))
+
+    # Send admin-varsel (e-post / SMS / ntfy / Telegram) til registrerte mottakere.
+    # Dette er separat fra kvitterings-mailen som går til kunden via _send_contact_mail
+    # og sikrer at f.eks. Telegram-varsel går ut umiddelbart når bestillingen kommer inn.
+    try:
+        _notify_admins(
+            "new_order",
+            f"[Havøyet] Ny bestilling #{data['ordrenr']} — {navn} ({data.get('sum', 0)} kr)",
+            "\n".join(lines),
+        )
+    except Exception as e:
+        print(f"[ADMIN-NOTIFY] new_order varsel feilet: {e}")
+
     return jsonify({"ok": True, "mail": detail, "ordrenr": data["ordrenr"], "order": data})
 
 
@@ -2731,6 +2909,57 @@ def api_subscription_cancel(sub_id):
     return jsonify({"ok": True, "status": cancelled.status})
 
 
+@app.route("/api/subscription/admin-test-create", methods=["POST"])
+def api_subscription_admin_test_create():
+    """Admin-only: opprett et SYNTHETISK test-abonnement (ingen Stripe).
+    Brukes kun for å se hvordan Min side rendrer aktive abonnement.
+    Subscription-id får prefiks 'test_' så det er enkelt å rydde opp."""
+    user, err = _subscription_admin_required()
+    if err: return err
+    data  = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return jsonify({"ok": False, "error": "E-post kreves"}), 400
+    amount   = int(data.get("amount", 1490_00))   # default: 1490 kr/mnd (i øre)
+    kasse    = data.get("kasse") or {"name": "Sjømatkasse — 2 personer", "size": "2pers"}
+    desc     = data.get("description") or "Sjømatkasse — månedlig abonnement (TEST)"
+    now      = int(time.time())
+    sub_id   = f"test_{int(time.time()*1000)}"
+    next_period = now + 30 * 24 * 60 * 60   # ~30 dager fram
+    _subscriptions[sub_id] = {
+        "subscription_id":    sub_id,
+        "customer_id":        f"test_cus_{now}",
+        "email":              email,
+        "amount":             amount,
+        "currency":           "nok",
+        "interval":           "month",
+        "status":             "active",
+        "current_period_end": next_period,
+        "kunde":              {"epost": email, "navn": data.get("navn") or "Test Testesen"},
+        "kasse":              kasse,
+        "description":        desc,
+        "created_at":         now,
+        "last_charged_at":    now,
+        "charges_count":      1,
+        "is_test":            True,
+    }
+    _save_subscriptions()
+    return jsonify({"ok": True, "subscription_id": sub_id, "row": _subscriptions[sub_id]})
+
+@app.route("/api/subscription/admin-test/<sub_id>", methods=["DELETE"])
+def api_subscription_admin_test_delete(sub_id):
+    """Admin-only: slett et synthetisk test-abonnement. Kun id med prefiks 'test_'."""
+    user, err = _subscription_admin_required()
+    if err: return err
+    if not sub_id.startswith("test_"):
+        return jsonify({"ok": False, "error": "Bare test-abonnement (id må starte med 'test_')"}), 400
+    if sub_id not in _subscriptions:
+        return jsonify({"ok": False, "error": "Ikke funnet"}), 404
+    del _subscriptions[sub_id]
+    _save_subscriptions()
+    return jsonify({"ok": True})
+
+
 # ─── Kunde-vendte subscription-endepunkter (Min side) ──────────────────────────
 # Sikkerhet: kunden identifiseres via e-post i body/query. Operasjoner sjekker
 # at e-posten matcher subscription. Tidsfrist-regler håndheves serversiden.
@@ -3098,6 +3327,349 @@ def api_webhook_stripe():
             _save_subscriptions()
 
     return jsonify({"received": True})
+
+
+# ─── ADMIN STRIPE-MIRROR ──────────────────────────────────────────────────────
+# Speiler live-data fra Stripe-API-et inn i admin slik at admin og Stripe alltid
+# viser identisk informasjon. Stripe forblir authoritative — ingen lokal kopi
+# her (den eksisterende _stripe_load_payments cachen brukes kun for webhook-flyt).
+
+def _admin_required_stripe():
+    """Felles auth-helper for admin-Stripe-API. Returnerer (user, error_response)."""
+    user, _ = _user_from_request()
+    if not user:
+        return None, (jsonify({"ok": False, "error": "Ikke innlogget"}), 401)
+    if user.get("role") != "admin":
+        return None, (jsonify({"ok": False, "error": "Bare admin"}), 403)
+    return user, None
+
+
+def _stripe_payment_to_dict(pi):
+    """Konverter Stripe PaymentIntent til kompakt admin-form."""
+    obj = pi if isinstance(pi, dict) else pi.to_dict()
+    charges = (obj.get("charges") or {}).get("data") or []
+    last_charge = charges[0] if charges else {}
+    return {
+        "id":               obj.get("id"),
+        "amount":           obj.get("amount"),
+        "amount_received":  obj.get("amount_received"),
+        "currency":         obj.get("currency"),
+        "status":           obj.get("status"),
+        "created":          obj.get("created"),
+        "description":      obj.get("description"),
+        "customer":         obj.get("customer"),
+        "metadata":         obj.get("metadata") or {},
+        "receipt_email":    obj.get("receipt_email") or last_charge.get("receipt_email"),
+        "receipt_url":      last_charge.get("receipt_url"),
+        "payment_method":   obj.get("payment_method_types") or [],
+        "refunded":         last_charge.get("refunded", False),
+        "amount_refunded":  last_charge.get("amount_refunded", 0),
+        "invoice":          obj.get("invoice"),
+    }
+
+
+@app.route("/api/admin/stripe/payments", methods=["GET"])
+def api_admin_stripe_payments():
+    """Liste de siste live-betalingene direkte fra Stripe."""
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    try:
+        limit = min(int(request.args.get("limit", 50) or 50), 100)
+    except Exception:
+        limit = 50
+    starting_after = request.args.get("starting_after") or None
+    try:
+        kwargs = {"limit": limit}
+        if starting_after: kwargs["starting_after"] = starting_after
+        pis = _stripe.PaymentIntent.list(**kwargs)
+        rows = [_stripe_payment_to_dict(pi) for pi in pis.data]
+        return jsonify({
+            "ok":       True,
+            "rows":     rows,
+            "has_more": pis.has_more,
+            "next_cursor": rows[-1]["id"] if rows and pis.has_more else None,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Stripe-feil: {e}"}), 502
+
+
+@app.route("/api/admin/stripe/payments/<pi_id>", methods=["GET"])
+def api_admin_stripe_payment_detail(pi_id):
+    """Detaljer for én PaymentIntent — inkludert charges, refunds og kunde."""
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    try:
+        pi = _stripe.PaymentIntent.retrieve(
+            pi_id,
+            expand=["charges.data.balance_transaction", "customer", "invoice", "latest_charge"],
+        )
+        return jsonify({"ok": True, "payment": pi.to_dict()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Stripe-feil: {e}"}), 502
+
+
+@app.route("/api/admin/stripe/payments/<pi_id>/refund", methods=["POST"])
+def api_admin_stripe_refund(pi_id):
+    """Utfør refusjon — full eller delvis (amount i øre)."""
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    body   = request.get_json(silent=True) or {}
+    amount = body.get("amount")    # i øre, valgfritt — None = full refusjon
+    reason = body.get("reason")    # 'requested_by_customer' | 'duplicate' | 'fraudulent'
+    try:
+        kwargs = {"payment_intent": pi_id}
+        if amount: kwargs["amount"] = int(amount)
+        if reason: kwargs["reason"] = reason
+        refund = _stripe.Refund.create(**kwargs)
+        _notify_admins(
+            "refund_issued",
+            f"[Havøyet] Refusjon utstedt ({refund.amount/100:.2f} kr)",
+            f"PaymentIntent: {pi_id}\nRefund: {refund.id}\nÅrsak: {reason or '—'}\nUtført av: {user.get('email')}",
+        )
+        return jsonify({"ok": True, "refund": refund.to_dict()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Refusjon feilet: {e}"}), 502
+
+
+def _find_payment_intent_for_order(ordrenr):
+    """Slår opp Stripe PaymentIntent-id for en gitt ordrenr i lokal payments-fil.
+    Returnerer (intent_id, rec_dict) eller (None, None) hvis ikke funnet."""
+    payments = _stripe_load_payments() or {}
+    for pi_id, rec in payments.items():
+        if str(rec.get("ordrenr") or "").strip() == str(ordrenr).strip():
+            return pi_id, rec
+    return None, None
+
+
+@app.route("/api/admin/orders/<ordrenr>/refund", methods=["POST"])
+def api_admin_order_refund(ordrenr):
+    """Refunder en kundeordre direkte via Stripe.
+    Body: { amount_ore: int, reason?: str, note?: str, lines?: list }
+    Backend slår opp Stripe payment_intent fra ordrenr og utfører refusjonen.
+    """
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    body = request.get_json(silent=True) or {}
+    try:
+        amount_ore = int(body.get("amount_ore") or 0)
+    except (TypeError, ValueError):
+        amount_ore = 0
+    if amount_ore <= 0:
+        return jsonify({"ok": False, "error": "Ugyldig beløp"}), 400
+    reason = body.get("reason") or None
+    note   = (body.get("note") or "").strip() or None
+    lines  = body.get("lines") or []
+
+    pi_id, payment_rec = _find_payment_intent_for_order(ordrenr)
+    if not pi_id:
+        return jsonify({
+            "ok": False,
+            "error": f"Fant ingen Stripe-betaling for ordre {ordrenr}. "
+                     f"Refusjon kan kun utføres for kortbetalinger gjort via nettsiden."
+        }), 404
+
+    try:
+        kwargs = {"payment_intent": pi_id, "amount": amount_ore}
+        if reason: kwargs["reason"] = reason
+        refund = _stripe.Refund.create(**kwargs)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Refusjon feilet: {e}"}), 502
+
+    # Logg refusjonen mot ordren i _manual_orders så den vises i admin
+    refund_record = {
+        "id":             refund.id,
+        "amount_ore":     refund.amount,
+        "amount_kr":      round(refund.amount / 100, 2),
+        "reason":         reason,
+        "note":           note,
+        "lines":          lines,
+        "status":         refund.status,
+        "payment_intent": pi_id,
+        "created_at":     time.time(),
+        "by":             (user or {}).get("email"),
+    }
+    try:
+        global _manual_orders
+        for o in _manual_orders:
+            if str(o.get("ordrenr") or "").strip() == str(ordrenr).strip():
+                refunds = o.setdefault("refunds", [])
+                refunds.append(refund_record)
+                # Oppdater status hvis full refusjon
+                paid_amount = int((payment_rec or {}).get("amount") or 0)
+                refunded_total = sum(int(r.get("amount_ore") or 0) for r in refunds)
+                if paid_amount and refunded_total >= paid_amount:
+                    o["status"] = "REFUNDED"
+                break
+        _save_sync_state()
+    except Exception as e:
+        print(f"[refund] Klarte ikke oppdatere _manual_orders for {ordrenr}: {e}")
+
+    _notify_admins(
+        "refund_issued",
+        f"[Havøyet] Refusjon utstedt ({refund.amount/100:.2f} kr) — ordre {ordrenr}",
+        f"Ordrenr: {ordrenr}\nPaymentIntent: {pi_id}\nRefund: {refund.id}\n"
+        f"Beløp: {refund.amount/100:.2f} kr\nÅrsak: {reason or '—'}\n"
+        f"Notat: {note or '—'}\nUtført av: {(user or {}).get('email')}",
+    )
+    return jsonify({"ok": True, "refund": refund.to_dict(), "ordrenr": ordrenr})
+
+
+@app.route("/api/admin/stripe/subscriptions", methods=["GET"])
+def api_admin_stripe_subscriptions():
+    """Liste alle abonnementer direkte fra Stripe (ikke kun lokale)."""
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    status = (request.args.get("status") or "all").lower()
+    try:
+        limit = min(int(request.args.get("limit", 50) or 50), 100)
+    except Exception:
+        limit = 50
+    try:
+        kwargs = {"limit": limit, "expand": ["data.customer", "data.latest_invoice"]}
+        if status != "all":
+            kwargs["status"] = status
+        subs = _stripe.Subscription.list(**kwargs)
+        rows = []
+        for s in subs.data:
+            d    = s.to_dict()
+            cust = d.get("customer") or {}
+            item = ((d.get("items") or {}).get("data") or [{}])[0]
+            price = item.get("price", {}) or {}
+            rows.append({
+                "id":                  d.get("id"),
+                "status":              d.get("status"),
+                "customer":            cust.get("id") if isinstance(cust, dict) else cust,
+                "customer_email":      cust.get("email") if isinstance(cust, dict) else None,
+                "customer_name":       cust.get("name")  if isinstance(cust, dict) else None,
+                "current_period_end":  d.get("current_period_end"),
+                "cancel_at_period_end":d.get("cancel_at_period_end"),
+                "created":             d.get("created"),
+                "metadata":            d.get("metadata") or {},
+                "amount":              price.get("unit_amount"),
+                "currency":            price.get("currency"),
+                "interval":            (price.get("recurring") or {}).get("interval"),
+            })
+        return jsonify({"ok": True, "rows": rows, "has_more": subs.has_more})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Stripe-feil: {e}"}), 502
+
+
+@app.route("/api/admin/stripe/subscriptions/<sub_id>/cancel", methods=["POST"])
+def api_admin_stripe_subscription_cancel(sub_id):
+    """Kanseller abonnement — umiddelbart eller ved periodens slutt (default)."""
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    body          = request.get_json(silent=True) or {}
+    at_period_end = bool(body.get("at_period_end", True))
+    try:
+        if at_period_end:
+            sub = _stripe.Subscription.modify(sub_id, cancel_at_period_end=True)
+        else:
+            sub = _stripe.Subscription.cancel(sub_id)
+        # Speil til lokal cache hvis vi har den
+        if sub_id in _subscriptions:
+            _subscriptions[sub_id]["status"] = sub.status
+            if not at_period_end:
+                _subscriptions[sub_id]["cancelled_at"] = int(time.time())
+            _save_subscriptions()
+        return jsonify({
+            "ok":                   True,
+            "status":               sub.status,
+            "cancel_at_period_end": sub.cancel_at_period_end,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Kansellering feilet: {e}"}), 502
+
+
+@app.route("/api/admin/stripe/customers", methods=["GET"])
+def api_admin_stripe_customers():
+    """Liste kunder direkte fra Stripe (kan filtreres på e-post)."""
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    try:
+        limit = min(int(request.args.get("limit", 50) or 50), 100)
+    except Exception:
+        limit = 50
+    email = request.args.get("email") or None
+    try:
+        kwargs = {"limit": limit}
+        if email: kwargs["email"] = email
+        customers = _stripe.Customer.list(**kwargs)
+        rows = [{
+            "id":         d.get("id"),
+            "email":      d.get("email"),
+            "name":       d.get("name"),
+            "phone":      d.get("phone"),
+            "created":    d.get("created"),
+            "balance":    d.get("balance"),
+            "currency":   d.get("currency"),
+            "delinquent": d.get("delinquent"),
+            "metadata":   d.get("metadata") or {},
+        } for d in [c.to_dict() for c in customers.data]]
+        return jsonify({"ok": True, "rows": rows, "has_more": customers.has_more})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Stripe-feil: {e}"}), 502
+
+
+@app.route("/api/admin/stripe/disputes", methods=["GET"])
+def api_admin_stripe_disputes():
+    """Liste uavklarte saker / chargebacks."""
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    try:
+        limit = min(int(request.args.get("limit", 50) or 50), 100)
+    except Exception:
+        limit = 50
+    try:
+        disputes = _stripe.Dispute.list(limit=limit)
+        rows = [{
+            "id":             d.get("id"),
+            "amount":         d.get("amount"),
+            "currency":       d.get("currency"),
+            "status":         d.get("status"),
+            "reason":         d.get("reason"),
+            "created":        d.get("created"),
+            "due_by":         (d.get("evidence_details") or {}).get("due_by"),
+            "charge":         d.get("charge"),
+            "payment_intent": d.get("payment_intent"),
+        } for d in [x.to_dict() for x in disputes.data]]
+        return jsonify({"ok": True, "rows": rows, "has_more": disputes.has_more})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Stripe-feil: {e}"}), 502
+
+
+@app.route("/api/admin/stripe/balance", methods=["GET"])
+def api_admin_stripe_balance():
+    """Tilgjengelig + ventende balanse på Havøyets Stripe-konto."""
+    user, err = _admin_required_stripe()
+    if err: return err
+    if not _stripe_configured():
+        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+    try:
+        b = _stripe.Balance.retrieve()
+        return jsonify({
+            "ok":        True,
+            "available": [{"amount": x.amount, "currency": x.currency} for x in (b.available or [])],
+            "pending":   [{"amount": x.amount, "currency": x.currency} for x in (b.pending or [])],
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Stripe-feil: {e}"}), 502
 
 
 # ── AUTH (admin-brukere + sesjoner) ───────────────────────────────────────────
@@ -3577,10 +4149,10 @@ def api_analytics_summary():
     user, err = _analytics_admin_required()
     if err: return err
     now = int(time.time() * 1000)
-    cutoff_24h = now - 24 * 60 * 60 * 1000
-    cutoff_7d  = now - 7 * 24 * 60 * 60 * 1000
-    events     = _analytics["events"]
-    sessions   = _analytics["sessions"]
+    cutoff_24h = max(0, now - 24 * 60 * 60 * 1000)
+    cutoff_7d  = max(0, now - 7 * 24 * 60 * 60 * 1000)
+    events     = _analytics.get("events", []) or []
+    sessions   = _analytics.get("sessions", {}) or {}
     pageviews  = sum(1 for e in events if e.get("type") == "pageview")
     pv_24h     = sum(1 for e in events if e.get("type") == "pageview" and e.get("ts", 0) >= cutoff_24h)
     pv_7d      = sum(1 for e in events if e.get("type") == "pageview" and e.get("ts", 0) >= cutoff_7d)
@@ -3601,7 +4173,7 @@ def api_analytics_funnel():
     if err: return err
     steps  = ["session_start", "view_pdp", "add_to_cart", "begin_checkout", "order_complete"]
     counts = {s: 0 for s in steps}
-    for sess in _analytics["sessions"].values():
+    for sess in (_analytics.get("sessions", {}) or {}).values():
         counts["session_start"] += 1
         f = sess.get("funnel") or {}
         for s in steps[1:]:
@@ -3624,7 +4196,7 @@ def api_analytics_dropoff():
     user, err = _analytics_admin_required()
     if err: return err
     cnt = {}
-    for sess in _analytics["sessions"].values():
+    for sess in (_analytics.get("sessions", {}) or {}).values():
         if (sess.get("funnel") or {}).get("order_complete"):
             continue
         p = sess.get("last_path") or "(ukjent)"
@@ -3637,7 +4209,7 @@ def api_analytics_pages():
     user, err = _analytics_admin_required()
     if err: return err
     pv, ck, ex, t_ms, scr = {}, {}, {}, {}, {}
-    for ev in _analytics["events"]:
+    for ev in (_analytics.get("events", []) or []):
         p, t = ev.get("path") or "", ev.get("type")
         if   t == "pageview": pv[p] = pv.get(p, 0) + 1
         elif t == "click":    ck[p] = ck.get(p, 0) + 1
@@ -3664,9 +4236,11 @@ def api_analytics_heatmap():
     if err: return err
     path   = request.args.get("path", "/")
     grid_n = 20
+    if not path or len(path) > 200:
+        return jsonify({"ok": True, "path": path, "grid": [[]], "total": 0, "grid_size": grid_n})
     grid   = [[0] * grid_n for _ in range(grid_n)]
     total  = 0
-    for ev in _analytics["events"]:
+    for ev in (_analytics.get("events", []) or []):
         if ev.get("type") != "click" or ev.get("path") != path:
             continue
         gx = min(grid_n - 1, int(float(ev.get("x_pct") or 0) / 100 * grid_n))
@@ -3680,7 +4254,7 @@ def api_analytics_paths():
     user, err = _analytics_admin_required()
     if err: return err
     seq_count = {}
-    for sess in _analytics["sessions"].values():
+    for sess in (_analytics.get("sessions", {}) or {}).values():
         pages = sess.get("pages") or []
         if not pages:
             continue
@@ -3693,7 +4267,7 @@ def api_analytics_paths():
 def api_analytics_sessions():
     user, err = _analytics_admin_required()
     if err: return err
-    items = sorted(_analytics["sessions"].items(),
+    items = sorted((_analytics.get("sessions", {}) or {}).items(),
                    key=lambda kv: -(kv[1].get("started_at") or 0))[:50]
     rows  = []
     for sid, s in items:
@@ -3720,6 +4294,9 @@ def api_analytics_clear():
         _analytics["events"]   = []
         _analytics["sessions"] = {}
         _maybe_persist_analytics(force=True)
+    with REPLAY_LOCK:
+        _replays.clear()
+        _save_replays()
     return jsonify({"ok": True})
 
 
@@ -3861,6 +4438,7 @@ def api_analytics_replay_delete():
 # load/save funksjoner — vi fsync-er per skriving (fil er liten).
 CHAT_SESSIONS_FILE  = os.path.join(STATE_DIR, "havoyet_chat_sessions.json")
 CHAT_KNOWLEDGE_FILE = os.path.join(STATE_DIR, "havoyet_chat_knowledge.json")
+CHAT_ARCHIVE_FILE   = os.path.join(STATE_DIR, "havoyet_chat_archive.jsonl")
 CHAT_HUMAN_RECIPIENTS = ["erik@havoyet.no", "stian@havoyet.no"]
 _chat_sessions = {}     # id → {id, customer:{name,email}, messages:[], status, created_at, updated_at, escalated, last_admin_read, last_customer_read}
 _chat_knowledge = []    # [{q, a, learned_at, session_id}]
@@ -3903,6 +4481,80 @@ def _save_chat_knowledge():
         os.replace(tmp, CHAT_KNOWLEDGE_FILE)
     except Exception as e:
         print(f"[CHAT] save knowledge feilet: {e}")
+
+
+# Append-only "for-alltid"-arkiv. Hver hendelse i chat (kunde/AI/admin-melding,
+# Q&A trening, escalering, sletting) blir én linje i JSONL-fila. Aldri muteres.
+# Selv om en samtale slettes fra aktiv state, beholdes hele historikken her.
+_chat_archive_lock = threading.Lock()
+
+
+def _archive_chat_event(kind, payload):
+    try:
+        ev = {
+            "id": "a_" + secrets.token_urlsafe(10),
+            "ts": datetime.now().isoformat(),
+            "kind": kind,
+            "data": payload,
+        }
+        line = json.dumps(ev, ensure_ascii=False) + "\n"
+        with _chat_archive_lock:
+            with open(CHAT_ARCHIVE_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[CHAT-ARCHIVE] append feilet ({kind}): {e}")
+
+
+def _read_chat_archive(limit=None, kind_filter=None, session_id=None):
+    out = []
+    try:
+        if not os.path.exists(CHAT_ARCHIVE_FILE):
+            return out
+        with _chat_archive_lock:
+            with open(CHAT_ARCHIVE_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except Exception:
+                        continue
+                    if kind_filter and ev.get("kind") != kind_filter:
+                        continue
+                    if session_id:
+                        sid_in = (ev.get("data") or {}).get("session_id")
+                        if sid_in != session_id:
+                            continue
+                    out.append(ev)
+    except Exception as e:
+        print(f"[CHAT-ARCHIVE] read feilet: {e}")
+    if limit:
+        try:
+            out = out[-int(limit):]
+        except Exception:
+            pass
+    return out
+
+
+def _chat_archive_stats():
+    count = 0
+    bytes_total = 0
+    try:
+        if os.path.exists(CHAT_ARCHIVE_FILE):
+            bytes_total = os.path.getsize(CHAT_ARCHIVE_FILE)
+            with open(CHAT_ARCHIVE_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        count += 1
+    except Exception:
+        pass
+    return {"events": count, "bytes": bytes_total}
 
 
 def _chat_new_id():
@@ -4037,6 +4689,11 @@ def api_chat_sessions():
             }
             _chat_sessions[sid] = sess
             _save_chat_sessions()
+        _archive_chat_event("session_created", {
+            "session_id": sid,
+            "customer": sess.get("customer", {}),
+            "created_at": sess.get("created_at"),
+        })
         return jsonify({"ok": True, "session": sess})
 
     # GET → admin-liste (krever auth)
@@ -4062,8 +4719,13 @@ def api_chat_session_one(sid):
         if not user:
             return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
         with _chat_lock:
-            _chat_sessions.pop(sid, None)
+            snapshot = _chat_sessions.pop(sid, None)
             _save_chat_sessions()
+        _archive_chat_event("session_deleted", {
+            "session_id": sid,
+            "deleted_by": (user or {}).get("email"),
+            "snapshot": snapshot,
+        })
         return jsonify({"ok": True})
 
     # GET — om admin er innlogget, marker som lest
@@ -4116,6 +4778,7 @@ def api_chat_messages(sid):
         sess.setdefault("messages", []).append(msg)
         sess["updated_at"] = now
 
+        archive_extra = None
         if role == "customer":
             sess["unread_for_admin"] = int(sess.get("unread_for_admin", 0)) + 1
         elif role == "admin":
@@ -4127,16 +4790,34 @@ def api_chat_messages(sid):
                     prev_customer = m
                     break
             if prev_customer and sess.get("escalated"):
-                _chat_knowledge.append({
+                qna = {
                     "q": prev_customer.get("text", ""),
                     "a": text,
                     "learned_at": now,
                     "session_id": sid,
-                })
+                }
+                _chat_knowledge.append(qna)
                 _save_chat_knowledge()
+                archive_extra = qna
 
         _save_chat_sessions()
         out_sess = dict(sess)
+
+    # Append-only arkiv: hver melding lagres for alltid (selv om sesjonen
+    # senere slettes fra aktiv state).
+    _archive_chat_event("message", {
+        "session_id": sid,
+        "customer": out_sess.get("customer", {}),
+        "escalated": bool(out_sess.get("escalated")),
+        "message": msg,
+    })
+    if archive_extra:
+        _archive_chat_event("qna_auto", {
+            "session_id": sid,
+            "q": archive_extra["q"],
+            "a": archive_extra["a"],
+            "learned_at": archive_extra["learned_at"],
+        })
 
     # Hvis kunden sender melding i en aktiv escalert tråd, varsle admin på mail
     if role == "customer" and out_sess.get("escalated"):
@@ -4183,6 +4864,11 @@ def api_chat_escalate(sid):
         if m.get("role") == "customer":
             last_q = m.get("text", "")
             break
+    _archive_chat_event("escalated", {
+        "session_id": sid,
+        "customer": out.get("customer", {}),
+        "last_question": last_q,
+    })
     try:
         _send_human_handoff_mail(out, last_q)
     except Exception as e:
@@ -4266,6 +4952,10 @@ def api_chat_knowledge():
         with _chat_lock:
             _chat_knowledge.append(entry)
             _save_chat_knowledge()
+        _archive_chat_event("qna_manual", {
+            "entry": entry,
+            "saved_by": (user or {}).get("email"),
+        })
         return jsonify({"ok": True, "item": entry})
 
     limit = min(int(request.args.get("limit", "60") or 60), 500)
@@ -4300,18 +4990,72 @@ def api_chat_knowledge_delete(kid):
     if not user:
         return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
     with _chat_lock:
+        before_items = [dict(k) for k in _chat_knowledge if k.get("id") == kid]
         before = len(_chat_knowledge)
         _chat_knowledge[:] = [k for k in _chat_knowledge if k.get("id") != kid]
         removed = before - len(_chat_knowledge)
         if removed:
             _save_chat_knowledge()
+    if removed:
+        _archive_chat_event("qna_deleted", {
+            "kid": kid,
+            "deleted_by": (user or {}).get("email"),
+            "snapshot": before_items,
+        })
     return jsonify({"ok": True, "removed": removed})
+
+
+@app.route("/api/chat/archive", methods=["GET"])
+def api_chat_archive():
+    """Admin-only: les den for-alltid-arkiverte chat-loggen.
+    Query-params:
+      kind=message|qna_manual|qna_auto|qna_deleted|escalated|session_created|session_deleted
+      session_id=<sid>
+      limit=<n>          (begrens til de siste n eventer)
+      download=1         (returner som NDJSON-fil)
+      stats=1            (returner kun antall events + bytes)
+    """
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+
+    if request.args.get("stats") == "1":
+        return jsonify({"ok": True, "stats": _chat_archive_stats()})
+
+    limit = request.args.get("limit")
+    try:
+        limit = int(limit) if limit else None
+    except Exception:
+        limit = None
+    kind = request.args.get("kind") or None
+    session_id = request.args.get("session_id") or None
+    items = _read_chat_archive(limit=limit, kind_filter=kind, session_id=session_id)
+
+    if request.args.get("download") == "1":
+        body = "\n".join(json.dumps(it, ensure_ascii=False) for it in items) + "\n"
+        fname = f"havoyet_chat_archive_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+        return Response(
+            body,
+            mimetype="application/x-ndjson",
+            headers={
+                "Content-Disposition": f'attachment; filename="{fname}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    resp = jsonify({"ok": True, "items": items, "count": len(items),
+                    "stats": _chat_archive_stats()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # Last chat-state ved boot
 try:
     _load_chat_state()
-    print(f"[BOOT-WSGI] chat-state lastet: {len(_chat_sessions)} samtaler, {len(_chat_knowledge)} Q&A")
+    _arc_stats = _chat_archive_stats()
+    print(f"[BOOT-WSGI] chat-state lastet: {len(_chat_sessions)} samtaler, "
+          f"{len(_chat_knowledge)} Q&A, {_arc_stats['events']} arkiv-events "
+          f"({_arc_stats['bytes']} bytes)")
 except Exception as _e:
     print(f"[BOOT-WSGI] _load_chat_state feilet: {_e}")
 
