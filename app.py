@@ -5146,6 +5146,89 @@ def api_newsletter_archive_delete(file_id):
     return jsonify({"ok": True, "removed": removed})
 
 
+# ── BACKUP / GJENOPPRETT ────────────────────────────────────────────────────
+# Sikkerhetsnett mens persistent disk ikke er montert på Render: admin kan
+# laste ned hele state-en som JSON og laste den opp igjen om containeren ble
+# nullstilt (f.eks. etter deploy). Lagrer alle samme felter som
+# _save_sync_state() skriver til disk.
+
+def _full_state_dict():
+    """Full snapshot av alt som lagres i sync-state."""
+    return {
+        "schema_version":      1,
+        "exported_at":         datetime.now().isoformat(),
+        "manual_orders":          _manual_orders,
+        "hidden_orders":          _hidden_orders,
+        "overrides":              _overrides,
+        "packing_state":          _packing_state,
+        "order_notes":            _order_notes,
+        "product_overrides":      _product_overrides,
+        "reviews":                _reviews,
+        "customer_favorites":     _customer_favorites,
+        "admin_notifiers":        _admin_notifiers,
+        "customers":              _customers,
+        "vipps_imported_payments": _vipps_imported_payments,
+        "card_payments_imported":  _card_payments_imported,
+        "auth_users":             _auth_users,
+        "auth_sessions":          _auth_sessions,
+    }
+
+@app.route("/api/admin/backup", methods=["GET"])
+def api_admin_backup():
+    """Returnerer hele sync-state som JSON (admin laster ned dette som backup)."""
+    payload = _full_state_dict()
+    payload["counts"] = {
+        "manual_orders":     len(_manual_orders),
+        "customers":         len(_customers),
+        "product_overrides": len(_product_overrides),
+        "reviews":           len(_reviews),
+        "auth_users":        len(_auth_users),
+    }
+    resp = jsonify(payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+@app.route("/api/admin/restore", methods=["POST"])
+def api_admin_restore():
+    """Gjenoppretter sync-state fra et backup-JSON. Body = output fra /api/admin/backup.
+    Skriver bare felter som faktisk finnes i body (delvis-restore støttes)."""
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes
+    global _product_overrides, _reviews, _customer_favorites, _admin_notifiers
+    global _customers, _vipps_imported_payments, _card_payments_imported
+    global _auth_users, _auth_sessions
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Forventer JSON-objekt"}), 400
+
+    restored = {}
+    def _maybe(field, current_default):
+        if field in data and data[field] is not None:
+            restored[field] = (
+                len(data[field]) if hasattr(data[field], "__len__") else 1
+            )
+            return data[field]
+        return current_default
+
+    _manual_orders         = _maybe("manual_orders",          _manual_orders)
+    _hidden_orders         = _maybe("hidden_orders",          _hidden_orders)
+    _overrides             = _maybe("overrides",              _overrides)
+    _packing_state         = _maybe("packing_state",          _packing_state)
+    _order_notes           = _maybe("order_notes",            _order_notes)
+    _product_overrides     = _maybe("product_overrides",      _product_overrides)
+    _reviews               = _maybe("reviews",                _reviews)
+    _customer_favorites    = _maybe("customer_favorites",     _customer_favorites)
+    _admin_notifiers       = _maybe("admin_notifiers",        _admin_notifiers)
+    _customers             = _maybe("customers",              _customers)
+    _vipps_imported_payments = _maybe("vipps_imported_payments", _vipps_imported_payments)
+    _card_payments_imported  = _maybe("card_payments_imported",  _card_payments_imported)
+    _auth_users            = _maybe("auth_users",             _auth_users)
+    _auth_sessions         = _maybe("auth_sessions",          _auth_sessions)
+
+    _save_sync_state()
+    return jsonify({"ok": True, "restored": restored})
+
+
 # Last arkiv ved boot
 try:
     _load_newsletter_archive()
