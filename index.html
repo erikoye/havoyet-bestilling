@@ -2,280 +2,296 @@
 <html lang="nb">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>Hav&oslash;yet AS &mdash; Intern ordrebehandling</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/colors_and_type.css" />
   <style>
+    /* Blokkér pinch + dobbel-tap-zoom på touch-enheter */
+    html, body { touch-action: manipulation; -ms-touch-action: manipulation; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --primary:    #0d9488;
-      --primary-dk: #0f766e;
-      --bg:         #f1f5f9;
-      --dark:       #0f172a;
-      --surface:    #ffffff;
-      --border:     #e2e8f0;
-      --muted:      #64748b;
-      --c-red:      #ef4444;
-      --c-orange:   #f59e0b;
-      --c-green:    #22c55e;
+      /* Lys admin-tema — overstyrer colors_and_type.css (lik admin.html) */
+      --hv-ink:      #FBFAF7;   /* primær bakgrunn (lys) */
+      --hv-fg-1:     #1A1A1A;
+      --hv-fg-2:     #4A5958;
+      --hv-fg-3:     #8A8E8D;
+      --hv-fg-4:     #B5B8B7;
+      --hv-line:     #E6E1D6;
+      --hv-teal-wash:rgba(65,193,186,0.12);
+      --sur:         #FFFFFF;
+      --sur2:        #F8F6F1;
+      --red:         #ef4444;
+      --org:         #f59e0b;
+      --grn:         #22c55e;
+      --hv-ease:     cubic-bezier(0.16, 1, 0.3, 1);
+      /* Aliaser så vi slipper å rebrand alle gamle utdaterte navn */
+      --primary:     var(--hv-teal);
+      --primary-dk:  var(--hv-teal-dk);
+      --bg:          var(--hv-ink);
+      --dark:        var(--hv-fg-1);
+      --surface:     var(--sur);
+      --border:      var(--hv-line);
+      --muted:       var(--hv-fg-3);
+      --c-red:       var(--red);
+      --c-orange:    var(--org);
+      --c-green:     var(--grn);
     }
 
     body {
-      font-family: 'DM Sans', sans-serif;
-      background: var(--bg);
-      color: var(--dark);
+      font-family: var(--hv-font-body);
+      background: var(--hv-ink);
+      color: var(--hv-fg-1);
       min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
     }
 
-    /* ── TOPBAR ── */
+    /* ── TOPBAR ── (lys, lik admin sitt topbar) */
     header {
-      background: var(--dark);
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--hv-line);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 32px;
-      height: 60px;
+      padding: 0 28px;
+      height: 56px;
       position: sticky;
       top: 0;
       z-index: 100;
     }
 
     .logo { display: flex; align-items: center; }
-
     .logo svg { display: block; }
 
-    .header-right { display: flex; align-items: center; gap: 20px; }
+    .header-right { display: flex; align-items: center; gap: 14px; }
 
     .clock {
-      font-family: 'DM Mono', monospace;
-      font-size: 13px;
-      color: #94a3b8;
+      font-family: var(--hv-font-mono, monospace);
+      font-size: 12px;
+      color: var(--hv-fg-3);
     }
 
-    .operator-badge {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 6px;
-      padding: 4px 10px;
-      font-size: 13px;
-      color: #cbd5e1;
-      font-family: 'DM Mono', monospace;
-    }
+    /* ── LAYOUT ── (lik admin .content) */
+    main { max-width: 1200px; margin: 0 auto; padding: 36px 36px 80px; }
 
-    /* ── LAYOUT ── */
-    main { max-width: 1200px; margin: 0 auto; padding: 36px 24px 80px; }
-
-    /* ── HERO ── */
+    /* ── HERO ── (lik admin .ph) */
     .hero {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      margin-bottom: 40px;
+      margin-bottom: 28px;
       gap: 24px;
     }
 
-    .hero-text h1 { font-size: 28px; font-weight: 600; color: var(--dark); line-height: 1.2; }
-    .hero-text p  { margin-top: 6px; font-size: 14px; color: var(--muted); }
-
-    .date-chip {
-      font-family: 'DM Mono', monospace;
-      font-size: 12px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 6px 12px;
-      color: var(--muted);
-      white-space: nowrap;
+    .hero-text h1 {
+      font-family: var(--hv-font-display);
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      color: var(--hv-fg-1);
+      line-height: 1.2;
+    }
+    .hero-text p {
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--hv-fg-3);
     }
 
-    /* ── STATS ── */
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 40px; }
+    /* ── STATS ── (lik admin .sc) */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
 
     .stat-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
+      background: var(--sur);
+      border: 1px solid var(--hv-line);
       border-radius: 12px;
-      padding: 20px 24px;
+      padding: 18px 20px;
       display: flex;
       flex-direction: column;
       gap: 6px;
       cursor: pointer;
-      transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+      transition: border-color 220ms var(--hv-ease), transform 120ms var(--hv-ease);
       user-select: none;
     }
 
     .stat-card:hover {
-      border-color: var(--primary);
-      box-shadow: 0 4px 16px rgba(13,148,136,0.10);
+      border-color: var(--hv-teal);
       transform: translateY(-1px);
     }
 
-    .stat-label { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .stat-label {
+      font-family: var(--hv-font-display);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--hv-fg-3);
+    }
 
-    .stat-value { font-family: 'DM Mono', monospace; font-size: 32px; font-weight: 500; color: var(--dark); line-height: 1; }
+    .stat-value {
+      font-family: var(--hv-font-display);
+      font-size: 28px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      color: var(--hv-fg-1);
+      line-height: 1;
+      margin: 6px 0 3px;
+    }
 
-    .stat-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .stat-sub { font-size: 12px; color: var(--hv-fg-3); margin-top: 2px; }
 
-    .stat-card.unseen { border-left: 3px solid var(--primary); }
+    .stat-card.unseen { border-left: 3px solid var(--hv-teal); }
     .stat-card.today  { border-left: 3px solid #6366f1; }
     .stat-card.tmrw   { border-left: 3px solid #8b5cf6; }
-    .stat-card.urgent { border-left: 3px solid var(--c-red); }
+    .stat-card.urgent { border-left: 3px solid var(--red); }
 
     .stat-hint {
       font-size: 11px;
-      color: #94a3b8;
+      color: var(--hv-fg-3);
       margin-top: 4px;
       display: flex;
       align-items: center;
       gap: 4px;
+      opacity: .7;
     }
 
-    /* ── NAV CARDS ── */
-    .nav-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 40px; }
+    /* ── NAV CARDS ── (lik admin .mc / .mi) */
+    .nav-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 28px; }
 
     .nav-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 28px 32px;
+      background: var(--sur);
+      border: 1px solid var(--hv-line);
+      border-radius: 12px;
+      padding: 18px 20px;
       cursor: pointer;
       text-decoration: none;
       color: inherit;
       display: flex;
       align-items: center;
-      gap: 24px;
-      transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .nav-card::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(135deg, transparent 60%, rgba(13,148,136,0.04));
-      pointer-events: none;
+      gap: 14px;
+      transition: border-color 220ms var(--hv-ease), transform 120ms var(--hv-ease);
     }
 
     .nav-card:hover {
-      border-color: var(--primary);
-      box-shadow: 0 4px 20px rgba(13,148,136,0.12);
+      border-color: var(--hv-teal);
       transform: translateY(-1px);
     }
 
     .nav-icon {
-      width: 52px; height: 52px;
-      background: #f0fdfb;
-      border: 1px solid #ccfbf1;
-      border-radius: 12px;
+      width: 42px; height: 42px;
+      background: rgba(65,193,186,0.10);
+      border: 1px solid rgba(65,193,186,0.20);
+      border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
-      color: var(--primary);
+      color: var(--hv-teal);
     }
 
-    .nav-content h2 { font-size: 17px; font-weight: 600; color: var(--dark); margin-bottom: 4px; }
-    .nav-content p  { font-size: 13px; color: var(--muted); line-height: 1.5; }
-    .nav-arrow { margin-left: auto; flex-shrink: 0; color: #cbd5e1; }
-    .nav-card:hover .nav-arrow { color: var(--primary); }
-
-    /* ── BUTIKKVELGER ── */
-    .store-switcher { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 24px; width: fit-content; }
-    .store-sw-btn { padding: 8px 18px; font-size: 13px; font-weight: 600; font-family: 'DM Sans', sans-serif; border: none; background: var(--surface); color: var(--muted); cursor: pointer; transition: background 0.15s, color 0.15s; }
-    .store-sw-btn:first-child { border-right: 1px solid var(--border); }
-    .store-sw-btn.active { background: var(--primary); color: #fff; }
+    .nav-content h2 {
+      font-family: var(--hv-font-display);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--hv-fg-1);
+      margin-bottom: 2px;
+    }
+    .nav-content p { font-size: 12px; color: var(--hv-fg-3); line-height: 1.5; }
+    .nav-arrow { margin-left: auto; flex-shrink: 0; color: var(--hv-fg-4); }
+    .nav-card:hover .nav-arrow { color: var(--hv-teal); }
 
     /* ── ORDERS TABLE ── */
-    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-    .section-title  { font-size: 16px; font-weight: 600; color: var(--dark); }
-    .section-link   { font-size: 13px; color: var(--primary); text-decoration: none; font-weight: 500; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .section-title  { font-family: var(--hv-font-display); font-size: 15px; font-weight: 700; color: var(--hv-fg-1); }
+    .section-link   { font-size: 13px; color: var(--hv-teal); text-decoration: none; font-weight: 600; }
     .section-link:hover { text-decoration: underline; }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      background: var(--surface);
-      border: 1px solid var(--border);
+      background: var(--sur);
+      border: 1px solid var(--hv-line);
       border-radius: 12px;
       overflow: hidden;
       font-size: 13px;
     }
 
     thead th {
-      background: #f8fafc;
-      border-bottom: 1px solid var(--border);
+      background: var(--sur2);
+      border-bottom: 1px solid var(--hv-line);
       padding: 11px 16px;
       text-align: left;
+      font-family: var(--hv-font-display);
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--muted);
+      letter-spacing: 0.10em;
+      color: var(--hv-fg-3);
     }
 
-    tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+    tbody tr { border-bottom: 1px solid var(--hv-line); transition: background 120ms var(--hv-ease); }
     tbody tr:last-child { border-bottom: none; }
-    tbody tr:hover { background: #f8fafc; }
+    tbody tr:hover { background: var(--sur2); }
     tbody tr.ordre-rad { cursor: pointer; }
-    tbody tr.ordre-rad:hover { background: #f0fdfb; }
-    td { padding: 13px 16px; color: var(--dark); }
+    tbody tr.ordre-rad:hover { background: rgba(65,193,186,0.04); }
+    td { padding: 13px 16px; color: var(--hv-fg-1); }
 
-    .order-id { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
+    .order-id { font-family: var(--hv-font-mono, monospace); font-size: 12px; color: var(--hv-fg-3); }
     .customer-name { font-weight: 500; }
-    .delivery-date { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); }
+    .delivery-date { font-family: var(--hv-font-mono, monospace); font-size: 12px; color: var(--hv-fg-3); }
 
     .conf-badge {
       display: inline-flex; align-items: center; gap: 5px;
-      padding: 3px 9px; border-radius: 20px;
-      font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+      padding: 3px 9px; border-radius: 999px;
+      font-family: var(--hv-font-display);
+      font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
     }
 
-    .conf-badge.red    { background: #fef2f2; color: var(--c-red);    border: 1px solid #fecaca; }
-    .conf-badge.orange { background: #fffbeb; color: #d97706;          border: 1px solid #fde68a; }
-    .conf-badge.green  { background: #f0fdf4; color: #16a34a;          border: 1px solid #bbf7d0; }
+    .conf-badge.red    { background: rgba(239,68,68,0.10);  color: #dc2626; border: 1px solid rgba(239,68,68,0.25); }
+    .conf-badge.orange { background: rgba(245,158,11,0.12); color: #b45309; border: 1px solid rgba(245,158,11,0.30); }
+    .conf-badge.green  { background: rgba(34,197,94,0.10);  color: #16a34a; border: 1px solid rgba(34,197,94,0.30); }
 
-    .unseen-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); display: inline-block; margin-right: 4px; }
+    .unseen-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hv-teal); display: inline-block; margin-right: 4px; }
 
-    .delete-btn { opacity: 0; background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; color: #94a3b8; transition: opacity 0.15s, color 0.15s, background 0.15s; }
+    .delete-btn { opacity: 0; background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; color: var(--hv-fg-3); transition: opacity 150ms; }
     .ordre-rad:hover .delete-btn { opacity: 1; }
-    .delete-btn:hover { color: #ef4444; background: #fef2f2; }
+    .delete-btn:hover { color: var(--red); }
     .dot        { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
-    .mini-bar-wrap { width: 60px; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden; display: inline-block; vertical-align: middle; margin-left: 6px; }
+    .mini-bar-wrap { width: 60px; height: 4px; background: var(--hv-line); border-radius: 2px; overflow: hidden; display: inline-block; vertical-align: middle; margin-left: 6px; }
     .mini-bar      { height: 100%; border-radius: 2px; }
-    .mini-bar.red    { background: var(--c-red); }
-    .mini-bar.orange { background: var(--c-orange); }
-    .mini-bar.green  { background: var(--c-green); }
+    .mini-bar.red    { background: var(--red); }
+    .mini-bar.orange { background: var(--org); }
+    .mini-bar.green  { background: var(--grn); }
 
     .btn-action {
-      background: none; border: 1px solid var(--border); border-radius: 6px;
-      padding: 5px 12px; font-size: 12px; font-family: 'DM Sans', sans-serif;
-      font-weight: 500; color: var(--dark); cursor: pointer;
-      transition: border-color 0.1s, background 0.1s;
+      background: transparent; border: 1px solid var(--hv-line); border-radius: 8px;
+      padding: 6px 14px; font-size: 12px; font-family: var(--hv-font-display);
+      font-weight: 600; color: var(--hv-fg-2); cursor: pointer;
+      transition: border-color 220ms var(--hv-ease), color 220ms var(--hv-ease);
     }
 
-    .btn-action:hover { border-color: var(--primary); color: var(--primary); background: #f0fdfb; }
+    .btn-action:hover { border-color: var(--hv-teal); color: var(--hv-teal); }
 
     /* ── FOOTER ── */
     .footer-bar {
       position: fixed; bottom: 0; left: 0; right: 0;
-      background: var(--surface); border-top: 1px solid var(--border);
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(10px);
+      border-top: 1px solid var(--hv-line);
       display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 32px;
+      padding: 10px 28px;
     }
 
-    .footer-bar span { font-family: 'DM Mono', monospace; font-size: 11px; color: #94a3b8; }
+    .footer-bar span { font-family: var(--hv-font-mono, monospace); font-size: 11px; color: var(--hv-fg-3); }
 
-    .printer-status { display: flex; align-items: center; gap: 6px; font-family: 'DM Mono', monospace; font-size: 11px; color: #94a3b8; }
-    .printer-dot    { width: 7px; height: 7px; border-radius: 50%; background: var(--c-green); }
+    .printer-status { display: flex; align-items: center; gap: 6px; font-family: var(--hv-font-mono, monospace); font-size: 11px; color: var(--hv-fg-3); }
+    .printer-dot    { width: 7px; height: 7px; border-radius: 50%; background: var(--grn); }
 
-    /* ── DRAWER (slide-in panel) ── */
+    /* ── DRAWER (slide-in panel) — lik admin .drawer ── */
     .drawer-overlay {
       display: none;
       position: fixed; inset: 0;
-      background: rgba(15,23,42,0.45);
+      background: rgba(40,40,40,0.35);
+      backdrop-filter: blur(6px);
       z-index: 400;
     }
 
@@ -286,19 +302,20 @@
       top: 0; right: -480px;
       width: 460px; max-width: 95vw;
       height: 100vh;
-      background: var(--surface);
-      box-shadow: -8px 0 40px rgba(0,0,0,0.15);
+      background: var(--sur);
+      border-left: 1px solid var(--hv-line);
+      box-shadow: -12px 0 40px rgba(0,0,0,0.10);
       z-index: 401;
       display: flex;
       flex-direction: column;
-      transition: right 0.25s cubic-bezier(0.4,0,0.2,1);
+      transition: right 420ms cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .drawer.open { right: 0; }
 
     .drawer-header {
-      padding: 20px 24px 16px;
-      border-bottom: 1px solid var(--border);
+      padding: 20px 22px 16px;
+      border-bottom: 1px solid var(--hv-line);
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
@@ -306,23 +323,24 @@
       flex-shrink: 0;
     }
 
-    .drawer-title   { font-size: 17px; font-weight: 600; color: var(--dark); }
-    .drawer-sub     { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .drawer-title   { font-family: var(--hv-font-display); font-size: 17px; font-weight: 800; color: var(--hv-fg-1); }
+    .drawer-sub     { font-size: 13px; color: var(--hv-fg-3); margin-top: 2px; }
 
     .drawer-close {
       background: none; border: none;
-      color: var(--muted); cursor: pointer;
+      color: var(--hv-fg-3); cursor: pointer;
       font-size: 20px; padding: 2px; line-height: 1;
+      transition: color 150ms;
     }
 
-    .drawer-close:hover { color: var(--dark); }
+    .drawer-close:hover { color: var(--hv-fg-1); }
 
-    .drawer-body { flex: 1; overflow-y: auto; padding: 16px 24px 24px; }
+    .drawer-body { flex: 1; overflow-y: auto; padding: 14px 22px; }
 
     .drawer-empty {
       text-align: center;
       padding: 48px 0;
-      color: var(--muted);
+      color: var(--hv-fg-3);
       font-size: 13px;
     }
 
@@ -332,33 +350,33 @@
       align-items: center;
       gap: 12px;
       padding: 12px 14px;
-      border: 1px solid var(--border);
+      border: 1px solid var(--hv-line);
       border-radius: 10px;
       margin-bottom: 8px;
       cursor: pointer;
       text-decoration: none;
       color: inherit;
-      transition: border-color 0.12s, background 0.12s;
+      transition: border-color 220ms var(--hv-ease), background 120ms;
     }
 
-    .drawer-order:hover { border-color: var(--primary); background: #f0fdfb; }
+    .drawer-order:hover { border-color: var(--hv-teal); background: rgba(65,193,186,0.04); }
 
     .drawer-order-left   { flex: 1; min-width: 0; }
-    .drawer-order-name   { font-size: 14px; font-weight: 600; color: var(--dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .drawer-order-meta   { font-size: 12px; color: var(--muted); margin-top: 2px; font-family: 'DM Mono', monospace; }
+    .drawer-order-name   { font-family: var(--hv-font-display); font-size: 14px; font-weight: 700; color: var(--hv-fg-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .drawer-order-meta   { font-size: 12px; color: var(--hv-fg-3); margin-top: 2px; font-family: var(--hv-font-mono, monospace); }
     .drawer-order-right  { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 
-    .drawer-conf-bar-bg  { width: 80px; height: 5px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+    .drawer-conf-bar-bg  { width: 80px; height: 5px; background: var(--hv-line); border-radius: 3px; overflow: hidden; }
     .drawer-conf-bar     { height: 100%; border-radius: 3px; }
-    .drawer-conf-bar.red    { background: var(--c-red); }
-    .drawer-conf-bar.orange { background: var(--c-orange); }
-    .drawer-conf-bar.green  { background: var(--c-green); }
+    .drawer-conf-bar.red    { background: var(--red); }
+    .drawer-conf-bar.orange { background: var(--org); }
+    .drawer-conf-bar.green  { background: var(--grn); }
 
-    .drawer-conf-label  { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
+    .drawer-conf-label  { font-family: var(--hv-font-mono, monospace); font-size: 11px; color: var(--hv-fg-3); }
 
     .drawer-unseen-badge {
       width: 8px; height: 8px; border-radius: 50%;
-      background: var(--primary);
+      background: var(--hv-teal);
       flex-shrink: 0;
     }
 
@@ -373,23 +391,18 @@
 
     @media (max-width: 600px) {
       header { padding: 0 14px; height: 50px; }
-      .operator-badge { display: none; }
-      main { padding: 16px 12px 80px; }
+      main { padding: 16px 14px 80px; }
       .hero { flex-direction: column; gap: 10px; margin-bottom: 20px; }
-      .hero-text h1 { font-size: 20px; }
-      .stat-card { padding: 12px 14px; }
+      .hero-text h1 { font-size: 22px; }
+      .stat-card { padding: 14px 16px; }
       .stat-value { font-size: 24px; }
       .stat-hint { display: none; }
-      .nav-card { padding: 16px; gap: 12px; }
+      .nav-card { padding: 14px 16px; gap: 12px; }
       .nav-icon { width: 38px; height: 38px; }
       .nav-content p { display: none; }
       .nav-arrow { display: none; }
       table { font-size: 12px; }
       td, thead th { padding: 9px 10px; }
-      .modal-overlay { padding: 0; align-items: flex-end; }
-      .modal { border-radius: 16px 16px 0 0; max-height: 90vh; overflow-y: auto; }
-      .form-row { grid-template-columns: 1fr; }
-      .store-selector { grid-template-columns: 1fr; }
     }
 
     @media (max-height: 500px) and (orientation: landscape) {
@@ -402,106 +415,17 @@
       .nav-cards { margin-bottom: 12px; }
     }
 
-    /* ── NY BESTILLING KNAPP ── */
-    .btn-new-order {
-      display: inline-flex; align-items: center; gap: 7px;
-      background: var(--primary); color: #fff;
-      border: none; border-radius: 8px;
-      padding: 8px 16px; font-size: 13px; font-weight: 600;
-      font-family: 'DM Sans', sans-serif;
-      cursor: pointer; white-space: nowrap;
-      transition: background 0.15s, transform 0.1s;
-    }
-    .btn-new-order:hover { background: var(--primary-dk); transform: translateY(-1px); }
-
-    /* ── MODAL ── */
-    .modal-overlay {
-      display: none; position: fixed; inset: 0;
-      background: rgba(15,23,42,0.55); z-index: 500;
-      align-items: flex-start; justify-content: center;
-      padding: 32px 16px; overflow-y: auto;
-    }
-    .modal-overlay.open { display: flex; }
-
-    .modal {
-      background: var(--surface); border-radius: 16px;
-      width: 100%; max-width: 560px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-      animation: modalIn 0.2s cubic-bezier(0.4,0,0.2,1);
-    }
-    @keyframes modalIn { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:none; } }
-
-    .modal-header {
-      padding: 20px 24px 16px;
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: flex-start; justify-content: space-between;
-    }
-    .modal-title { font-size: 17px; font-weight: 600; color: var(--dark); }
-    .modal-date  { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); margin-top: 3px; }
-    .modal-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 20px; padding: 2px; line-height: 1; }
-    .modal-close:hover { color: var(--dark); }
-
-    .modal-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
-    .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
-
-    /* Store selector */
-    .store-selector { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .store-btn {
-      padding: 12px 16px; border: 2px solid var(--border);
-      border-radius: 10px; cursor: pointer; background: var(--surface);
-      text-align: left; transition: border-color 0.15s, background 0.15s;
-      font-family: 'DM Sans', sans-serif;
-    }
-    .store-btn:hover { border-color: var(--primary); }
-    .store-btn.selected { border-color: var(--primary); background: #f0fdfb; }
-    .store-btn-name { font-size: 14px; font-weight: 600; color: var(--dark); }
-    .store-btn-sub  { font-size: 12px; color: var(--muted); margin-top: 2px; }
-
-    /* Form fields */
-    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .form-group { display: flex; flex-direction: column; gap: 5px; }
-    .form-group.full { grid-column: 1 / -1; }
-    .form-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-    .form-input {
-      border: 1px solid var(--border); border-radius: 8px;
-      padding: 9px 12px; font-size: 14px; font-family: 'DM Sans', sans-serif;
-      color: var(--dark); background: var(--surface); outline: none;
-      transition: border-color 0.15s;
-    }
-    .form-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(13,148,136,0.1); }
-    .form-select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
-
-    .section-divider { font-size: 13px; font-weight: 600; color: var(--dark); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-
-    /* Items */
-    .item-row { display: flex; align-items: center; gap: 8px; }
-    .item-row .form-input { flex: 1; }
-    .item-qty-input { width: 90px !important; flex: none !important; }
-    .btn-remove-item { background: none; border: 1px solid #fecaca; border-radius: 6px; color: var(--c-red); cursor: pointer; padding: 6px 8px; font-size: 14px; line-height: 1; transition: background 0.1s; }
-    .btn-remove-item:hover { background: #fef2f2; }
-    .btn-add-item { background: none; border: 1px dashed var(--border); border-radius: 8px; padding: 9px 12px; font-size: 13px; color: var(--muted); cursor: pointer; width: 100%; text-align: center; transition: border-color 0.15s, color 0.15s; font-family: 'DM Sans', sans-serif; }
-    .btn-add-item:hover { border-color: var(--primary); color: var(--primary); }
-
-    .btn-cancel { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 9px 18px; font-size: 14px; font-weight: 500; font-family: 'DM Sans', sans-serif; cursor: pointer; color: var(--dark); }
-    .btn-cancel:hover { border-color: #94a3b8; }
-    .btn-lagre { background: var(--primary); color: #fff; border: none; border-radius: 8px; padding: 9px 22px; font-size: 14px; font-weight: 600; font-family: 'DM Sans', sans-serif; cursor: pointer; }
-    .btn-lagre:hover { background: var(--primary-dk); }
   </style>
 </head>
 <body>
 
 <header>
   <div class="logo">
-    <!-- Havøyet logo: bølgemark + tekst -->
-    <span style="font-family:'Montserrat',sans-serif;font-weight:900;font-size:22px;letter-spacing:2px;color:#ffffff;">Havøyet</span>
+    <span style="font-family:var(--hv-font-display);font-weight:800;font-size:18px;letter-spacing:0.04em;color:var(--hv-fg-1);">Havøyet</span>
   </div>
   <div class="header-right">
-    <span id="syncBadge" style="font-family:'DM Mono',monospace;font-size:11px;color:#475569;">○ Demodata</span>
+    <span id="syncBadge" style="font-family:var(--hv-font-mono,monospace);font-size:11px;color:var(--hv-fg-3);">○ Demodata</span>
     <span class="clock" id="clock">--:--:--</span>
-    <span class="operator-badge">OP: &mdash;</span>
-    <a href="admin.html" title="Admin" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;border:1px solid #334155;color:#64748b;text-decoration:none;transition:all .15s;" onmouseover="this.style.borderColor='#0d9488';this.style.color='#0d9488'" onmouseout="this.style.borderColor='#334155';this.style.color='#64748b'">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-    </a>
   </div>
 </header>
 
@@ -512,19 +436,6 @@
       <h1>Ordrebehandling</h1>
       <p>Intern oversikt &mdash; hjemlevering av fersk sjømat, Bergen</p>
     </div>
-    <div style="display:flex;align-items:center;gap:10px">
-      <div class="date-chip" id="dateChip">–</div>
-      <button class="btn-new-order" onclick="openNewOrderModal()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Ny bestilling
-      </button>
-    </div>
-  </div>
-
-  <!-- BUTIKKVELGER -->
-  <div class="store-switcher">
-    <button class="store-sw-btn" id="swHavoyet" onclick="setActiveStore('havoyet')">Havøyet</button>
-    <button class="store-sw-btn" id="swNesttun" onclick="setActiveStore('nesttun')">Nesttun Fisk &amp; Vilt</button>
   </div>
 
   <!-- STATS -->
@@ -604,7 +515,7 @@
       </div>
     </a>
     <a href="lager.html" class="nav-card">
-      <div class="nav-icon" style="background:#fff7ed;border-color:#fed7aa;color:#ea580c">
+      <div class="nav-icon" style="background:rgba(245,158,11,0.10);border-color:rgba(245,158,11,0.25);color:#d97706">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 3h18v4H3z"/><path d="M3 10h18v4H3z"/><path d="M3 17h18v4H3z"/>
         </svg>
@@ -618,7 +529,7 @@
       </div>
     </a>
     <a href="betalinger.html" class="nav-card">
-      <div class="nav-icon" style="background:#f0fdfa;border-color:#99f6e4;color:#0d9488">
+      <div class="nav-icon">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="5" width="20" height="14" rx="2"/>
           <line x1="2" y1="10" x2="22" y2="10"/>
@@ -674,76 +585,16 @@
   <div class="drawer-body" id="drawerBody"></div>
 </div>
 
-<!-- ── NY BESTILLING MODAL ── -->
-<div class="modal-overlay" id="newOrderOverlay" onclick="handleOverlayClick(event)">
-  <div class="modal">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title">Ny bestilling</div>
-        <div class="modal-date" id="modalDate">–</div>
-      </div>
-      <button class="modal-close" onclick="closeNewOrderModal()">✕</button>
-    </div>
-    <div class="modal-body">
-
-      <!-- Butikk -->
-      <div>
-        <div class="form-label" style="margin-bottom:8px">Butikk</div>
-        <div class="store-selector">
-          <button class="store-btn selected" id="storeHavoyet" onclick="selectStore('havoyet')">
-            <div class="store-btn-name">Havøyet</div>
-            <div class="store-btn-sub">Hjemlevering sjømat</div>
-          </button>
-          <button class="store-btn" id="storeNesttun" onclick="selectStore('nesttun')">
-            <div class="store-btn-name">Nesttun Fisk &amp; Vilt</div>
-            <div class="store-btn-sub">Lokal fiskebutikk</div>
-          </button>
-        </div>
-      </div>
-
-      <!-- Kundeinformasjon -->
-      <div>
-        <div class="section-divider">Kundeinformasjon</div>
-        <div class="form-row" style="margin-top:12px">
-          <div class="form-group">
-            <label class="form-label">Navn</label>
-            <input class="form-input" id="field-name" type="text" placeholder="Fornavn Etternavn" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">Telefon</label>
-            <input class="form-input" id="field-phone" type="tel" placeholder="900 00 000" />
-          </div>
-          <div class="form-group">
-            <label class="form-label" id="label-date">Leveringsdato</label>
-            <input class="form-input" id="field-date" type="date" oninput="updateSlotOptions()" />
-          </div>
-          <div class="form-group">
-            <label class="form-label" id="label-slot">Tidspunkt</label>
-            <select class="form-input form-select" id="field-slot">
-              <option value="a">13:00 – 15:00</option>
-              <option value="b">15:00 – 18:00</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <!-- Varer -->
-      <div>
-        <div class="section-divider">Varer</div>
-        <div id="itemsList" style="display:flex;flex-direction:column;gap:8px;margin-top:12px"></div>
-        <button class="btn-add-item" style="margin-top:8px" onclick="addItem()">+ Legg til vare</button>
-      </div>
-
-    </div>
-    <div class="modal-footer">
-      <button class="btn-cancel" onclick="closeNewOrderModal()">Avbryt</button>
-      <button class="btn-lagre" onclick="saveNewOrder()">Lagre bestilling</button>
-    </div>
-  </div>
-</div>
-
 <script>
 // ─── KONFIG ───────────────────────────────────
+// Tving zoom-deaktivering på alle enheter (iOS Safari ignorerer viewport-meta)
+document.addEventListener("gesturestart",  function (e) { e.preventDefault(); });
+document.addEventListener("gesturechange", function (e) { e.preventDefault(); });
+document.addEventListener("gestureend",    function (e) { e.preventDefault(); });
+document.addEventListener("wheel", function (e) {
+  if (e.ctrlKey || e.metaKey) e.preventDefault();
+}, { passive: false });
+
 const FLASK_BASE = window.location.origin;
 
 // ─── DATO-HJELPER ──────────────────────────────
@@ -768,18 +619,6 @@ function storeFilter(o) {
   if (s === 'nesttun') return o.store === 'Nesttun Fisk & Vilt';
   return !o.store || o.store === 'Havøyet';
 }
-function setActiveStore(s) {
-  localStorage.setItem('hv_active_store', s);
-  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
-  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
-  renderAll();
-}
-function initStoreSwitcher() {
-  const s = activeStore();
-  document.getElementById('swHavoyet').classList.toggle('active', s === 'havoyet');
-  document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
-}
-
 // ─── PRIORITET ───────────────────────────────
 function getPackingState() {
   try { return JSON.parse(localStorage.getItem('havøyet_state') || '{}'); } catch(e) { return {}; }
@@ -1049,10 +888,9 @@ function closeDrawer(){
   document.getElementById('drawer').classList.remove('open');
 }
 
-// ─── KLOKKE + DATO ────────────────────────────
+// ─── KLOKKE ───────────────────────────────────
 function pad(n){return String(n).padStart(2,'0');}
 function updateClock(){const n=new Date();document.getElementById('clock').textContent=pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());}
-(function(){const days=['søndag','mandag','tirsdag','onsdag','torsdag','fredag','lørdag'],months=['januar','februar','mars','april','mai','juni','juli','august','september','oktober','november','desember'],n=new Date();document.getElementById('dateChip').textContent=days[n.getDay()]+' '+n.getDate()+'. '+months[n.getMonth()]+' '+n.getFullYear();})();
 updateClock(); setInterval(updateClock,1000);
 
 // ─── LIVE SYNC (pakkingstilstand fra andre enheter) ───────────────
@@ -1073,7 +911,6 @@ async function pollPackingState() {
 }
 
 // ─── OPPSTART ─────────────────────────────────
-initStoreSwitcher();
 mergeManualOrders();
 filterHiddenOrders();
 renderAll();          // vis mock-data umiddelbart
@@ -1081,180 +918,8 @@ loadFromFlask();      // erstatt med live-data om Flask er oppe
 setInterval(loadFromFlask, 30 * 1000);  // poll hvert 30. sekund — kontinuerlig live fra havoyet.no
 setInterval(pollPackingState, 15000);        // sync pakkingstilstand hvert 15 sek
 
-// ─── NY BESTILLING MODAL ───────────────────────
-let selectedStore = 'havoyet';
-let itemCount = 0;
+// (Modal for ny bestilling fjernet — opprettelse skjer i admin-panelet.)
 
-function openNewOrderModal() {
-  selectedStore = 'havoyet';
-  document.getElementById('storeHavoyet').classList.add('selected');
-  document.getElementById('storeNesttun').classList.remove('selected');
-  document.getElementById('field-name').value = '';
-  document.getElementById('field-phone').value = '';
-  document.getElementById('field-date').value = todayISO;
-  document.getElementById('itemsList').innerHTML = '';
-  itemCount = 0;
-  updateSlotOptions();
-  addItem(); // start med én tom vare
-  const d = new Date();
-  document.getElementById('modalDate').textContent =
-    d.toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
-  document.getElementById('newOrderOverlay').classList.add('open');
-}
-
-function closeNewOrderModal() {
-  document.getElementById('newOrderOverlay').classList.remove('open');
-}
-
-function handleOverlayClick(e) {
-  if (e.target === document.getElementById('newOrderOverlay')) closeNewOrderModal();
-}
-
-function selectStore(store) {
-  selectedStore = store;
-  document.getElementById('storeHavoyet').classList.toggle('selected', store === 'havoyet');
-  document.getElementById('storeNesttun').classList.toggle('selected', store === 'nesttun');
-  updateSlotOptions();
-}
-
-function updateSlotOptions() {
-  const dateVal = document.getElementById('field-date').value;
-  const dateLabel = document.getElementById('label-date');
-  const slotLabel = document.getElementById('label-slot');
-  const slotSel   = document.getElementById('field-slot');
-
-  if (selectedStore === 'nesttun') {
-    dateLabel.textContent = 'Hentedag';
-    slotLabel.textContent = 'Klokketime';
-
-    // Finn ut om valgt dato er lørdag
-    const isSaturday = dateVal ? new Date(dateVal).getDay() === 6 : false;
-    const maxHour = isSaturday ? 15 : 17;
-    const currentVal = slotSel.value;
-
-    slotSel.innerHTML = '';
-    for (let h = 10; h < maxHour; h++) {
-      const opt = document.createElement('option');
-      opt.value = `${h}:00`;
-      opt.textContent = `${h}:00 – ${h+1}:00`;
-      slotSel.appendChild(opt);
-    }
-    // Behold valgt verdi hvis den fortsatt er gyldig
-    if ([...slotSel.options].some(o => o.value === currentVal)) slotSel.value = currentVal;
-  } else {
-    dateLabel.textContent = 'Leveringsdato';
-    slotLabel.textContent = 'Tidspunkt';
-    slotSel.innerHTML = `
-      <option value="a">13:00 – 15:00</option>
-      <option value="b">15:00 – 18:00</option>`;
-  }
-}
-
-function addItem() {
-  const i = itemCount++;
-  const div = document.createElement('div');
-  div.id = 'item-row-' + i;
-  div.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fafbfc;';
-  div.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px">
-      <input class="form-input" id="item-name-${i}" type="text" placeholder="Produktnavn" style="flex:1" />
-      <input class="form-input item-qty-input" id="item-qty-${i}" type="text" placeholder="Mengde" style="width:90px;flex:none" />
-      <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;flex-shrink:0">
-        <button id="unit-g-${i}" class="item-unit-btn active" onclick="setItemUnit(${i},'g')" style="padding:0 10px;height:38px;border:none;background:#fff;font-size:13px;font-weight:600;cursor:pointer;color:var(--primary);transition:background 0.15s">g</button>
-        <button id="unit-stk-${i}" class="item-unit-btn" onclick="setItemUnit(${i},'stk')" style="padding:0 10px;height:38px;border:none;border-left:1px solid var(--border);background:#fff;font-size:13px;font-weight:600;cursor:pointer;color:var(--muted);transition:background 0.15s">stk</button>
-      </div>
-      <button class="btn-remove-item" onclick="removeItem(${i})" title="Fjern">✕</button>
-    </div>
-    <input class="form-input" id="item-note-${i}" type="text" placeholder="Kommentar – f.eks. uten skinn, ekstra is, hel fisk…" style="font-size:13px;color:var(--muted)" />`;
-  document.getElementById('itemsList').appendChild(div);
-}
-
-function setItemUnit(i, unit) {
-  const gBtn   = document.getElementById('unit-g-'   + i);
-  const stkBtn = document.getElementById('unit-stk-' + i);
-  if (!gBtn || !stkBtn) return;
-  gBtn.style.color   = unit === 'g'   ? 'var(--primary)' : 'var(--muted)';
-  stkBtn.style.color = unit === 'stk' ? 'var(--primary)' : 'var(--muted)';
-  gBtn.style.background   = unit === 'g'   ? '#f0fdfb' : '#fff';
-  stkBtn.style.background = unit === 'stk' ? '#f0fdfb' : '#fff';
-}
-
-function removeItem(i) {
-  const el = document.getElementById('item-row-' + i);
-  if (el) el.remove();
-}
-
-function saveNewOrder() {
-  const name  = document.getElementById('field-name').value.trim();
-  const phone = document.getElementById('field-phone').value.trim();
-  const date  = document.getElementById('field-date').value;
-  const slot  = document.getElementById('field-slot').value;
-
-  if (!name) { document.getElementById('field-name').focus(); return; }
-  if (!date) { document.getElementById('field-date').focus(); return; }
-
-  // Samle varer
-  const items = [];
-  for (let i = 0; i < itemCount; i++) {
-    const nameEl = document.getElementById('item-name-' + i);
-    const qtyEl  = document.getElementById('item-qty-' + i);
-    if (!nameEl) continue;
-    const n    = nameEl.value.trim();
-    const q    = qtyEl  ? qtyEl.value.trim()  : '';
-    const noteEl = document.getElementById('item-note-' + i);
-    const note = noteEl ? noteEl.value.trim() : '';
-    const unitStk = document.getElementById('unit-stk-' + i);
-    const unit = unitStk && unitStk.style.color === 'var(--primary)' ? 'stk' : 'g';
-    if (n) {
-      let label = n;
-      if (q && note)    label = `${n} (${q} – ${note})`;
-      else if (q)       label = `${n} (${q})`;
-      else if (note)    label = `${n} – ${note}`;
-      items.push({ name: label, qty: 1, weight: null, expiry: null, unit });
-    }
-  }
-  if (items.length === 0) { alert('Legg til minst én vare.'); return; }
-
-  const storeName = selectedStore === 'havoyet' ? 'Havøyet' : 'Nesttun Fisk & Vilt';
-  const order = {
-    id: (() => { let c = parseInt(localStorage.getItem('havøyet_manual_counter') || '4999'); c++; localStorage.setItem('havøyet_manual_counter', String(c)); return '#' + c; })(),
-    customer: name,
-    phone,
-    delivery: date,
-    slot,
-    status: 'NEW',
-    seen: false,
-    store: storeName,
-    manual: true,
-    created_manual: new Date().toISOString(),
-    items
-  };
-
-  // Lagre i localStorage og server
-  const existing = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
-  existing.push(order);
-  localStorage.setItem('havøyet_manual_orders', JSON.stringify(existing));
-  serverSaveManualOrders(existing);
-
-  // Legg til i visning
-  ORDERS = [...ORDERS, order];
-  renderAll();
-  closeNewOrderModal();
-  showToastIndex(`Bestilling for ${name} lagret ✓`);
-}
-
-function showToastIndex(msg) {
-  let t = document.getElementById('toastIndex');
-  if (!t) {
-    t = document.createElement('div');
-    t.id = 'toastIndex';
-    t.style.cssText = 'position:fixed;bottom:72px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;z-index:999;transition:opacity 0.3s';
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.style.opacity = '1';
-  setTimeout(() => t.style.opacity = '0', 2500);
-}
 </script>
 </body>
 </html>

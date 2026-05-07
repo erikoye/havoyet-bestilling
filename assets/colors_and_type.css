@@ -1,0 +1,288 @@
+/* ============================================================
+   HAVØYET — COLORS & TYPE TOKENS
+   Visual language: dark ocean + teal accent. Maven Pro (display)
+   + Poppins (body). Norwegian-first, editorial-meets-commercial.
+   ============================================================ */
+
+/* ---------- BRAND FONTS ----------
+   Inter (body/UI) — licensed brand files, local-served.
+   Fraunces (display) — brand serif from Google Fonts (variable opsz + wght). */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&display=swap');
+
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter-VariableFont_opsz_wght.ttf') format('truetype-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter-Italic-VariableFont_opsz_wght.ttf') format('truetype-variations');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+/* Static fallbacks — help older rendering engines pick correct weight */
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter_18pt-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter_18pt-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter_18pt-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('fonts/Inter_18pt-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-display: swap;
+}
+
+
+
+:root {
+  /* ---------- BRAND CORE ---------- */
+  --hv-ink:          #080A09;   /* near-black ocean, primary background */
+  --hv-ink-2:        #0F1412;   /* slightly lifted surface */
+  --hv-ink-3:        #171D1B;   /* card surface on dark */
+  --hv-ink-4:        #232B28;   /* hover / borders on dark */
+  --hv-line:         #2C3632;   /* hairline on dark */
+
+  --hv-teal:         #41C1BA;   /* primary accent — "ferskhet" */
+  --hv-teal-dk:      #2FA6A0;   /* hover / pressed */
+  --hv-teal-lt:      #7BD6D1;   /* highlight, light-bg accents */
+  --hv-teal-ink:     #0E3A38;   /* deep teal for text on light teal */
+  --hv-teal-wash:    rgba(65, 193, 186, 0.12);
+  --hv-teal-glow:    rgba(65, 193, 186, 0.25);
+
+  /* Secondary brand (logo gradient stop, editorial spots) */
+  --hv-teal-deep:    #2A8480;   /* darker wave color from logo */
+  --hv-teal-bright:  #55E0D5;   /* brighter wave tip */
+
+  /* ---------- NEUTRALS (light mode surfaces) ---------- */
+  --hv-paper:        #FBFAF7;   /* off-white, warm paper — editorial */
+  --hv-paper-2:      #F2EFE8;   /* sand */
+  --hv-paper-3:      #E6E1D6;   /* deeper sand for borders */
+  --hv-stone:        #8C8A82;   /* muted text on paper */
+  --hv-stone-dk:     #3A3B37;   /* heading text on paper */
+
+  /* ---------- FOREGROUND (on dark ink) ---------- */
+  --hv-fg-1:         #FFFFFF;   /* primary */
+  --hv-fg-2:         #D7DDDB;   /* secondary */
+  --hv-fg-3:         #8C9794;   /* tertiary / muted */
+  --hv-fg-4:         #5A6764;   /* disabled */
+
+  /* ---------- SEMANTIC ---------- */
+  --hv-ok:           #6BD89B;
+  --hv-ok-ink:       #0E3D24;
+  --hv-warn:         #F5B84A;
+  --hv-warn-ink:     #4A3010;
+  --hv-danger:       #F07A6F;
+  --hv-danger-ink:   #4A1612;
+  --hv-info:         #7FB3E8;
+  --hv-info-ink:     #0F2A47;
+
+  /* Freshness scale — used for "bekreftet" / "tilgjengelig" in admin tools */
+  --hv-fresh-1:      #F07A6F;   /* 0% — mangler */
+  --hv-fresh-2:      #F5B84A;   /* ~50% */
+  --hv-fresh-3:      #6BD89B;   /* 100% — klar */
+
+  /* ---------- TYPE ---------- */
+  /* Brand pairing: Fraunces (display) + Inter (body/UI) */
+  --hv-font-display: 'Fraunces', Georgia, serif;
+  --hv-font-body:    'Inter', 'Helvetica Neue', Arial, sans-serif;
+  --hv-font-ui:      'Inter', 'Helvetica Neue', Arial, sans-serif;
+  --hv-font-mono:    'JetBrains Mono', ui-monospace, Menlo, monospace;
+
+  /* Brand colors from brand guide */
+  --hv-brand-dark:   #3F474B;
+  --hv-brand-teal:   #148777;
+  --hv-brand-neon:   #1CE9E7;
+  --hv-brand-beige:  #F2F1EC;
+
+  --hv-fw-display-bold: 800;
+  --hv-fw-display:      600;
+  --hv-fw-body-bold:    600;
+  --hv-fw-body:         400;
+  --hv-fw-body-light:   300;
+
+  /* Type scale — editorial + commercial balance */
+  --hv-t-hero:    clamp(48px, 7vw, 104px);   /* landing hero */
+  --hv-t-display: clamp(36px, 5vw, 72px);    /* section title */
+  --hv-t-h1:      clamp(28px, 3.6vw, 48px);
+  --hv-t-h2:      clamp(22px, 2.6vw, 34px);
+  --hv-t-h3:      20px;
+  --hv-t-h4:      16px;
+  --hv-t-body-lg: 18px;
+  --hv-t-body:    15px;
+  --hv-t-sm:      13px;
+  --hv-t-xs:      11px;
+
+  --hv-lh-tight:   1.02;
+  --hv-lh-display: 1.1;
+  --hv-lh-heading: 1.2;
+  --hv-lh-body:    1.55;
+  --hv-lh-long:    1.7;
+
+  --hv-ls-eyebrow: 0.18em;       /* uppercase eyebrows */
+  --hv-ls-label:   0.08em;
+  --hv-ls-tight:   -0.02em;
+
+  /* ---------- SPACING (4px base) ---------- */
+  --hv-sp-1:  4px;
+  --hv-sp-2:  8px;
+  --hv-sp-3:  12px;
+  --hv-sp-4:  16px;
+  --hv-sp-5:  20px;
+  --hv-sp-6:  24px;
+  --hv-sp-8:  32px;
+  --hv-sp-10: 40px;
+  --hv-sp-12: 48px;
+  --hv-sp-16: 64px;
+  --hv-sp-20: 80px;
+  --hv-sp-24: 96px;
+
+  /* ---------- RADII ---------- */
+  --hv-r-xs:  4px;
+  --hv-r-sm:  8px;
+  --hv-r-md:  12px;
+  --hv-r-lg:  18px;
+  --hv-r-xl:  24px;
+  --hv-r-pill: 999px;
+
+  /* ---------- SHADOWS / ELEVATION ---------- */
+  --hv-shadow-xs: 0 1px 2px rgba(8,10,9,0.25);
+  --hv-shadow-sm: 0 2px 8px rgba(8,10,9,0.35);
+  --hv-shadow-md: 0 8px 24px rgba(8,10,9,0.40);
+  --hv-shadow-lg: 0 20px 60px rgba(8,10,9,0.55);
+  --hv-shadow-teal: 0 8px 28px rgba(65,193,186,0.25);
+
+  /* On light paper */
+  --hv-shadow-paper-sm: 0 1px 2px rgba(58,59,55,0.08);
+  --hv-shadow-paper-md: 0 6px 20px rgba(58,59,55,0.10);
+
+  /* ---------- BORDERS ---------- */
+  --hv-border-dark:   1px solid var(--hv-line);
+  --hv-border-light:  1px solid var(--hv-paper-3);
+  --hv-border-teal:   1px solid var(--hv-teal);
+
+  /* ---------- MOTION ---------- */
+  --hv-ease:          cubic-bezier(0.22, 0.61, 0.36, 1);
+  --hv-ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --hv-dur-fast:      120ms;
+  --hv-dur-base:      220ms;
+  --hv-dur-slow:      420ms;
+}
+
+/* ============================================================
+   SEMANTIC TYPE — apply these classes directly for consistency
+   ============================================================ */
+
+.hv-eyebrow {
+  font-family: var(--hv-font-display);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: var(--hv-ls-eyebrow);
+  text-transform: uppercase;
+  color: var(--hv-teal);
+}
+
+.hv-hero {
+  font-family: var(--hv-font-display);
+  font-weight: var(--hv-fw-display-bold);
+  font-size: var(--hv-t-hero);
+  line-height: var(--hv-lh-tight);
+  letter-spacing: var(--hv-ls-tight);
+  color: var(--hv-fg-1);
+}
+
+.hv-display {
+  font-family: var(--hv-font-display);
+  font-weight: var(--hv-fw-display-bold);
+  font-size: var(--hv-t-display);
+  line-height: var(--hv-lh-display);
+  letter-spacing: var(--hv-ls-tight);
+}
+
+.hv-h1 {
+  font-family: var(--hv-font-display);
+  font-weight: 700;
+  font-size: var(--hv-t-h1);
+  line-height: var(--hv-lh-heading);
+  letter-spacing: -0.01em;
+}
+.hv-h2 {
+  font-family: var(--hv-font-display);
+  font-weight: 700;
+  font-size: var(--hv-t-h2);
+  line-height: var(--hv-lh-heading);
+}
+.hv-h3 {
+  font-family: var(--hv-font-display);
+  font-weight: 600;
+  font-size: var(--hv-t-h3);
+  line-height: 1.25;
+}
+.hv-h4 {
+  font-family: var(--hv-font-display);
+  font-weight: 600;
+  font-size: var(--hv-t-h4);
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+}
+
+.hv-body-lg {
+  font-family: var(--hv-font-body);
+  font-weight: var(--hv-fw-body);
+  font-size: var(--hv-t-body-lg);
+  line-height: var(--hv-lh-body);
+}
+.hv-body {
+  font-family: var(--hv-font-body);
+  font-weight: var(--hv-fw-body);
+  font-size: var(--hv-t-body);
+  line-height: var(--hv-lh-body);
+}
+.hv-sm {
+  font-family: var(--hv-font-body);
+  font-size: var(--hv-t-sm);
+  line-height: 1.45;
+}
+.hv-xs {
+  font-family: var(--hv-font-body);
+  font-size: var(--hv-t-xs);
+  line-height: 1.4;
+}
+
+.hv-label {
+  font-family: var(--hv-font-body);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: var(--hv-ls-label);
+  color: var(--hv-fg-3);
+}
+
+.hv-price {
+  font-family: var(--hv-font-display);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Color helpers */
+.hv-on-dark { color: var(--hv-fg-1); }
+.hv-on-dark-mute { color: var(--hv-fg-3); }
+.hv-on-paper { color: var(--hv-stone-dk); }
+.hv-accent  { color: var(--hv-teal); }
