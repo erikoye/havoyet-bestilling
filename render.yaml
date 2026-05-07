@@ -4,6 +4,10 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
+    disk:
+      name: havoyet-state
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: SHOPIFY_SHOP
         value: havoyet.myshopify.com
