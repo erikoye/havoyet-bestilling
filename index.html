@@ -198,6 +198,35 @@
     .nav-arrow { margin-left: auto; flex-shrink: 0; color: var(--hv-fg-4); }
     .nav-card:hover .nav-arrow { color: var(--hv-teal); }
 
+    /* ── BUTIKKVELGER ── (segmented control, admin-stil) */
+    .store-switcher {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      background: var(--sur);
+      border: 1px solid var(--hv-line);
+      border-radius: 12px;
+      margin-bottom: 18px;
+    }
+    .store-sw-btn {
+      padding: 8px 16px;
+      font-family: var(--hv-font-display);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      border: none;
+      background: transparent;
+      color: var(--hv-fg-3);
+      cursor: pointer;
+      border-radius: 8px;
+      transition: background 220ms var(--hv-ease), color 220ms var(--hv-ease);
+    }
+    .store-sw-btn:hover { color: var(--hv-fg-1); }
+    .store-sw-btn.active {
+      background: var(--hv-teal);
+      color: var(--hv-teal-ink);
+    }
+
     /* ── ORDERS TABLE ── */
     .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
     .section-title  { font-family: var(--hv-font-display); font-size: 15px; font-weight: 700; color: var(--hv-fg-1); }
@@ -438,6 +467,12 @@
     </div>
   </div>
 
+  <!-- BUTIKKVELGER -->
+  <div class="store-switcher" role="tablist" aria-label="Velg butikk">
+    <button class="store-sw-btn" id="swHavoyet" type="button" onclick="setActiveStore('havoyet')">Havøyet</button>
+    <button class="store-sw-btn" id="swNesttun" type="button" onclick="setActiveStore('nesttun')">Nesttun Fisk &amp; Vilt</button>
+  </div>
+
   <!-- STATS -->
   <div class="stats">
     <div class="stat-card unseen" onclick="openDrawer('unseen')">
@@ -596,6 +631,9 @@ let ORDERS = [];
 let fromLive = false;
 
 // ─── BUTIKKFILTER ─────────────────────────────
+// Skiller bestillinger som kommer inn via nettsiden (havoyet) fra
+// manuelle butikk-bestillinger (nesttun). Velgeren over hero gjelder
+// stat-kort, drawer og «Kommende ordre»-tabellen.
 function activeStore() {
   return localStorage.getItem('hv_active_store') || 'havoyet';
 }
@@ -604,6 +642,20 @@ function storeFilter(o) {
   if (s === 'nesttun') return o.store === 'Nesttun Fisk & Vilt';
   return !o.store || o.store === 'Havøyet';
 }
+function setActiveStore(s) {
+  localStorage.setItem('hv_active_store', s);
+  paintStoreSwitcher();
+  renderAll();
+}
+function paintStoreSwitcher() {
+  const s = activeStore();
+  const a = document.getElementById('swHavoyet');
+  const b = document.getElementById('swNesttun');
+  if (a) a.classList.toggle('active', s === 'havoyet');
+  if (b) b.classList.toggle('active', s === 'nesttun');
+}
+paintStoreSwitcher();
+
 // ─── PRIORITET ───────────────────────────────
 function getPackingState() {
   try { return JSON.parse(localStorage.getItem('havøyet_state') || '{}'); } catch(e) { return {}; }
