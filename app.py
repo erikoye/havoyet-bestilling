@@ -130,9 +130,9 @@ def _normalize_manual_order(o):
     return {
         "id":         o.get("ordrenr") or o.get("id"),
         "shopify_id": None,
-        "customer":   kunde.get("navn") or kunde.get("name") or "Ukjent",
-        "email":      kunde.get("epost") or kunde.get("email", ""),
-        "phone":      kunde.get("tlf") or kunde.get("phone") or "",
+        "customer":   kunde.get("navn") or kunde.get("name") or o.get("customer") or "Ukjent",
+        "email":      kunde.get("epost") or kunde.get("email") or o.get("email") or "",
+        "phone":      kunde.get("tlf") or kunde.get("phone") or o.get("phone") or "",
         "delivery":   kunde.get("leveringsdag") or o.get("delivery") or "",
         "slot":       kunde.get("leveringstid") or o.get("slot") or "",
         "status":     o.get("status") or "NEW",
@@ -140,6 +140,10 @@ def _normalize_manual_order(o):
         "note":       kunde.get("kommentar") or o.get("note") or "",
         "financial":  o.get("financial") or "",
         "created_at": o.get("dato") or o.get("created_at") or "",
+        # Felter som lar iPad/admin filtrere på opprinnelse og butikk
+        "store":      o.get("store") or "",
+        "source":     o.get("source") or ("admin" if o.get("manual") else ""),
+        "manual":     bool(o.get("manual")),
         # Behold de opprinnelige feltene også, så ny.havoyet.no-spesifikke ting
         # (boxSelection, fee, sum osv.) er fortsatt tilgjengelig for iPad-en.
         "_raw":       o,
@@ -302,13 +306,19 @@ def _paid_ordrenrs():
 
 def _all_orders_normalized(only_paid=True):
     """Bygger den normaliserte ordre-listen fra _manual_orders.
-    Default: kun betalte ordre (Stripe/Vipps PAID/AUTHORIZED).
+    Default: alle ordre staff skal pakke — betalte web-ordre (Stripe/Vipps),
+    manuelt opprettede admin-ordre, og Shopify-importerte historiske ordre.
+    Ekskluderer kun ubetalte web-checkout-ordre (forlatte handlekurver).
     Settes only_paid=False for å få alle (admin-tools)."""
     if only_paid:
         paid = _paid_ordrenrs()
-        source = [o for o in _manual_orders
-                  if str(o.get("ordrenr") or o.get("id")) in paid
-                     or o.get("status") in ("PAID", "paid")]
+        source = []
+        for o in _manual_orders:
+            ordrenr  = str(o.get("ordrenr") or o.get("id") or "")
+            is_paid  = ordrenr in paid or o.get("status") in ("PAID", "paid")
+            is_staff = bool(o.get("manual")) or o.get("source") in ("admin", "shopify")
+            if is_paid or is_staff:
+                source.append(o)
     else:
         source = list(_manual_orders)
     orders = [_normalize_manual_order(o) for o in source]
