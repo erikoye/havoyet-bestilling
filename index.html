@@ -227,6 +227,67 @@
       color: var(--hv-teal-ink);
     }
 
+    /* ── NY BESTILLING — KNAPP + MODAL (admin-stil) ── */
+    .btn-new-order {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: var(--hv-teal); color: var(--hv-teal-ink);
+      border: none; border-radius: 12px;
+      padding: 9px 18px;
+      font-family: var(--hv-font-display);
+      font-size: 13px; font-weight: 700;
+      cursor: pointer; white-space: nowrap;
+      transition: background 220ms var(--hv-ease), transform 120ms, box-shadow 220ms;
+      letter-spacing: 0.01em;
+    }
+    .btn-new-order:hover {
+      background: var(--hv-teal-dk);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 22px rgba(65,193,186,0.22);
+    }
+
+    .nbm-ov { display:none; position:fixed; inset:0; background:rgba(20,22,21,0.45); backdrop-filter:blur(8px); z-index:500; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto; }
+    .nbm-ov.open { display:flex; }
+    .nbm { background:var(--sur); border:1px solid var(--hv-line); border-radius:16px; width:100%; max-width:560px; box-shadow:0 24px 60px rgba(0,0,0,0.18); animation:nbmIn 220ms var(--hv-ease); }
+    @keyframes nbmIn { from { opacity:0; transform:translateY(-10px); } to { opacity:1; transform:none; } }
+    .nbm-hd { padding:20px 24px 14px; border-bottom:1px solid var(--hv-line); display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    .nbm-ttl { font-family:var(--hv-font-display); font-size:17px; font-weight:800; color:var(--hv-fg-1); letter-spacing:-0.01em; }
+    .nbm-sub { font-size:12px; color:var(--hv-fg-3); margin-top:3px; font-family:var(--hv-font-mono, monospace); }
+    .nbm-cl { background:none; border:none; color:var(--hv-fg-3); cursor:pointer; font-size:20px; padding:2px 6px; line-height:1; transition:color 150ms; }
+    .nbm-cl:hover { color:var(--hv-fg-1); }
+    .nbm-bd { padding:18px 24px; display:flex; flex-direction:column; gap:18px; }
+    .nbm-ft { padding:14px 24px 18px; border-top:1px solid var(--hv-line); display:flex; justify-content:flex-end; gap:10px; background:var(--sur2); }
+    .nbm-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .nbm-fg { display:flex; flex-direction:column; gap:5px; }
+    .nbm-fg.full { grid-column:1 / -1; }
+    .nbm-lbl { font-family:var(--hv-font-display); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.10em; color:var(--hv-fg-3); }
+    .nbm-fi { border:1px solid var(--hv-line); border-radius:10px; padding:9px 12px; font-size:14px; font-family:var(--hv-font-body); color:var(--hv-fg-1); background:var(--sur); outline:none; transition:border-color 220ms var(--hv-ease), box-shadow 220ms; }
+    .nbm-fi:focus { border-color:var(--hv-teal); box-shadow:0 0 0 3px rgba(65,193,186,0.10); }
+    .nbm-sel { appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238A8E8D' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 10px center; padding-right:30px; cursor:pointer; }
+    .nbm-divider { font-family:var(--hv-font-display); font-size:11px; font-weight:700; color:var(--hv-fg-3); text-transform:uppercase; letter-spacing:0.10em; border-bottom:1px solid var(--hv-line); padding-bottom:6px; }
+    .nbm-store-sel { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .nbm-store-btn { padding:12px 14px; border:1px solid var(--hv-line); border-radius:12px; cursor:pointer; background:var(--sur); text-align:left; transition:border-color 220ms var(--hv-ease), background 220ms; font-family:var(--hv-font-body); }
+    .nbm-store-btn:hover { border-color:var(--hv-teal); }
+    .nbm-store-btn.selected { border-color:var(--hv-teal); background:var(--hv-teal-wash); }
+    .nbm-store-name { font-family:var(--hv-font-display); font-size:14px; font-weight:700; color:var(--hv-fg-1); }
+    .nbm-store-sub  { font-size:12px; color:var(--hv-fg-3); margin-top:2px; }
+    .nbm-item { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border:1px solid var(--hv-line); border-radius:12px; background:var(--sur2); }
+    .nbm-item-row { display:flex; align-items:center; gap:8px; }
+    .nbm-item .nbm-fi { flex:1; background:var(--sur); }
+    .nbm-qty { width:90px !important; flex:none !important; }
+    .nbm-unit { display:flex; border:1px solid var(--hv-line); border-radius:10px; overflow:hidden; flex-shrink:0; background:var(--sur); }
+    .nbm-unit-btn { padding:0 12px; height:38px; border:none; background:transparent; font-family:var(--hv-font-display); font-size:13px; font-weight:700; cursor:pointer; color:var(--hv-fg-3); transition:background 150ms, color 150ms; }
+    .nbm-unit-btn + .nbm-unit-btn { border-left:1px solid var(--hv-line); }
+    .nbm-unit-btn.active { background:var(--hv-teal-wash); color:var(--hv-teal); }
+    .nbm-rm { background:transparent; border:1px solid rgba(239,68,68,0.30); border-radius:8px; color:var(--red); cursor:pointer; padding:6px 10px; font-size:14px; line-height:1; transition:background 150ms; }
+    .nbm-rm:hover { background:rgba(239,68,68,0.08); }
+    .nbm-add { background:transparent; border:1px dashed var(--hv-line); border-radius:10px; padding:10px 14px; font-family:var(--hv-font-display); font-size:13px; font-weight:600; color:var(--hv-fg-3); cursor:pointer; width:100%; text-align:center; transition:border-color 220ms var(--hv-ease), color 220ms; }
+    .nbm-add:hover { border-color:var(--hv-teal); color:var(--hv-teal); }
+    .nbm-cancel { background:transparent; border:1px solid var(--hv-line); border-radius:10px; padding:9px 18px; font-family:var(--hv-font-display); font-size:13px; font-weight:600; cursor:pointer; color:var(--hv-fg-2); transition:border-color 220ms, color 220ms; }
+    .nbm-cancel:hover { border-color:var(--hv-fg-3); color:var(--hv-fg-1); }
+    .nbm-save { background:var(--hv-teal); color:var(--hv-teal-ink); border:none; border-radius:10px; padding:9px 22px; font-family:var(--hv-font-display); font-size:13px; font-weight:700; cursor:pointer; transition:background 220ms, transform 120ms, box-shadow 220ms; }
+    .nbm-save:hover { background:var(--hv-teal-dk); transform:translateY(-1px); box-shadow:0 8px 22px rgba(65,193,186,0.22); }
+    .nbm-toast { position:fixed; bottom:72px; left:50%; transform:translateX(-50%); background:var(--hv-fg-1); color:var(--sur); padding:10px 22px; border-radius:10px; font-size:13px; font-family:var(--hv-font-body); z-index:999; transition:opacity 0.3s; box-shadow:0 8px 28px rgba(0,0,0,0.20); }
+
     /* ── ORDERS TABLE ── */
     .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
     .section-title  { font-family: var(--hv-font-display); font-size: 15px; font-weight: 700; color: var(--hv-fg-1); }
@@ -465,6 +526,10 @@
       <h1>Ordrebehandling</h1>
       <p>Intern oversikt &mdash; hjemlevering av fersk sjømat, Bergen</p>
     </div>
+    <button class="btn-new-order" type="button" onclick="openNewOrderModal()" aria-label="Ny bestilling">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Ny bestilling
+    </button>
   </div>
 
   <!-- BUTIKKVELGER -->
@@ -590,6 +655,67 @@
   <span>Havøyet AS &mdash; Intern ordrebehandling &mdash; v0.1.0</span>
   <div class="printer-status"><div class="printer-dot"></div>QL-1100c tilkoblet</div>
   <span>Pi 5 &mdash; Bergen</span>
+</div>
+
+<!-- ── NY BESTILLING MODAL ── -->
+<div class="nbm-ov" id="nbmOverlay" onclick="nbmOverlayClick(event)">
+  <div class="nbm" role="dialog" aria-modal="true" aria-labelledby="nbmTitle">
+    <div class="nbm-hd">
+      <div>
+        <div class="nbm-ttl" id="nbmTitle">Ny bestilling</div>
+        <div class="nbm-sub" id="nbmDate">–</div>
+      </div>
+      <button class="nbm-cl" type="button" onclick="closeNewOrderModal()" aria-label="Lukk">×</button>
+    </div>
+    <div class="nbm-bd">
+      <div>
+        <div class="nbm-lbl" style="margin-bottom:8px">Butikk</div>
+        <div class="nbm-store-sel">
+          <button class="nbm-store-btn selected" id="nbmStoreHavoyet" type="button" onclick="nbmSelectStore('havoyet')">
+            <div class="nbm-store-name">Havøyet</div>
+            <div class="nbm-store-sub">Hjemlevering sjømat</div>
+          </button>
+          <button class="nbm-store-btn" id="nbmStoreNesttun" type="button" onclick="nbmSelectStore('nesttun')">
+            <div class="nbm-store-name">Nesttun Fisk &amp; Vilt</div>
+            <div class="nbm-store-sub">Lokal fiskebutikk</div>
+          </button>
+        </div>
+      </div>
+      <div>
+        <div class="nbm-divider">Kundeinformasjon</div>
+        <div class="nbm-row" style="margin-top:12px">
+          <div class="nbm-fg">
+            <label class="nbm-lbl" for="nbmName">Navn</label>
+            <input class="nbm-fi" id="nbmName" type="text" placeholder="Fornavn Etternavn" autocomplete="name" />
+          </div>
+          <div class="nbm-fg">
+            <label class="nbm-lbl" for="nbmPhone">Telefon</label>
+            <input class="nbm-fi" id="nbmPhone" type="tel" placeholder="900 00 000" autocomplete="tel" />
+          </div>
+          <div class="nbm-fg">
+            <label class="nbm-lbl" id="nbmDateLbl" for="nbmDeliv">Leveringsdato</label>
+            <input class="nbm-fi" id="nbmDeliv" type="date" oninput="nbmUpdateSlots()" />
+          </div>
+          <div class="nbm-fg">
+            <label class="nbm-lbl" id="nbmSlotLbl" for="nbmSlot">Tidspunkt</label>
+            <select class="nbm-fi nbm-sel" id="nbmSlot">
+              <option value="a">13:00 – 15:00</option>
+              <option value="b">15:00 – 18:00</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="nbm-divider">Varer</div>
+        <div id="nbmItems" style="display:flex;flex-direction:column;gap:8px;margin-top:12px"></div>
+        <button class="nbm-add" type="button" style="margin-top:8px" onclick="nbmAddItem()">+ Legg til vare</button>
+      </div>
+    </div>
+    <div class="nbm-ft">
+      <button class="nbm-cancel" type="button" onclick="closeNewOrderModal()">Avbryt</button>
+      <button class="nbm-save"   type="button" onclick="saveNewOrder()">Lagre bestilling</button>
+    </div>
+  </div>
 </div>
 
 <!-- ── DRAWER ── -->
@@ -955,7 +1081,181 @@ loadFromFlask();      // erstatt med live-data om Flask er oppe
 setInterval(loadFromFlask, 30 * 1000);  // poll hvert 30. sekund — kontinuerlig live fra havoyet.no
 setInterval(pollPackingState, 15000);        // sync pakkingstilstand hvert 15 sek
 
-// (Modal for ny bestilling fjernet — opprettelse skjer i admin-panelet.)
+// ─── NY BESTILLING MODAL ────────────────────────
+let _nbmStore = 'havoyet';
+let _nbmItemCount = 0;
+
+function openNewOrderModal() {
+  _nbmStore = activeStore() || 'havoyet';
+  document.getElementById('nbmStoreHavoyet').classList.toggle('selected', _nbmStore === 'havoyet');
+  document.getElementById('nbmStoreNesttun').classList.toggle('selected', _nbmStore === 'nesttun');
+  document.getElementById('nbmName').value  = '';
+  document.getElementById('nbmPhone').value = '';
+  document.getElementById('nbmDeliv').value = todayISO;
+  document.getElementById('nbmItems').innerHTML = '';
+  _nbmItemCount = 0;
+  nbmUpdateSlots();
+  nbmAddItem(); // start med én tom vare
+  const d = new Date();
+  document.getElementById('nbmDate').textContent =
+    d.toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  document.getElementById('nbmOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('nbmName').focus(), 60);
+}
+
+function closeNewOrderModal() {
+  document.getElementById('nbmOverlay').classList.remove('open');
+}
+
+function nbmOverlayClick(e) {
+  if (e.target === document.getElementById('nbmOverlay')) closeNewOrderModal();
+}
+
+function nbmSelectStore(store) {
+  _nbmStore = store;
+  document.getElementById('nbmStoreHavoyet').classList.toggle('selected', store === 'havoyet');
+  document.getElementById('nbmStoreNesttun').classList.toggle('selected', store === 'nesttun');
+  nbmUpdateSlots();
+}
+
+function nbmUpdateSlots() {
+  const dateVal  = document.getElementById('nbmDeliv').value;
+  const dateLbl  = document.getElementById('nbmDateLbl');
+  const slotLbl  = document.getElementById('nbmSlotLbl');
+  const slotSel  = document.getElementById('nbmSlot');
+  if (_nbmStore === 'nesttun') {
+    dateLbl.textContent = 'Hentedag';
+    slotLbl.textContent = 'Klokketime';
+    const isSat = dateVal ? new Date(dateVal).getDay() === 6 : false;
+    const maxH  = isSat ? 15 : 17;
+    const cur   = slotSel.value;
+    slotSel.innerHTML = '';
+    for (let h = 10; h < maxH; h++) {
+      const opt = document.createElement('option');
+      opt.value = `${h}:00`;
+      opt.textContent = `${h}:00 – ${h+1}:00`;
+      slotSel.appendChild(opt);
+    }
+    if ([...slotSel.options].some(o => o.value === cur)) slotSel.value = cur;
+  } else {
+    dateLbl.textContent = 'Leveringsdato';
+    slotLbl.textContent = 'Tidspunkt';
+    slotSel.innerHTML = '<option value="a">13:00 – 15:00</option><option value="b">15:00 – 18:00</option>';
+  }
+}
+
+function nbmAddItem() {
+  const i = _nbmItemCount++;
+  const div = document.createElement('div');
+  div.id = 'nbm-row-' + i;
+  div.className = 'nbm-item';
+  div.dataset.unit = 'g';
+  div.innerHTML = `
+    <div class="nbm-item-row">
+      <input class="nbm-fi" id="nbm-name-${i}"  type="text" placeholder="Produktnavn" autocomplete="off" />
+      <input class="nbm-fi nbm-qty" id="nbm-qty-${i}" type="text" placeholder="Mengde" autocomplete="off" />
+      <div class="nbm-unit">
+        <button type="button" class="nbm-unit-btn active" id="nbm-u-g-${i}"   onclick="nbmSetUnit(${i},'g')">g</button>
+        <button type="button" class="nbm-unit-btn"        id="nbm-u-stk-${i}" onclick="nbmSetUnit(${i},'stk')">stk</button>
+      </div>
+      <button type="button" class="nbm-rm" onclick="nbmRemoveItem(${i})" aria-label="Fjern">×</button>
+    </div>
+    <input class="nbm-fi" id="nbm-note-${i}" type="text" placeholder="Kommentar – f.eks. uten skinn, ekstra is, hel fisk…" autocomplete="off" />`;
+  document.getElementById('nbmItems').appendChild(div);
+}
+
+function nbmSetUnit(i, unit) {
+  const row = document.getElementById('nbm-row-' + i);
+  if (row) row.dataset.unit = unit;
+  const g   = document.getElementById('nbm-u-g-' + i);
+  const stk = document.getElementById('nbm-u-stk-' + i);
+  if (g)   g.classList.toggle('active',   unit === 'g');
+  if (stk) stk.classList.toggle('active', unit === 'stk');
+}
+
+function nbmRemoveItem(i) {
+  const el = document.getElementById('nbm-row-' + i);
+  if (el) el.remove();
+}
+
+function nbmShowToast(msg) {
+  let t = document.getElementById('nbmToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'nbmToast';
+    t.className = 'nbm-toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  setTimeout(() => t.style.opacity = '0', 2500);
+}
+
+async function saveNewOrder() {
+  const name  = document.getElementById('nbmName').value.trim();
+  const phone = document.getElementById('nbmPhone').value.trim();
+  const date  = document.getElementById('nbmDeliv').value;
+  const slot  = document.getElementById('nbmSlot').value;
+  if (!name)  { document.getElementById('nbmName').focus();  return; }
+  if (!date)  { document.getElementById('nbmDeliv').focus(); return; }
+
+  // Samle varer fra alle eksisterende rader (id-en kan ha "hull" etter sletting)
+  const items = [];
+  document.querySelectorAll('#nbmItems .nbm-item').forEach(row => {
+    const i    = row.id.replace('nbm-row-', '');
+    const n    = (document.getElementById('nbm-name-' + i)?.value || '').trim();
+    const q    = (document.getElementById('nbm-qty-' + i)?.value || '').trim();
+    const note = (document.getElementById('nbm-note-' + i)?.value || '').trim();
+    const unit = row.dataset.unit || 'g';
+    if (!n) return;
+    let label = n;
+    if (q && note)    label = `${n} (${q} – ${note})`;
+    else if (q)       label = `${n} (${q})`;
+    else if (note)    label = `${n} – ${note}`;
+    items.push({ name: label, qty: 1, weight: null, expiry: null, unit });
+  });
+  if (!items.length) { nbmShowToast('Legg til minst én vare'); return; }
+
+  const storeName = _nbmStore === 'havoyet' ? 'Havøyet' : 'Nesttun Fisk & Vilt';
+  const counter = parseInt(localStorage.getItem('havøyet_manual_counter') || '4999') + 1;
+  localStorage.setItem('havøyet_manual_counter', String(counter));
+  const order = {
+    id:              '#' + counter,
+    customer:        name,
+    phone,
+    delivery:        date,
+    slot,
+    status:          'NEW',
+    seen:            false,
+    store:           storeName,
+    manual:          true,
+    source:          'admin',
+    created_manual:  new Date().toISOString(),
+    items,
+  };
+
+  // Hent eksisterende serverliste, legg til, post tilbake
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/manual-orders`, { cache: 'no-store' });
+    const cur = r.ok ? await r.json() : [];
+    const next = Array.isArray(cur) ? [...cur, order] : [order];
+    localStorage.setItem('havøyet_manual_orders', JSON.stringify(next));
+    serverSaveManualOrders(next);
+    ORDERS = [...ORDERS, order];
+    renderAll();
+    closeNewOrderModal();
+    nbmShowToast(`Bestilling for ${name} lagret ✓`);
+  } catch(e) {
+    nbmShowToast('Kunne ikke lagre — prøv igjen');
+  }
+}
+
+// Lukk på Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('nbmOverlay').classList.contains('open')) {
+    closeNewOrderModal();
+  }
+});
 
 </script>
 </body>
