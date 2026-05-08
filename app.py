@@ -140,9 +140,16 @@ def _normalize_manual_order(o):
         "note":       kunde.get("kommentar") or o.get("note") or "",
         "financial":  o.get("financial") or "",
         "created_at": o.get("dato") or o.get("created_at") or "",
-        # Felter som lar iPad/admin filtrere på opprinnelse og butikk
+        # Felter som lar iPad/admin filtrere på opprinnelse og butikk.
+        # `source` utledes fra (i prioritet): eksplisitt felt → kilde → manual-flagg.
+        # Historiske Shopify-imports har "kilde": "shopify-import" → normaliseres til "shopify".
         "store":      o.get("store") or "",
-        "source":     o.get("source") or ("admin" if o.get("manual") else ""),
+        "source":     (
+            o.get("source")
+            or ("shopify" if "shopify" in (o.get("kilde") or "").lower() else None)
+            or ("import"  if "import"  in (o.get("kilde") or "").lower() else None)
+            or ("admin"   if o.get("manual") else "")
+        ),
         "manual":     bool(o.get("manual")),
         # Behold de opprinnelige feltene også, så ny.havoyet.no-spesifikke ting
         # (boxSelection, fee, sum osv.) er fortsatt tilgjengelig for iPad-en.
@@ -315,8 +322,19 @@ def _all_orders_normalized(only_paid=True):
         source = []
         for o in _manual_orders:
             ordrenr  = str(o.get("ordrenr") or o.get("id") or "")
-            is_paid  = ordrenr in paid or o.get("status") in ("PAID", "paid")
-            is_staff = bool(o.get("manual")) or o.get("source") in ("admin", "shopify")
+            status   = (o.get("status") or "").upper()
+            is_paid  = ordrenr in paid or status in ("PAID", "PAID_OUT")
+            # Sjekk både "source" og "kilde" — historiske Shopify-imports bruker "kilde",
+            # mens nye webbestillinger fra havoyet.no/kasse setter "source".
+            kilde    = (o.get("kilde") or "").lower()
+            src      = (o.get("source") or "").lower()
+            is_staff = (
+                bool(o.get("manual"))
+                or src in ("admin", "shopify")
+                or "shopify" in kilde
+                or "import" in kilde
+                or kilde.startswith("admin")
+            )
             if is_paid or is_staff:
                 source.append(o)
     else:
@@ -5488,6 +5506,20 @@ try:
     _load_subscriptions()
 except Exception as _e:
     print(f"[BOOT-WSGI] _load_subscriptions feilet: {_e}")
+
+# ── ABAX ETA-integrasjon (kunder ser "X minutter til levering") ──────────
+try:
+    from tracking_routes import register_tracking
+    register_tracking(
+        app,
+        manual_orders_ref=lambda: _manual_orders,
+        save_state=_save_sync_state,
+        state_dir=STATE_DIR,
+        admin_check=_user_from_request,
+    )
+    print("[BOOT] Tracking-routes registrert (ABAX)")
+except Exception as _e:
+    print(f"[BOOT] Tracking-routes IKKE registrert: {_e}")
 
 
 if __name__ == "__main__":
