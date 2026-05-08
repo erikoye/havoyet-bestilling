@@ -283,6 +283,30 @@ _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def serve_index():
     return send_from_directory(_BASE_DIR, "index.html")
 
+# Pretty URLs uten .html — Cloudflare foran bestilling.havoyet.no gjør 308 fra
+# `*.html` til extension-less. Vi eksponerer derfor de samme HTML-filene under
+# extension-less ruter så de tre subsidene fungerer både direkte (Render) og
+# via CDN-redirect.
+_PRETTY_PAGES = {
+    "kalender":         "kalender.html",
+    "pakke":            "pakke.html",
+    "lager":            "lager.html",
+    "admin":            "admin.html",
+    "betalinger":       "betalinger.html",
+    "butikk":           "butikk.html",
+    "etikett":          "etikett.html",
+    "nesttun-admin":    "nesttun-admin.html",
+    "tracking-admin":   "tracking-admin.html",
+}
+
+@app.route("/<page>")
+def serve_pretty(page):
+    fname = _PRETTY_PAGES.get(page)
+    if fname and os.path.exists(os.path.join(_BASE_DIR, fname)):
+        return send_from_directory(_BASE_DIR, fname)
+    # Fall through til catch-all (returnerer 404 hvis fil ikke finnes)
+    return serve_static(page)
+
 @app.route("/<path:filename>")
 def serve_static(filename):
     return send_from_directory(_BASE_DIR, filename)
