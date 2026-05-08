@@ -925,6 +925,9 @@ from email.mime.multipart import MIMEMultipart as _MIMEMultipart
 from email.utils import formataddr as _formataddr
 
 CONTACT_TO       = os.environ.get("CONTACT_TO", "erik@havoyet.no")
+# Public-site-URL brukes i kunde-mails (lenke til /konto-dashbord). Override via env
+# i tilfelle prod-domenet endres senere.
+PUBLIC_SITE_URL  = os.environ.get("PUBLIC_SITE_URL", "https://havoyet.no").rstrip("/")
 # Resend (anbefalt — https://resend.com) — sett RESEND_API_KEY i .env
 RESEND_API_KEY   = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM      = os.environ.get("RESEND_FROM", "onboarding@resend.dev")  # default test-adresse
@@ -1213,6 +1216,84 @@ def _short_sms_for(event, subject, body):
     if first_line and first_line.lower() not in text.lower():
         text = f"{text} — {first_line}"
     return text
+
+
+def _notify_customer_order_update(order, event, change_summary=""):
+    """Send e-post til kunden når admin oppdaterer eller leverer bestillingen
+    deres. Inneholder alltid lenke til /konto-dashbord så kunden kan følge
+    status selv. Stille no-op hvis kunden mangler e-post.
+
+    `event` er en av "order_updated" / "order_delivered" — styrer overskrift.
+    `change_summary` er en kort beskrivelse av hva som endret seg
+    (f.eks. "Status endret fra 'NEW' til 'IN_PROGRESS'").
+    """
+    if not isinstance(order, dict):
+        return False, "no-order"
+    kunde = order.get("kunde") or {}
+    epost = (kunde.get("epost") or kunde.get("email") or "").strip()
+    if not epost:
+        return False, "no-customer-email"
+    if not (RESEND_API_KEY or (SMTP_USER and SMTP_PASS)):
+        return False, "no-mail-service"
+
+    nr     = order.get("ordrenr") or order.get("id") or "?"
+    navn   = (kunde.get("navn") or kunde.get("name") or "").strip()
+    status = order.get("status") or ""
+    levdag = kunde.get("leveringsdag") or order.get("delivery") or ""
+    levtid = kunde.get("leveringstid") or order.get("slot") or ""
+    konto  = f"{PUBLIC_SITE_URL}/konto"
+
+    if event == "order_delivered":
+        subject = f"Bestillingen din #{nr} er levert — Havøyet"
+        intro = (
+            f"Hei {navn or 'kunde'},\n\n"
+            f"Bestillingen din #{nr} er nå merket som levert. Tusen takk for at "
+            f"du handlet hos Havøyet!"
+        )
+    else:
+        subject = f"Oppdatering på bestillingen din #{nr} — Havøyet"
+        intro = (
+            f"Hei {navn or 'kunde'},\n\n"
+            f"Bestillingen din #{nr} har blitt oppdatert."
+        )
+
+    detail_lines = []
+    if change_summary:
+        detail_lines.append(change_summary.strip())
+    if status:
+        detail_lines.append(f"Status: {status}")
+    if levdag:
+        levering = f"Levering: {levdag}"
+        if levtid:
+            levering += f" kl. {levtid}"
+        detail_lines.append(levering)
+
+    body = (
+        intro + "\n\n"
+        + ("\n".join(detail_lines) + "\n\n" if detail_lines else "")
+        + f"Du kan til enhver tid følge bestillingen din på «Min side»:\n{konto}\n\n"
+        + "Logg inn med samme e-post som du brukte i kassen — der ser du status, "
+        + "leveringsdag, leveringstid og live ETA fra varebilen når den er på vei.\n\n"
+        + "Spørsmål? Svar på denne e-posten, eller send til erik@havoyet.no.\n\n"
+        + "— Havøyet"
+    )
+
+    # Send via Resend → SMTP fallback (samme prioritet som _send_contact_mail).
+    if RESEND_API_KEY:
+        ok, detail = _send_via_resend(
+            CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
+        )
+        if ok:
+            print(f"[CUSTOMER-MAIL] Resend → {epost}: {detail}")
+            return True, detail
+        print(f"[CUSTOMER-MAIL] Resend feilet, prøver SMTP: {detail}")
+    if SMTP_USER and SMTP_PASS:
+        ok, detail = _send_via_smtp(
+            CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
+        )
+        print(f"[CUSTOMER-MAIL] SMTP → {epost}: {detail}")
+        return ok, detail
+    return False, "no-mail-service"
 
 
 def _notify_admins(event, subject, body):
@@ -1860,22 +1941,25 @@ def api_order_update_status(order_id):
             o["status"] = new_status
             _save_sync_state()
             nr = o.get("ordrenr") or o.get("id") or "?"
-            if str(new_status).upper() in ("DONE", "LEVERT") or "lever" in str(new_status).lower():
+            change_summary = f"Status endret fra '{old_status}' til '{new_status}'."
+            is_delivered = (
+                str(new_status).upper() in ("DONE", "LEVERT")
+                or "lever" in str(new_status).lower()
+            )
+            if is_delivered:
                 _notify_admins(
                     "order_delivered",
                     f"[Havøyet] Bestilling #{nr} er levert",
-                    f"Status endret fra '{old_status}' til '{new_status}'.\n"
-                    + "=" * 54 + "\n\n"
-                    + _format_order_lines(o),
+                    change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
                 )
+                _notify_customer_order_update(o, "order_delivered", change_summary)
             elif old_status != new_status:
                 _notify_admins(
                     "order_updated",
                     f"[Havøyet] Bestilling #{nr} oppdatert",
-                    f"Status endret fra '{old_status}' til '{new_status}'.\n"
-                    + "=" * 54 + "\n\n"
-                    + _format_order_lines(o),
+                    change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
                 )
+                _notify_customer_order_update(o, "order_updated", change_summary)
             return jsonify({"ok": True, "order": o})
     return jsonify({"error": "Ikke funnet"}), 404
 
@@ -1918,24 +2002,25 @@ def api_order_patch(order_id):
                     or "lever" in str(new_status).lower()
                 )
             )
+            change_summary = (
+                f"Status endret fra '{old_status}' til '{new_status}'."
+                if status_changed else "Bestillingen ble oppdatert i admin."
+            )
             if became_delivered:
                 _notify_admins(
                     "order_delivered",
                     f"[Havøyet] Bestilling #{nr} er levert",
-                    f"Status endret fra '{old_status}' til '{new_status}'.\n"
-                    + "=" * 54 + "\n\n"
-                    + _format_order_lines(o),
+                    change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
                 )
+                _notify_customer_order_update(o, "order_delivered", change_summary)
             else:
                 # Alle andre redigeringer regnes som "oppdatert"
                 _notify_admins(
                     "order_updated",
                     f"[Havøyet] Bestilling #{nr} oppdatert",
-                    (f"Status endret fra '{old_status}' til '{new_status}'.\n"
-                     if status_changed else "Ordre ble redigert i admin.\n")
-                    + "=" * 54 + "\n\n"
-                    + _format_order_lines(o),
+                    change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
                 )
+                _notify_customer_order_update(o, "order_updated", change_summary)
             return jsonify({"ok": True, "order": o})
     return jsonify({"error": "Ikke funnet"}), 404
 
