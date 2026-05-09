@@ -295,6 +295,7 @@ _PRETTY_PAGES = {
     "betalinger":       "betalinger.html",
     "butikk":           "butikk.html",
     "etikett":          "etikett.html",
+    "ptouch":           "ptouch.html",
     "nesttun-admin":    "nesttun-admin.html",
     "tracking-admin":   "tracking-admin.html",
 }
@@ -5629,6 +5630,347 @@ try:
     print("[BOOT] Tracking-routes registrert (ABAX)")
 except Exception as _e:
     print(f"[BOOT] Tracking-routes IKKE registrert: {_e}")
+
+
+# ── ETIKETTSKRIVER (Brother QL-1110NWB) ───────────────────────────────────────
+# To moduser:
+#   1) Lokal direkte-print: hvis denne hosten har CUPS + PRINTER_NAME, sendes
+#      jobben rett til lp. Brukes på Pi-en.
+#   2) Kø-modus: hvis CUPS ikke er tilgjengelig (Render), legges jobben i en
+#      kø som Pi-en henter via /api/print/queue. Pi-side worker er
+#      print_worker.py (kjører som systemd-tjeneste på Pi).
+import base64 as _b64
+import shutil as _shutil
+import subprocess as _sp
+import tempfile as _tempfile
+import uuid as _uuid
+import threading as _threading
+
+LABEL_TEMPLATES_FILE = os.path.join(STATE_DIR, "label_templates.json")
+PRINT_QUEUE_FILE     = os.path.join(STATE_DIR, "print_queue.json")
+PRINT_QUEUE_DIR      = os.path.join(STATE_DIR, "print_queue")
+PRINT_HEARTBEAT_FILE = os.path.join(STATE_DIR, "print_worker_heartbeat.json")
+PRINTER_NAME         = os.environ.get("PRINTER_NAME", "brother-ql1110")
+# Bearer-token for Pi-worker. Hvis ikke satt → åpen (greit for utvikling, men
+# bør settes på Render i produksjon).
+PRINT_WORKER_TOKEN   = os.environ.get("PRINT_WORKER_TOKEN", "")
+_print_queue_lock    = _threading.Lock()
+
+try:
+    os.makedirs(PRINT_QUEUE_DIR, exist_ok=True)
+except Exception:
+    pass
+
+def _label_templates_load():
+    if not os.path.exists(LABEL_TEMPLATES_FILE):
+        return []
+    try:
+        with open(LABEL_TEMPLATES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"[PRINT] Kunne ikke lese label-maler: {e}")
+        return []
+
+def _label_templates_save(templates):
+    try:
+        with open(LABEL_TEMPLATES_FILE, "w", encoding="utf-8") as f:
+            json.dump(templates[:200], f, ensure_ascii=False)  # cap til 200
+    except Exception as e:
+        print(f"[PRINT] Kunne ikke lagre label-maler: {e}")
+
+def _printer_status():
+    """Returner (ready: bool, info: dict). Sjekker CUPS + at PRINTER_NAME finnes."""
+    lp = _shutil.which("lp")
+    lpstat = _shutil.which("lpstat")
+    if not lp or not lpstat:
+        return False, {
+            "ready": False, "cups_available": False,
+            "message": "CUPS er ikke installert på denne hosten",
+        }
+    try:
+        out = _sp.run([lpstat, "-p", PRINTER_NAME], capture_output=True, text=True, timeout=4)
+        if out.returncode != 0:
+            return False, {
+                "ready": False, "cups_available": True, "printer": PRINTER_NAME,
+                "message": f"Skriver «{PRINTER_NAME}» finnes ikke i CUPS",
+            }
+        ok = "disabled" not in out.stdout.lower()
+        return ok, {
+            "ready": ok, "cups_available": True, "printer": PRINTER_NAME,
+            "message": "Klar" if ok else "Skriver er deaktivert i CUPS",
+        }
+    except Exception as e:
+        return False, {
+            "ready": False, "cups_available": True, "printer": PRINTER_NAME,
+            "message": f"lpstat-feil: {e}",
+        }
+
+
+# ── Kø-håndtering (brukes når CUPS ikke er tilgjengelig på denne hosten) ─────
+def _print_queue_load():
+    if not os.path.exists(PRINT_QUEUE_FILE):
+        return []
+    try:
+        with open(PRINT_QUEUE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def _print_queue_save(jobs):
+    try:
+        with open(PRINT_QUEUE_FILE, "w", encoding="utf-8") as f:
+            json.dump(jobs[-500:], f, ensure_ascii=False)  # cap til 500 jobs
+    except Exception as e:
+        print(f"[PRINT] Kunne ikke lagre print-kø: {e}")
+
+def _print_queue_enqueue(raw_png, product, order_id):
+    job_id = _uuid.uuid4().hex
+    png_path = os.path.join(PRINT_QUEUE_DIR, f"{job_id}.png")
+    with open(png_path, "wb") as f:
+        f.write(raw_png)
+    job = {
+        "id":         job_id,
+        "status":     "pending",          # pending | printing | done | failed
+        "product":    product or "—",
+        "order_id":   order_id or "",
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+        "attempts":   0,
+        "error":      None,
+    }
+    with _print_queue_lock:
+        jobs = _print_queue_load()
+        jobs.append(job)
+        _print_queue_save(jobs)
+    return job
+
+def _print_queue_update(job_id, **fields):
+    with _print_queue_lock:
+        jobs = _print_queue_load()
+        for j in jobs:
+            if j["id"] == job_id:
+                j.update(fields)
+                j["updated_at"] = datetime.now().isoformat()
+                break
+        _print_queue_save(jobs)
+
+def _print_worker_authed():
+    """Sjekk at request har korrekt Bearer-token (hvis token er satt)."""
+    if not PRINT_WORKER_TOKEN:
+        return True  # auth deaktivert
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return False
+    return auth.split(" ", 1)[1].strip() == PRINT_WORKER_TOKEN
+
+def _print_lp_print(raw_png, job_id):
+    """Skriv PNG til midlertidig fil og send via lp. Returner (ok, output, err)."""
+    fpath = os.path.join(_tempfile.gettempdir(), f"havoyet_label_{job_id}.png")
+    try:
+        with open(fpath, "wb") as f:
+            f.write(raw_png)
+        out = _sp.run(["lp", "-d", PRINTER_NAME, fpath],
+                      capture_output=True, text=True, timeout=15)
+        if out.returncode != 0:
+            return False, out.stdout.strip(), (out.stderr.strip() or out.stdout.strip() or "lp feilet")
+        return True, out.stdout.strip(), None
+    finally:
+        try: os.remove(fpath)
+        except Exception: pass
+
+def _print_worker_heartbeat_read():
+    if not os.path.exists(PRINT_HEARTBEAT_FILE):
+        return None
+    try:
+        with open(PRINT_HEARTBEAT_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+@app.route("/api/print/status")
+def api_print_status():
+    """Statussjekk. To moduser:
+      - Lokal direkte-print (CUPS funnet) → som før
+      - Kø-modus → rapporter kø-størrelse + worker-heartbeat
+    """
+    ready, info = _printer_status()
+    info["mode"] = "direct" if info.get("cups_available") else "queue"
+    if info["mode"] == "queue":
+        jobs = _print_queue_load()
+        pending = [j for j in jobs if j.get("status") == "pending"]
+        info["pending"] = len(pending)
+        hb = _print_worker_heartbeat_read()
+        if hb:
+            info["worker"] = hb
+            try:
+                last = datetime.fromisoformat(hb.get("ts", ""))
+                age = (datetime.now() - last).total_seconds()
+                info["worker_age_s"] = round(age, 1)
+                info["ready"] = age < 60  # worker ansett som klar hvis hb yngre enn 60s
+                info["message"] = "Worker tilkoblet" if info["ready"] else f"Worker stille i {int(age)}s"
+            except Exception:
+                info["ready"] = False
+                info["message"] = "Worker-heartbeat ugyldig"
+        else:
+            info["ready"] = False
+            info["message"] = "Ingen worker tilkoblet"
+    return jsonify(info)
+
+
+@app.route("/api/print/label", methods=["POST"])
+def api_print_label():
+    """Tar imot base64-PNG fra ptouch.html. Hvis denne hosten har CUPS, skrives
+    rett til lp. Hvis ikke (Render), legges jobben i kø for Pi-worker.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    png = data.get("png") or ""
+    if "," in png:
+        png = png.split(",", 1)[1]
+    if not png:
+        return jsonify({"ok": False, "error": "Mangler png-felt"}), 400
+    try:
+        raw = _b64.b64decode(png)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Ugyldig base64: {e}"}), 400
+    if len(raw) > 4 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "Bilde for stort (>4 MB)"}), 413
+
+    product = data.get("product") or "—"
+    ordr    = data.get("order_id") or ""
+    ready, _info = _printer_status()
+
+    if ready:
+        # Direkte-print (Pi)
+        job_id = _uuid.uuid4().hex[:8]
+        ok, stdout, err = _print_lp_print(raw, job_id)
+        if not ok:
+            return jsonify({"ok": False, "error": f"lp feilet: {err}"}), 500
+        print(f"[PRINT-DIRECT] {product} (ordre {ordr or 'manuell'}) → {PRINTER_NAME} :: {stdout}")
+        return jsonify({"ok": True, "mode": "direct", "message": "Sendt til skriver",
+                        "lp_output": stdout, "job": job_id})
+
+    # Kø-modus (Render → Pi-worker)
+    job = _print_queue_enqueue(raw, product, ordr)
+    print(f"[PRINT-QUEUE] {product} (ordre {ordr or 'manuell'}) → kø-id {job['id']}")
+    hb = _print_worker_heartbeat_read()
+    worker_active = False
+    if hb:
+        try:
+            last = datetime.fromisoformat(hb.get("ts", ""))
+            worker_active = (datetime.now() - last).total_seconds() < 60
+        except Exception:
+            pass
+    return jsonify({
+        "ok": True, "mode": "queue", "job": job["id"],
+        "message": ("Lagt i kø — skrives ut snart" if worker_active
+                    else "Lagt i kø, men ingen worker tilkoblet — sjekk at print_worker.py kjører på Pi"),
+        "worker_active": worker_active,
+    })
+
+
+# ── Worker-endepunkter (Pi henter jobber herfra) ─────────────────────────────
+@app.route("/api/print/queue")
+def api_print_queue():
+    """Pi-worker henter ventende jobber. Krever Bearer-token hvis satt."""
+    if not _print_worker_authed():
+        return jsonify({"error": "Unauthorized"}), 401
+    limit = int(request.args.get("limit", 5))
+    jobs = _print_queue_load()
+    pending = [j for j in jobs if j.get("status") == "pending"][:limit]
+    return jsonify({
+        "jobs":      [{k: v for k, v in j.items() if k != "_png"} for j in pending],
+        "total":     len(jobs),
+        "pending":   sum(1 for j in jobs if j.get("status") == "pending"),
+    })
+
+
+@app.route("/api/print/queue/<job_id>/png")
+def api_print_queue_png(job_id):
+    """Pi-worker henter PNG-binæren for en spesifikk jobb."""
+    if not _print_worker_authed():
+        return jsonify({"error": "Unauthorized"}), 401
+    # Sikre mot path-traversal: kun hex-id tillatt
+    if not all(c in "0123456789abcdef" for c in job_id):
+        return jsonify({"error": "Ugyldig job_id"}), 400
+    png_path = os.path.join(PRINT_QUEUE_DIR, f"{job_id}.png")
+    if not os.path.exists(png_path):
+        return jsonify({"error": "Ikke funnet"}), 404
+    return send_from_directory(PRINT_QUEUE_DIR, f"{job_id}.png", mimetype="image/png")
+
+
+@app.route("/api/print/queue/<job_id>/ack", methods=["POST"])
+def api_print_queue_ack(job_id):
+    """Pi-worker kvitterer at en jobb er ferdig (eller feilet)."""
+    if not _print_worker_authed():
+        return jsonify({"error": "Unauthorized"}), 401
+    payload = request.get_json(force=True, silent=True) or {}
+    success = bool(payload.get("success"))
+    error   = payload.get("error") or None
+    new_status = "done" if success else "failed"
+    _print_queue_update(job_id, status=new_status, error=error,
+                        attempts=int(payload.get("attempts", 1)))
+    # Slett PNG når done for å spare disk
+    if success:
+        try: os.remove(os.path.join(PRINT_QUEUE_DIR, f"{job_id}.png"))
+        except Exception: pass
+    return jsonify({"ok": True, "status": new_status})
+
+
+@app.route("/api/print/worker/heartbeat", methods=["POST"])
+def api_print_worker_heartbeat():
+    if not _print_worker_authed():
+        return jsonify({"error": "Unauthorized"}), 401
+    payload = request.get_json(force=True, silent=True) or {}
+    hb = {
+        "ts":       datetime.now().isoformat(),
+        "host":     payload.get("host", "unknown"),
+        "printer":  payload.get("printer", PRINTER_NAME),
+        "version":  payload.get("version", "?"),
+    }
+    try:
+        with open(PRINT_HEARTBEAT_FILE, "w") as f:
+            json.dump(hb, f)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "ts": hb["ts"]})
+
+
+@app.route("/api/print/queue/clear", methods=["POST"])
+def api_print_queue_clear():
+    """Admin: slett ferdige/feilede jobber. (Pending beholdes.)"""
+    with _print_queue_lock:
+        jobs = _print_queue_load()
+        kept = [j for j in jobs if j.get("status") == "pending"]
+        removed = len(jobs) - len(kept)
+        _print_queue_save(kept)
+    return jsonify({"ok": True, "removed": removed, "kept": len(kept)})
+
+
+@app.route("/api/print/templates", methods=["GET", "POST"])
+def api_print_templates():
+    if request.method == "GET":
+        return jsonify(_label_templates_load())
+    payload = request.get_json(force=True, silent=True) or {}
+    if not payload.get("id") or not payload.get("product"):
+        return jsonify({"ok": False, "error": "Mangler id eller product"}), 400
+    items = _label_templates_load()
+    items = [t for t in items if t.get("id") != payload["id"]]
+    items.insert(0, payload)
+    _label_templates_save(items)
+    return jsonify({"ok": True, "count": len(items)})
+
+
+@app.route("/api/print/templates/<tmpl_id>", methods=["DELETE"])
+def api_print_template_delete(tmpl_id):
+    items = _label_templates_load()
+    new_items = [t for t in items if t.get("id") != tmpl_id]
+    if len(new_items) == len(items):
+        return jsonify({"ok": False, "error": "Ikke funnet"}), 404
+    _label_templates_save(new_items)
+    return jsonify({"ok": True, "count": len(new_items)})
 
 
 if __name__ == "__main__":

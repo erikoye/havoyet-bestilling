@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>P-touch Editor — Havøyet AS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Montserrat:wght@700;900&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --primary: #0d9488; --primary-dark: #0f766e;
+      --dark: #0f172a; --bg: #f1f5f9; --border: #e2e8f0;
+      --muted: #64748b; --surface: #ffffff;
+      --rail: #f8fafc; --hover: #f1f5f9;
+      --ok: #16a34a; --warn: #f59e0b; --err: #dc2626;
+    }
+    html, body { height: 100%; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg); color: var(--dark);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    /* ── TOPBAR ── */
+    header {
+      background: var(--dark);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 18px; height: 52px; flex-shrink: 0;
+    }
+    .header-left, .header-right { display: flex; align-items: center; gap: 12px; }
+    .back-btn {
+      display: flex; align-items: center; gap: 6px;
+      color: #94a3b8; text-decoration: none; font-size: 13px; font-weight: 500;
+      padding: 6px 10px; border-radius: 6px;
+    }
+    .back-btn:hover { color: #fff; background: #1e293b; }
+    .divider { width: 1px; height: 18px; background: #334155; }
+    .brand { font-family:'Montserrat',sans-serif; font-weight:900; font-size:18px; letter-spacing:2px; color:#fff; }
+    .pgname { color:#475569; font-size:13px; font-family:'DM Mono',monospace; }
+    .printer-pill {
+      display: flex; align-items: center; gap: 7px;
+      background: #1e293b; color: #94a3b8;
+      padding: 6px 12px; border-radius: 999px; font-size: 11px;
+    }
+    .pill-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+    .pill-dot.off { background: #475569; }
+    .pill-dot.err { background: var(--err); }
+    .btn {
+      border: none; border-radius: 7px; font-family: 'DM Sans', sans-serif;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 8px 14px; transition: background .15s, color .15s, border-color .15s;
+    }
+    .btn-ghost { background: transparent; color: #94a3b8; border: 1px solid #334155; }
+    .btn-ghost:hover { color: #fff; border-color: #475569; background: #1e293b; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+    .btn-light { background: #fff; color: var(--dark); }
+    .btn-light:hover { background: #f1f5f9; }
+
+    /* ── LAYOUT: 3 KOLONNER ── */
+    .workspace {
+      flex: 1; display: grid;
+      grid-template-columns: 280px 1fr 320px;
+      min-height: 0;
+    }
+    .panel {
+      background: var(--surface);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-left { border-right: 1px solid var(--border); }
+    .panel-right { border-left: 1px solid var(--border); }
+    .panel-head {
+      padding: 12px 16px; border-bottom: 1px solid var(--border);
+      flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    }
+    .panel-title { font-size: 13px; font-weight: 600; color: var(--dark); }
+    .panel-sub { font-size: 11px; color: var(--muted); }
+    .panel-body { flex: 1; overflow-y: auto; }
+
+    /* ── ORDRE-LISTE ── */
+    .search-box {
+      width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px;
+      font-family: inherit; font-size: 13px; background: var(--rail);
+    }
+    .search-box:focus { outline: none; border-color: var(--primary); background: #fff; }
+    .order-row {
+      padding: 10px 16px; cursor: pointer; border-bottom: 1px solid var(--border);
+      transition: background .12s;
+    }
+    .order-row:hover { background: var(--hover); }
+    .order-row.active { background: rgba(13,148,136,0.08); border-left: 3px solid var(--primary); padding-left: 13px; }
+    .order-id { font-size: 12px; font-family: 'DM Mono', monospace; color: var(--primary); font-weight: 600; }
+    .order-name { font-size: 13px; font-weight: 500; margin-top: 2px; }
+    .order-meta { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; gap: 6px; }
+    .conf-pill { font-size: 10px; padding: 1px 6px; border-radius: 999px; font-weight: 600; }
+    .conf-pill.green { background: rgba(22,163,74,0.12); color: var(--ok); }
+    .conf-pill.orange { background: rgba(245,158,11,0.12); color: var(--warn); }
+    .conf-pill.red { background: rgba(220,38,38,0.10); color: var(--err); }
+    .empty-state { padding: 32px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+
+    /* Ordre-elementer (varer) */
+    .order-items {
+      background: rgba(13,148,136,0.04); padding: 4px 0;
+    }
+    .order-item-row {
+      padding: 7px 16px 7px 28px; cursor: pointer; font-size: 12px;
+      border-left: 2px solid transparent;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .order-item-row:hover { background: rgba(13,148,136,0.10); }
+    .order-item-row.ready { color: var(--dark); }
+    .order-item-row.pending { color: var(--muted); }
+    .item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item-flag { font-size: 10px; padding: 1px 6px; border-radius: 4px; flex-shrink: 0; }
+    .item-flag.ok { background: rgba(22,163,74,0.14); color: var(--ok); }
+    .item-flag.miss { background: rgba(100,116,139,0.14); color: var(--muted); }
+
+    /* ── CENTER: PREVIEW ── */
+    .panel-center { background: #cbd5e1; }
+    .preview-stage {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      padding: 24px; overflow: auto;
+    }
+    .preview-frame {
+      box-shadow: 0 12px 40px rgba(0,0,0,0.20), 0 0 0 1px rgba(0,0,0,0.10);
+      background: #fff; border-radius: 4px; overflow: hidden;
+    }
+    .preview-foot {
+      flex-shrink: 0; padding: 10px 16px; background: var(--rail);
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; color: var(--muted);
+    }
+    .stage-info { display: flex; gap: 14px; }
+    .stage-info span strong { color: var(--dark); }
+
+    /* ═══════════════════ ETIKETT (50×103mm, samme som etikett.html) ═══════════════════ */
+    .label {
+      width: 50mm; height: 103mm; overflow: hidden; background: #fff;
+      font-family: 'DM Sans', Arial, sans-serif; color: #000;
+      display: flex; flex-direction: column; padding: 0;
+    }
+    .lbl-logo-section { display:flex; align-items:center; justify-content:center; padding: 2.5mm 4mm 2mm; flex-shrink:0; }
+    .lbl-logo-section img { width: 36mm; height: auto; display: block; filter: brightness(0); }
+    .lbl-hr { border:none; border-top: 0.5pt solid #000; margin: 0 3mm; flex-shrink:0; }
+    .lbl-product { font-size: 15pt; font-weight: 700; line-height: 1.2; padding: 2mm 3.5mm 1mm; flex-shrink:0; text-align: center; }
+    .lbl-capture { font-size: 6.5pt; color: #555; font-style: italic; padding: 0 3.5mm 1.5mm; flex-shrink:0; text-align: center; }
+    .lbl-order-block { text-align:center; font-size: 6pt; line-height: 1.6; padding: 1.5mm 3mm; flex-shrink:0; }
+    .lbl-order-num { font-size: 6pt; font-weight: 600; }
+    .lbl-order-name { font-size: 6.5pt; font-weight: 400; }
+    .lbl-order-addr { font-size: 5.5pt; color: #555; }
+    .lbl-ing { padding: 0 3.5mm 1mm; font-size: 5.2pt; line-height: 1.5; flex-shrink:0; }
+    .lbl-ing strong { font-weight: 700; }
+    .lbl-trio { display: flex; flex-direction: column; padding: 0.5mm 3.5mm 0; flex-shrink:0; }
+    .lbl-trio-row { text-align: center; padding: 1mm 0 0.3mm; }
+    .lbl-trio-label { font-size: 5.5pt; font-weight: 700; display: block; }
+    .lbl-trio-val { font-size: 5.5pt; font-weight: 400; display: block; }
+    .lbl-footer {
+      font-size: 4.5pt; color: #555; margin-top: auto;
+      padding: 1mm 3.5mm 2mm; border-top: 0.4pt solid #ccc;
+      margin-left: 3mm; margin-right: 3mm;
+    }
+
+    /* ── RIGHT PANEL: form ── */
+    .form-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .form-section:last-child { border-bottom: none; }
+    .form-section h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 10px; font-weight: 600; }
+    .field { margin-bottom: 10px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
+    .field input, .field select, .field textarea {
+      width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-family: inherit; font-size: 13px; background: #fff; color: var(--dark);
+    }
+    .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--primary); }
+    .field-row { display: flex; gap: 8px; }
+    .field-row .field { flex: 1; }
+    .seg {
+      display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden;
+    }
+    .seg button {
+      flex: 1; border: none; background: #fff; color: var(--muted);
+      font-family: inherit; font-size: 12px; font-weight: 500; padding: 7px 4px; cursor: pointer;
+    }
+    .seg button:not(:last-child) { border-right: 1px solid var(--border); }
+    .seg button.on { background: var(--primary); color: #fff; font-weight: 600; }
+    .form-actions {
+      padding: 14px 16px; border-top: 1px solid var(--border); background: var(--rail);
+      display: flex; gap: 8px;
+    }
+    .form-actions .btn { flex: 1; justify-content: center; }
+
+    /* ── TEMPLATES STRIP (footer) ── */
+    .templates {
+      flex-shrink: 0; background: #fff; border-top: 1px solid var(--border);
+      padding: 10px 16px; display: flex; align-items: center; gap: 10px;
+      overflow-x: auto; min-height: 64px;
+    }
+    .templates-label { font-size: 11px; color: var(--muted); flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+    .tmpl-card {
+      flex-shrink: 0; background: var(--rail); border: 1px solid var(--border); border-radius: 7px;
+      padding: 8px 12px; cursor: pointer; font-size: 12px; min-width: 130px; max-width: 170px;
+      transition: border-color .15s;
+    }
+    .tmpl-card:hover { border-color: var(--primary); }
+    .tmpl-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tmpl-meta { font-size: 10px; color: var(--muted); margin-top: 2px; display: flex; justify-content: space-between; gap: 8px; }
+    .tmpl-del {
+      background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px;
+      padding: 0 2px;
+    }
+    .tmpl-del:hover { color: var(--err); }
+    .tmpl-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+
+    /* ── TOAST ── */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: var(--dark); color: #fff; padding: 10px 18px; border-radius: 8px;
+      font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,0.20);
+      opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+      z-index: 200;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+    .toast.err { background: var(--err); }
+    .toast.ok { background: var(--ok); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a class="back-btn" href="index.html">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      Tilbake
+    </a>
+    <div class="divider"></div>
+    <span class="brand">Havøyet</span>
+    <span class="pgname">/ p-touch editor</span>
+  </div>
+  <div class="header-right">
+    <span class="printer-pill" id="printerPill">
+      <span class="pill-dot off" id="printerDot"></span>
+      <span id="printerLabel">Søker skriver…</span>
+    </span>
+    <button class="btn btn-ghost" type="button" onclick="resetForm()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Ny
+    </button>
+    <button class="btn btn-light" type="button" onclick="saveTemplate()">Lagre mal</button>
+    <button class="btn btn-primary" id="printBtn" type="button" onclick="printLabel()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      Skriv ut
+    </button>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <!-- ── LEFT: ordrer ── -->
+  <aside class="panel panel-left">
+    <div class="panel-head" style="display:block">
+      <input class="search-box" id="orderSearch" placeholder="Søk ordre, kunde…" oninput="renderOrders()" />
+      <div class="panel-sub" style="margin-top:8px" id="orderCount">Henter ordrer…</div>
+    </div>
+    <div class="panel-body" id="orderList"></div>
+  </aside>
+
+  <!-- ── CENTER: preview ── -->
+  <main class="panel panel-center">
+    <div class="preview-stage">
+      <div class="preview-frame" id="previewFrame">
+        <!-- label rendered here -->
+      </div>
+    </div>
+    <div class="preview-foot">
+      <div class="stage-info">
+        <span><strong>Brother QL-1110NWB</strong></span>
+        <span>50 × 103 mm</span>
+        <span>300 dpi</span>
+      </div>
+      <div id="zoomLabel">100 %</div>
+    </div>
+  </main>
+
+  <!-- ── RIGHT: form ── -->
+  <aside class="panel panel-right">
+    <div class="panel-head">
+      <div class="panel-title">Etikett-detaljer</div>
+      <div class="panel-sub" id="formCtx">Manuell etikett</div>
+    </div>
+    <div class="panel-body">
+      <div class="form-section">
+        <h4>Vare</h4>
+        <div class="field">
+          <label>Produktnavn</label>
+          <input id="fProduct" list="productList" placeholder="F.eks. Torsk" oninput="onFormChange()"/>
+          <datalist id="productList"></datalist>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Vekt</label>
+            <input id="fWeight" type="text" inputmode="decimal" placeholder="0" oninput="onFormChange()"/>
+          </div>
+          <div class="field" style="flex:0 0 70px">
+            <label>Enhet</label>
+            <select id="fUnit" onchange="onFormChange()">
+              <option value="g">g</option>
+              <option value="kg">kg</option>
+              <option value="stk">stk</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>Holdbarhetsdato</label>
+          <input id="fExpiry" type="date" oninput="onFormChange()"/>
+        </div>
+        <div class="field">
+          <label>Fangst</label>
+          <div class="seg" id="fCapture">
+            <button type="button" class="on" data-v="villfanget" onclick="setCapture('villfanget')">Villfanget</button>
+            <button type="button" data-v="oppdrett" onclick="setCapture('oppdrett')">Oppdrett</button>
+            <button type="button" data-v="ingen" onclick="setCapture('ingen')">Ingen</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h4>Bestilling (valgfritt)</h4>
+        <div class="field">
+          <label>Ordrenr</label>
+          <input id="fOrderId" placeholder="—" oninput="onFormChange()"/>
+        </div>
+        <div class="field">
+          <label>Kundenavn</label>
+          <input id="fCustomer" placeholder="—" oninput="onFormChange()"/>
+        </div>
+        <div class="field">
+          <label>Adresse</label>
+          <input id="fAddress" placeholder="—" oninput="onFormChange()"/>
+        </div>
+        <div class="field">
+          <label>Telefon</label>
+          <input id="fPhone" placeholder="—" oninput="onFormChange()"/>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h4>Innhold</h4>
+        <div class="field">
+          <label>Ingredienser</label>
+          <textarea id="fIng" rows="3" oninput="onFormChange()"></textarea>
+        </div>
+        <div class="field">
+          <label>Allergener</label>
+          <input id="fAll" oninput="onFormChange()"/>
+        </div>
+        <div class="field">
+          <label>Oppbevaring</label>
+          <input id="fOpb" oninput="onFormChange()"/>
+        </div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" style="color:var(--muted);border-color:var(--border)" onclick="resetForm()">Tøm</button>
+      <button class="btn btn-light" style="border:1px solid var(--border)" onclick="saveTemplate()">Lagre mal</button>
+    </div>
+  </aside>
+</div>
+
+<!-- ── TEMPLATES ── -->
+<div class="templates" id="templatesStrip">
+  <span class="templates-label">Maler</span>
+  <span class="tmpl-empty" id="tmplEmpty">Ingen lagrede maler ennå — fyll skjemaet og trykk «Lagre mal»</span>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const FLASK_BASE = window.location.origin;
+
+// ─── ERNÆRINGSBASE (samme som etikett.html) ────────
+const NUTR_DB = [
+  { kw:['plukkfisk','bergens plukkfisk'],
+    ing:'FISK (torsk, sei), poteter, MELK, setersmør, potetmos (Potet 98 %), naturlig aroma, emulgator, natriumdiSULFITT, antioksidant, sitronpepper, salt, gressløk',
+    all:'FISK, MELK, SULFITT', opb:'Kjølevare 0–4 °C' },
+  { kw:['blåkveite røkt','blåkveitefilet røkt'], ing:'Blåkveite 98 %, salt 2 %', all:'FISK', opb:'0–4 °C' },
+  { kw:['blåkveite'], ing:'Blåkveite (Reinhardtius hippoglossoides)', all:'FISK', opb:'0–4 °C' },
+  { kw:['laks, røkt','røkt laks','laks røkt'], ing:'Atlanterhavslaks 96 %, salt, røyk', all:'FISK', opb:'0–4 °C' },
+  { kw:['atlanterhavslaks','laks'], ing:'Atlanterhavslaks (Salmo salar)', all:'FISK', opb:'0–4 °C' },
+  { kw:['ørret','regnbueørret'], ing:'Ørret (Oncorhynchus mykiss)', all:'FISK', opb:'0–4 °C' },
+  { kw:['torsk, røkt','røkt torsk'], ing:'Torsk 96 %, salt, røyk', all:'FISK', opb:'0–4 °C' },
+  { kw:['torsk'], ing:'Torsk (Gadus morhua)', all:'FISK', opb:'0–4 °C' },
+  { kw:['sei, røkt','røkt sei'], ing:'Sei 96 %, salt, røyk', all:'FISK', opb:'0–4 °C' },
+  { kw:['sei'], ing:'Sei (Pollachius virens)', all:'FISK', opb:'0–4 °C' },
+  { kw:['kveite'], ing:'Kveite (Hippoglossus hippoglossus)', all:'FISK', opb:'0–4 °C' },
+  { kw:['kongekrabbe'], ing:'Kongekrabbe (Paralithodes camtschaticus)', all:'SKALLDYR', opb:'0–4 °C' },
+  { kw:['krabbe'], ing:'Krabbe (Cancer pagurus)', all:'SKALLDYR', opb:'0–4 °C' },
+  { kw:['hummer'], ing:'Hummer (Homarus gammarus)', all:'SKALLDYR', opb:'0–4 °C' },
+  { kw:['reker'], ing:'Reker (Pandalus borealis)', all:'SKALLDYR', opb:'0–4 °C' },
+  { kw:['kamskjell'], ing:'Kamskjell (Pecten maximus)', all:'BLØTDYR', opb:'0–4 °C' },
+  { kw:['østers'], ing:'Østers (Ostrea edulis)', all:'BLØTDYR', opb:'0–4 °C' },
+  { kw:['blåskjell'], ing:'Blåskjell (Mytilus edulis)', all:'BLØTDYR', opb:'0–4 °C' },
+];
+const FALLBACK = { ing:'Sjømat', all:'FISK/SKALLDYR/BLØTDYR', opb:'0–4 °C' };
+
+function lookupNutr(name) {
+  if (!name) return FALLBACK;
+  const n = name.toLowerCase().replace(/\s*\([^)]*\)/g,'').trim();
+  for (const e of NUTR_DB) if (e.kw.some(k => n.includes(k) || k.includes(n))) return e;
+  return FALLBACK;
+}
+function defaultCapture(name) {
+  const n = (name||'').toLowerCase();
+  if (n.includes('laks') || n.includes('ørret') || n.includes('regnbue')) return 'oppdrett';
+  return 'villfanget';
+}
+function fmtDate(iso) {
+  if (!iso) return '–';
+  const d = new Date(iso + 'T00:00:00');
+  if (isNaN(d)) return '–';
+  return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
+}
+
+// ─── STATE ──────────────────────────────────────────
+const STATE = {
+  product: '', weight: '', unit: 'g', expiry: '',
+  capture: 'villfanget',
+  orderId: '', customer: '', address: '', phone: '',
+  ing: '', all: '', opb: '0–4 °C',
+  selectedOrder: null,    // hele ordren
+  selectedItemIdx: null,  // valgt item-index i ordren
+};
+let ORDERS = [];
+let PACKING = {};
+let TEMPLATES = [];
+
+// ─── DATAHENTING ────────────────────────────────────
+async function loadOrders() {
+  try {
+    const [or, mo, ps] = await Promise.all([
+      fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({orders:[]})),
+      fetch(`${FLASK_BASE}/api/manual-orders`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => []),
+      fetch(`${FLASK_BASE}/api/packing-state`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()).catch(() => ({})),
+    ]);
+    PACKING = ps || {};
+    const list = [];
+    (or.orders || []).forEach(o => list.push(o));
+    (Array.isArray(mo) ? mo : (mo.orders || [])).forEach(o => {
+      if (!list.find(x => String(x.id) === String(o.id || o.ordrenr))) list.push(o);
+    });
+    ORDERS = list;
+  } catch (e) {
+    console.error('[ptouch] loadOrders feilet', e);
+    ORDERS = [];
+  }
+  renderOrders();
+}
+
+async function loadTemplates() {
+  let remote = [];
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/print/templates`, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) remote = await r.json();
+  } catch (e) { /* fallback to localStorage */ }
+  let local = [];
+  try { local = JSON.parse(localStorage.getItem('havoyet_label_templates') || '[]'); } catch(e){}
+  // Merge by id (remote takes precedence)
+  const map = new Map();
+  local.forEach(t => map.set(t.id, t));
+  (Array.isArray(remote) ? remote : []).forEach(t => map.set(t.id, t));
+  TEMPLATES = [...map.values()].sort((a,b) => (b.created || 0) - (a.created || 0));
+  renderTemplates();
+}
+
+async function checkPrinter() {
+  const dot = document.getElementById('printerDot');
+  const lbl = document.getElementById('printerLabel');
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/print/status`, { signal: AbortSignal.timeout(3000) });
+    const j = await r.json();
+    if (j.mode === 'direct') {
+      // Lokal Pi-modus
+      dot.className = 'pill-dot' + (j.ready ? '' : ' err');
+      lbl.textContent = j.ready ? (j.printer || 'Brother klar') : (j.message || 'Skriver feilet');
+    } else {
+      // Kø-modus (Render → Pi-worker)
+      const pending = j.pending || 0;
+      if (j.ready) {
+        dot.className = 'pill-dot';
+        lbl.textContent = pending > 0
+          ? `Pi tilkoblet · ${pending} i kø`
+          : `Pi tilkoblet · klar`;
+      } else {
+        dot.className = 'pill-dot err';
+        lbl.textContent = j.message || 'Pi-worker ikke tilkoblet';
+      }
+    }
+  } catch (e) {
+    dot.className = 'pill-dot off';
+    lbl.textContent = 'Skriver-API svarer ikke';
+  }
+}
+
+// ─── ORDRE-LISTE ────────────────────────────────────
+function confPctOrder(o) {
+  if (!o.items || !o.items.length) return 0;
+  const s = PACKING[o.id];
+  if (s) return Math.round(s.filter(i => i.avail === 'ok' && i.weight && i.expiry).length / o.items.length * 100);
+  return Math.round(o.items.filter(i => i.weight != null && i.expiry != null).length / o.items.length * 100);
+}
+function confClsOrder(o){ const p=confPctOrder(o); return p===100?'green':p>=33?'orange':'red'; }
+
+function renderOrders() {
+  const q = (document.getElementById('orderSearch').value || '').toLowerCase();
+  const filtered = ORDERS.filter(o => {
+    if (!q) return true;
+    return [o.id, o.customer, o.phone, o.address].filter(Boolean).join(' ').toLowerCase().includes(q);
+  });
+  document.getElementById('orderCount').textContent = `${filtered.length} ordre${filtered.length === 1 ? '' : 'r'}`;
+  const list = document.getElementById('orderList');
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state">Ingen ordre matchet søket</div>`;
+    return;
+  }
+  const expanded = STATE.selectedOrder ? String(STATE.selectedOrder.id) : null;
+  list.innerHTML = filtered.map(o => {
+    const cls = confClsOrder(o);
+    const conf = confPctOrder(o);
+    const isOpen = expanded === String(o.id);
+    const items = (o.items || []).map((it, i) => {
+      const s = (PACKING[o.id] || [])[i] || {};
+      const ready = s.avail === 'ok' && s.weight && s.expiry;
+      const sel = STATE.selectedItemIdx === i && isOpen;
+      return `
+        <div class="order-item-row ${ready ? 'ready' : 'pending'}" style="${sel ? 'background:rgba(13,148,136,0.14)' : ''}"
+             onclick="event.stopPropagation();selectItem('${escapeQ(o.id)}', ${i})">
+          <span class="item-name">${escapeHTML(it.name || '')}</span>
+          <span class="item-flag ${ready ? 'ok' : 'miss'}">${ready ? 'klar' : '–'}</span>
+        </div>`;
+    }).join('');
+    return `
+      <div class="order-row ${isOpen ? 'active' : ''}" onclick="selectOrder('${escapeQ(o.id)}')">
+        <div class="order-id">${o.id}</div>
+        <div class="order-name">${escapeHTML(o.customer || '—')}</div>
+        <div class="order-meta">
+          <span>${(o.items || []).length} varer</span>
+          <span class="conf-pill ${cls}">${conf}%</span>
+        </div>
+      </div>
+      ${isOpen ? `<div class="order-items">${items || '<div class="empty-state" style="padding:10px 16px">Ingen varer</div>'}</div>` : ''}
+    `;
+  }).join('');
+}
+
+function escapeQ(s){ return String(s).replace(/'/g, "\\'"); }
+function escapeHTML(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+function selectOrder(id) {
+  const o = ORDERS.find(x => String(x.id) === String(id));
+  if (!o) return;
+  // Toggle: hvis allerede åpen, lukk
+  if (STATE.selectedOrder && String(STATE.selectedOrder.id) === String(id) && STATE.selectedItemIdx === null) {
+    STATE.selectedOrder = null;
+  } else {
+    STATE.selectedOrder = o;
+    STATE.selectedItemIdx = null;
+  }
+  renderOrders();
+}
+
+function selectItem(id, idx) {
+  const o = ORDERS.find(x => String(x.id) === String(id));
+  if (!o) return;
+  const it = (o.items || [])[idx];
+  if (!it) return;
+  const s = (PACKING[o.id] || [])[idx] || {};
+  STATE.selectedOrder = o;
+  STATE.selectedItemIdx = idx;
+  // Fyll skjema
+  STATE.product = (it.name || '').replace(/\s*\([^)]*\)/g,'').trim();
+  STATE.weight = s.weight || it.weight || '';
+  STATE.unit = s.weightUnit || it.unit || 'g';
+  STATE.expiry = s.expiry || it.expiry || '';
+  STATE.capture = defaultCapture(STATE.product);
+  STATE.orderId = String(o.id);
+  STATE.customer = o.customer || '';
+  STATE.address = o.address || o.shipping_address || '';
+  STATE.phone = o.phone || '';
+  // Auto-fill innhold fra NUTR_DB
+  const nutr = lookupNutr(STATE.product);
+  STATE.ing = nutr.ing;
+  STATE.all = nutr.all;
+  STATE.opb = nutr.opb;
+  syncFormFromState();
+  document.getElementById('formCtx').textContent = `Fra ordre ${o.id}`;
+  renderOrders();
+  renderPreview();
+}
+
+// ─── FORM ───────────────────────────────────────────
+function syncFormFromState() {
+  document.getElementById('fProduct').value = STATE.product;
+  document.getElementById('fWeight').value = STATE.weight;
+  document.getElementById('fUnit').value = STATE.unit;
+  document.getElementById('fExpiry').value = STATE.expiry;
+  document.getElementById('fOrderId').value = STATE.orderId;
+  document.getElementById('fCustomer').value = STATE.customer;
+  document.getElementById('fAddress').value = STATE.address;
+  document.getElementById('fPhone').value = STATE.phone;
+  document.getElementById('fIng').value = STATE.ing;
+  document.getElementById('fAll').value = STATE.all;
+  document.getElementById('fOpb').value = STATE.opb;
+  document.querySelectorAll('#fCapture button').forEach(b =>
+    b.classList.toggle('on', b.dataset.v === STATE.capture));
+}
+
+function onFormChange() {
+  const prevProduct = STATE.product;
+  STATE.product = document.getElementById('fProduct').value;
+  STATE.weight = document.getElementById('fWeight').value;
+  STATE.unit = document.getElementById('fUnit').value;
+  STATE.expiry = document.getElementById('fExpiry').value;
+  STATE.orderId = document.getElementById('fOrderId').value;
+  STATE.customer = document.getElementById('fCustomer').value;
+  STATE.address = document.getElementById('fAddress').value;
+  STATE.phone = document.getElementById('fPhone').value;
+  STATE.ing = document.getElementById('fIng').value;
+  STATE.all = document.getElementById('fAll').value;
+  STATE.opb = document.getElementById('fOpb').value;
+  // Hvis produktnavn endres og ingredienser ikke er manuelt redigert, auto-fyll
+  if (STATE.product !== prevProduct && STATE.product) {
+    const nutr = lookupNutr(STATE.product);
+    const prevNutr = lookupNutr(prevProduct);
+    // Bare overskriv hvis feltene fortsatt matcher forrige NUTR-oppslag (dvs. ikke manuelt endret)
+    if (STATE.ing === prevNutr.ing) { STATE.ing = nutr.ing; document.getElementById('fIng').value = nutr.ing; }
+    if (STATE.all === prevNutr.all) { STATE.all = nutr.all; document.getElementById('fAll').value = nutr.all; }
+    if (STATE.opb === prevNutr.opb) { STATE.opb = nutr.opb; document.getElementById('fOpb').value = nutr.opb; }
+  }
+  renderPreview();
+}
+
+function setCapture(v) {
+  STATE.capture = v;
+  document.querySelectorAll('#fCapture button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  renderPreview();
+}
+
+function resetForm() {
+  Object.assign(STATE, {
+    product: '', weight: '', unit: 'g', expiry: '',
+    capture: 'villfanget',
+    orderId: '', customer: '', address: '', phone: '',
+    ing: '', all: '', opb: '0–4 °C',
+    selectedOrder: null, selectedItemIdx: null,
+  });
+  document.getElementById('formCtx').textContent = 'Manuell etikett';
+  syncFormFromState();
+  renderOrders();
+  renderPreview();
+}
+
+// ─── PREVIEW ────────────────────────────────────────
+function buildLabelHTML() {
+  const cleanName = (STATE.product || '—').replace(/\s*\([^)]*\)/g,'').trim();
+  const cap = STATE.capture;
+  const capLabel = cap === 'villfanget' ? 'Villfanget' : cap === 'oppdrett' ? 'Oppdrett' : '';
+  const ordNum = STATE.orderId ? (STATE.orderId.startsWith('#') ? STATE.orderId : '#' + STATE.orderId.replace(/^M-/,'')) : '';
+  const orderBlock = (STATE.orderId || STATE.customer) ? `
+    <hr class="lbl-hr"/>
+    <div class="lbl-order-block">
+      ${ordNum ? `<div class="lbl-order-num">Bestilling ${ordNum}</div>` : ''}
+      ${STATE.customer ? `<div class="lbl-order-name">${escapeHTML(STATE.customer)}</div>` : ''}
+      ${STATE.address ? `<div class="lbl-order-addr">${escapeHTML(STATE.address)}</div>` : ''}
+      ${STATE.phone ? `<div class="lbl-order-addr">${escapeHTML(STATE.phone)}</div>` : ''}
+    </div>` : '';
+
+  return `
+    <div class="label" id="labelTarget">
+      <div class="lbl-logo-section">
+        <img src="Color logo - no background.png" alt="Havøyet" crossorigin="anonymous">
+      </div>
+      <hr class="lbl-hr"/>
+      <div class="lbl-product">${escapeHTML(cleanName)}</div>
+      ${capLabel ? `<div class="lbl-capture">${capLabel}</div>` : ''}
+      ${orderBlock}
+      <hr class="lbl-hr"/>
+      <div class="lbl-ing">
+        <strong>INGREDIENSER:</strong> ${escapeHTML(STATE.ing || '—')}<br>
+        <strong>Allergener:</strong> ${escapeHTML(STATE.all || '—')}
+      </div>
+      <div class="lbl-trio">
+        <div class="lbl-trio-row">
+          <span class="lbl-trio-label">Vekt</span>
+          <span class="lbl-trio-val">${STATE.weight ? escapeHTML(STATE.weight) + ' ' + escapeHTML(STATE.unit || 'g') : '–'}</span>
+        </div>
+        <div class="lbl-trio-row">
+          <span class="lbl-trio-label">Holdbarhetsdato:</span>
+          <span class="lbl-trio-val">${fmtDate(STATE.expiry)}</span>
+        </div>
+        <div class="lbl-trio-row">
+          <span class="lbl-trio-label">OPPBEVARING</span>
+          <span class="lbl-trio-val">${escapeHTML(STATE.opb || '0–4 °C')}</span>
+        </div>
+      </div>
+      <hr class="lbl-hr"/>
+      <div class="lbl-footer">Havøyet AS, Nesttunvegen 96, 5221 Nesttun</div>
+    </div>`;
+}
+
+function renderPreview() {
+  document.getElementById('previewFrame').innerHTML = buildLabelHTML();
+}
+
+// Datalist-forslag fra NUTR_DB
+function fillProductSuggestions() {
+  const set = new Set();
+  NUTR_DB.forEach(e => e.kw.forEach(k => set.add(k.charAt(0).toUpperCase() + k.slice(1))));
+  document.getElementById('productList').innerHTML =
+    [...set].sort().map(s => `<option value="${escapeHTML(s)}">`).join('');
+}
+
+// ─── TEMPLATES ──────────────────────────────────────
+function renderTemplates() {
+  const strip = document.getElementById('templatesStrip');
+  // Behold label, fjern resten
+  strip.innerHTML = `<span class="templates-label">Maler</span>`;
+  if (!TEMPLATES.length) {
+    strip.innerHTML += `<span class="tmpl-empty">Ingen lagrede maler ennå — fyll skjemaet og trykk «Lagre mal»</span>`;
+    return;
+  }
+  TEMPLATES.forEach(t => {
+    const card = document.createElement('div');
+    card.className = 'tmpl-card';
+    card.onclick = () => loadTemplate(t.id);
+    card.innerHTML = `
+      <div class="tmpl-name">${escapeHTML(t.name || t.product || 'Mal')}</div>
+      <div class="tmpl-meta">
+        <span>${escapeHTML(t.product || '—')}</span>
+        <button class="tmpl-del" title="Slett" onclick="event.stopPropagation();deleteTemplate('${escapeQ(t.id)}')">×</button>
+      </div>`;
+    strip.appendChild(card);
+  });
+}
+
+async function saveTemplate() {
+  if (!STATE.product) { toast('Fyll inn produktnavn først', 'err'); return; }
+  const name = prompt('Navn på malen', STATE.product) || STATE.product;
+  const tmpl = {
+    id: 'tmpl-' + Date.now(),
+    name, created: Date.now(),
+    product: STATE.product, weight: STATE.weight, unit: STATE.unit,
+    capture: STATE.capture, ing: STATE.ing, all: STATE.all, opb: STATE.opb,
+  };
+  TEMPLATES.unshift(tmpl);
+  // Lokal backup
+  try { localStorage.setItem('havoyet_label_templates', JSON.stringify(TEMPLATES.slice(0, 50))); } catch(e){}
+  // Server-persistens (best-effort)
+  try {
+    await fetch(`${FLASK_BASE}/api/print/templates`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(tmpl),
+    });
+  } catch(e) { /* tåler offline */ }
+  renderTemplates();
+  toast('Mal lagret', 'ok');
+}
+
+function loadTemplate(id) {
+  const t = TEMPLATES.find(x => x.id === id);
+  if (!t) return;
+  Object.assign(STATE, {
+    product: t.product || '', weight: t.weight || '', unit: t.unit || 'g',
+    expiry: '', capture: t.capture || defaultCapture(t.product),
+    ing: t.ing || '', all: t.all || '', opb: t.opb || '0–4 °C',
+  });
+  syncFormFromState();
+  renderPreview();
+  document.getElementById('formCtx').textContent = `Mal: ${t.name || t.product}`;
+}
+
+async function deleteTemplate(id) {
+  TEMPLATES = TEMPLATES.filter(t => t.id !== id);
+  try { localStorage.setItem('havoyet_label_templates', JSON.stringify(TEMPLATES)); } catch(e){}
+  try { await fetch(`${FLASK_BASE}/api/print/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch(e){}
+  renderTemplates();
+}
+
+// ─── PRINT ──────────────────────────────────────────
+async function printLabel() {
+  if (!STATE.product) { toast('Fyll inn produktnavn først', 'err'); return; }
+  const btn = document.getElementById('printBtn');
+  btn.disabled = true;
+  const orig = btn.innerHTML;
+  btn.innerHTML = 'Render…';
+  try {
+    const target = document.getElementById('labelTarget');
+    if (!target) { toast('Forhåndsvisning ikke klar', 'err'); return; }
+    // 50mm × 103mm @ 300 dpi = 591 × 1217 px. CSS bruker mm, så vi setter scale = 11.811/(96/25.4) ≈ 3.125
+    const canvas = await html2canvas(target, {
+      scale: 3.125, backgroundColor: '#ffffff', useCORS: true, logging: false,
+    });
+    btn.innerHTML = 'Sender…';
+    const png = canvas.toDataURL('image/png');
+    const r = await fetch(`${FLASK_BASE}/api/print/label`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        png, product: STATE.product,
+        order_id: STATE.orderId || null,
+      }),
+    });
+    const j = await r.json();
+    if (r.ok && j.ok) toast(j.message || 'Sendt til skriver', 'ok');
+    else toast(j.error || j.message || 'Utskrift feilet', 'err');
+  } catch (e) {
+    console.error(e);
+    toast('Render-feil: ' + (e.message || e), 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+// ─── TOAST ──────────────────────────────────────────
+let toastTimer;
+function toast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (kind ? ' ' + kind : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.className = 'toast', 3500);
+}
+
+// ─── INIT ───────────────────────────────────────────
+fillProductSuggestions();
+syncFormFromState();
+renderPreview();
+renderTemplates();
+loadOrders();
+loadTemplates();
+checkPrinter();
+setInterval(checkPrinter, 30000);
+</script>
+</body>
+</html>

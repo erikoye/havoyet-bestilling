@@ -82,6 +82,46 @@ systemctl enable havoyet
 systemctl restart havoyet 2>/dev/null || true
 echo "  ✔ Flask starter automatisk ved oppstart"
 
+# ── 5b. Print-worker (henter jobber fra Render og skriver lokalt) ──
+echo "▸ Installerer print-worker..."
+cat > /etc/systemd/system/havoyet-printer.service << 'PWSERVICE'
+[Unit]
+Description=Havøyet etikett-print worker (poller bestilling.havoyet.no)
+After=network-online.target cups.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/havoyet
+ExecStart=/usr/bin/python3 /home/pi/havoyet/print_worker.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-/home/pi/havoyet/.env.printer
+Environment=PRINT_API_BASE=https://bestilling.havoyet.no
+Environment=PRINTER_NAME=brother-ql1110
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+PWSERVICE
+
+# Lag tom env-fil hvis den ikke finnes — brukeren legger inn PRINT_WORKER_TOKEN her
+if [ ! -f /home/pi/havoyet/.env.printer ]; then
+    cat > /home/pi/havoyet/.env.printer << 'ENVFILE'
+# Sett PRINT_WORKER_TOKEN til samme verdi som er konfigurert på Render.
+# Hvis tom: auth deaktivert (kun OK i utvikling).
+PRINT_WORKER_TOKEN=
+ENVFILE
+    chown pi:pi /home/pi/havoyet/.env.printer
+    chmod 600 /home/pi/havoyet/.env.printer
+fi
+
+systemctl enable havoyet-printer
+systemctl restart havoyet-printer 2>/dev/null || true
+echo "  ✔ Print-worker starter automatisk (poller bestilling.havoyet.no)"
+
 # ── 6. Tailscale ─────────────────────────────────────
 echo "▸ Installerer Tailscale..."
 if ! command -v tailscale &>/dev/null; then
