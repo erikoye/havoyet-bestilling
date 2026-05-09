@@ -1351,6 +1351,17 @@ function undoDelete() {
   renderList();
 }
 
+let _flaskRetryTimer = null;
+function _scheduleFlaskRetry() {
+  if (_flaskRetryTimer) return;
+  _flaskRetryTimer = setInterval(() => loadFromFlask(), 30000);
+}
+function _cancelFlaskRetry() {
+  if (!_flaskRetryTimer) return;
+  clearInterval(_flaskRetryTimer);
+  _flaskRetryTimer = null;
+}
+
 async function loadFromFlask() {
   try {
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
@@ -1365,7 +1376,10 @@ async function loadFromFlask() {
       initState(ORDERS);
       restoreState(); restoreNotes();
       localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
+      _cancelFlaskRetry();
       setBanner(true, `Koblet til havoyet.no – ${ORDERS.length} bestilling${ORDERS.length !== 1 ? 'er' : ''} hentet`);
+      // Skjul success-banneret etter 4 sekunder så det ikke ligger og distraherer
+      setTimeout(() => { const b = document.getElementById('flaskBanner'); if (b) b.style.display = 'none'; }, 4000);
 
       const params = new URLSearchParams(location.search);
       const targetId = params.get('ordre');
@@ -1377,6 +1391,8 @@ async function loadFromFlask() {
       return;
     }
   } catch(e) { /* backend ikke oppe */ }
+  // Backend ikke oppe → planlegg retry hvert 30 sek til den kommer tilbake
+  _scheduleFlaskRetry();
 
   // Fallback: prøv server-sync for delte data, bruk sist kjente bestillinger fra localStorage
   await syncFromServer();
