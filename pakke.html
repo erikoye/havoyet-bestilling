@@ -405,6 +405,28 @@
     .item-name { font-size: 15px; font-weight: 600; color: var(--dark); flex: 1; min-width: 140px; }
     .item-qty  { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--muted); flex-shrink: 0; }
 
+    /* Mengde-editor på bestilling-kort: input + enhets-velger, synkes mot admin/min side */
+    .item-qty-edit { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .item-qty-edit input[type=number] {
+      width: 64px; padding: 5px 7px; font-size: 13px; font-weight: 600;
+      font-family: 'DM Mono', monospace; text-align: right;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+      color: var(--dark);
+    }
+    .item-qty-edit input[type=number]:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(13,148,136,.15); }
+    .item-qty-edit select {
+      padding: 5px 6px; font-size: 12px; font-weight: 500;
+      font-family: 'DM Sans', sans-serif;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+      color: var(--muted); cursor: pointer;
+    }
+    .item-qty-edit .saved-flash { font-size: 11px; color: var(--c-green); font-weight: 600; opacity: 0; transition: opacity .2s; }
+    .item-qty-edit.saved .saved-flash { opacity: 1; }
+    .item-qty-edit.readonly {
+      font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 600;
+      color: var(--dark); background: #f1f5f9; padding: 5px 10px; border-radius: 6px;
+    }
+
     /* Availability toggle */
     .avail-toggle { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
 
@@ -1620,6 +1642,7 @@ function renderItemCard(item, i, s) {
   <div class="item-card ${statusClass}" id="card-${i}">
     <div class="item-top">
       <div class="item-name" id="item-name-${i}">${s.confirmedReplacement ? (() => { const f=FISH_DB.find(x=>x.id===s.confirmedReplacement); return f ? `<span class="item-name replaced">${formatItemName(item)}</span> <span class="item-name-replacement">${f.name}</span>` : formatItemName(item); })() : formatItemName(item)}</div>
+      ${renderItemQtyEditor(item, i)}
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setAvail('${currentOrderId}',${i},'ok')">Tilgjengelig</button>
         <button class="${chipClass('unsure')}" onclick="setAvail('${currentOrderId}',${i},'unsure')">Usikkert</button>
@@ -2085,7 +2108,14 @@ function formatTotal(amount, unit) {
 
 function buildProductSummary() {
   const products = new Map();
-  ORDERS.filter(storeFilter).forEach(o => {
+  // Innkjøpslisten skal kun reflektere ordre som faktisk fortsatt er aktive,
+  // dvs. de som vises i Bestillingslisten (leveringsdato i dag eller senere).
+  // Uten dette filteret ble innkjøpslisten oppblåst med varer fra 100+ gamle
+  // ordre fra forrige sesong.
+  ORDERS.filter(storeFilter).filter(o => {
+    const d = String(o.delivery || '').slice(0, 10);
+    return d && d >= todayISO;
+  }).forEach(o => {
     const s = STATE[o.id] || [];
     o.items.forEach((item, idx) => {
       const pName = item.productName || item.name;
