@@ -345,11 +345,17 @@ def _paid_ordrenrs():
     except Exception:
         pass
     try:
-        for o in _manual_orders:
-            if (o.get("paymentStatus") or "").lower() == "paid":
-                ordrenr = str(o.get("ordrenr") or o.get("id") or "").strip()
-                if ordrenr:
-                    paid.add(ordrenr)
+        for o in (_manual_orders or []):
+            if not isinstance(o, dict):
+                continue
+            try:
+                ps = o.get("paymentStatus") or ""
+                if str(ps).lower() == "paid":
+                    ordrenr = str(o.get("ordrenr") or o.get("id") or "").strip()
+                    if ordrenr:
+                        paid.add(ordrenr)
+            except Exception:
+                continue
     except Exception:
         pass
     return paid
