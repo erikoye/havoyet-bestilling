@@ -1147,6 +1147,7 @@ function openModal(id) {
   };
 
   document.getElementById('modalOverlay').classList.add('open');
+  if (!_modalNavMuted) history.pushState({ modal: 'order', id: o.id }, '', `?ordre=${encodeURIComponent(o.id)}`);
 }
 
 document.getElementById('modalClose').onclick    = closeModal;
@@ -1162,8 +1163,28 @@ document.getElementById('modalBody').addEventListener('click', e => {
 });
 
 function closeModal() {
+  // Hvis vi har pushet en modal-state, la nettleseren navigere tilbake
+  // (popstate-handler nedenfor lukker overlay-en uten å pushe ny state).
+  if (!_modalNavMuted && history.state && history.state.modal === 'order') {
+    history.back();
+    return;
+  }
   document.getElementById('modalOverlay').classList.remove('open');
 }
+
+// ─── HISTORY / TILBAKE-KNAPP ────────────────
+// Når en modal åpnes pusher vi en history-entry slik at nettleserens
+// tilbake-knapp lukker modalen i stedet for å forlate siden.
+let _modalNavMuted = false;
+window.addEventListener('popstate', (e) => {
+  const overlayOpen = document.getElementById('modalOverlay').classList.contains('open');
+  if (overlayOpen) {
+    _modalNavMuted = true;
+    try { document.getElementById('modalOverlay').classList.remove('open'); }
+    finally { _modalNavMuted = false; }
+  }
+});
+history.replaceState({ view: 'calendar' }, '', window.location.search || window.location.pathname);
 
 // ─────────────────────────────────────────────
 // NAV + CLOCK

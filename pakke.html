@@ -1565,6 +1565,11 @@ function showList() {
     document.getElementById('prodDetailContent').style.display = 'none';
     renderList();
   }
+  if (!_navMuted) {
+    const tab = currentTab === 'innkjop' ? 'innkjop' : 'list';
+    const url = tab === 'innkjop' ? '?tab=innkjop' : window.location.pathname;
+    history.pushState({ view: tab }, '', url);
+  }
 }
 
 function openOrder(id) {
@@ -1575,6 +1580,7 @@ function openOrder(id) {
   document.getElementById('detailToolbar').style.display = 'flex';
   renderDetail();
   updateToolbar();
+  if (!_navMuted) history.pushState({ view: 'detail', id }, '', `?ordre=${encodeURIComponent(id)}`);
 }
 
 // ─── FORMATERING AV VARENAVN MED ENHET ───────
@@ -2378,12 +2384,14 @@ function openProductDetail(productName) {
   document.getElementById('prodListContent').style.display   = 'none';
   document.getElementById('prodDetailContent').style.display = '';
   renderProductDetail(productName);
+  if (!_navMuted) history.pushState({ view: 'product', name: productName }, '', `?produkt=${encodeURIComponent(productName)}`);
 }
 
 function showProductList() {
   currentProduct = null;
   document.getElementById('prodDetailContent').style.display = 'none';
   document.getElementById('prodListContent').style.display   = '';
+  if (!_navMuted) history.pushState({ view: 'innkjop' }, '', '?tab=innkjop');
 }
 
 function renderProductDetail(productName) {
@@ -2435,9 +2443,49 @@ function goToOrder(orderId) {
   openOrder(orderId);
 }
 
+// ─── HISTORY / TILBAKE-KNAPP ─────────────────
+// Hver intern view-skifte (åpne ordre, åpne produkt, bytte fane) pusher en
+// ny entry til history.state. Når brukeren trykker tilbake i nettleseren
+// ruter vi til riktig view i stedet for å forlate siden.
+let _navMuted = false;
+window.addEventListener('popstate', (e) => {
+  _navMuted = true;
+  try {
+    const s = e.state || {};
+    if (s.view === 'detail' && s.id) {
+      currentTab = 'bestillinger';
+      document.getElementById('tabBestillinger').classList.add('active');
+      document.getElementById('tabInnkjop').classList.remove('active');
+      openOrder(s.id);
+    } else if (s.view === 'product' && s.name) {
+      currentTab = 'innkjop';
+      document.getElementById('tabBestillinger').classList.remove('active');
+      document.getElementById('tabInnkjop').classList.add('active');
+      document.getElementById('viewList').style.display   = 'block';
+      document.getElementById('viewDetail').style.display = 'none';
+      document.getElementById('detailToolbar').style.display = 'none';
+      document.getElementById('listFooter').style.display = 'flex';
+      currentOrderId = null;
+      openProductDetail(s.name);
+    } else if (s.view === 'innkjop') {
+      currentTab = 'innkjop';
+      switchTab('innkjop');
+      showList();
+    } else {
+      currentTab = 'bestillinger';
+      switchTab('bestillinger');
+      showList();
+    }
+  } finally {
+    _navMuted = false;
+  }
+});
+
 // ─── INIT ────────────────────────────────────
 initStoreSwitcher();
 loadFromFlask();
+// Initialiser history-state slik at popstate har noe å gå tilbake til
+history.replaceState({ view: 'list' }, '', window.location.search || window.location.pathname);
 </script>
 </body>
 </html>
