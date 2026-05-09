@@ -425,7 +425,10 @@
     .item-qty-edit.readonly {
       font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 600;
       color: var(--dark); background: #f1f5f9; padding: 5px 10px; border-radius: 6px;
+      display: inline-flex; align-items: baseline; gap: 4px;
     }
+    .item-qty-edit.readonly .qty-num  { font-size: 14px; }
+    .item-qty-edit.readonly .qty-unit { font-size: 11px; font-weight: 700; color: var(--primary-dk); text-transform: uppercase; letter-spacing: .04em; }
 
     /* Availability toggle */
     .avail-toggle { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
@@ -1653,6 +1656,23 @@ function renderDetail() {
   `;
 }
 
+// Gjetter enhet ut fra produktnavnet hvis item.unit ikke er satt.
+// Brukes som fallback i qty-pillen så det alltid står tydelig hva
+// tallet representerer (stk, g, kg).
+function _guessUnitFromName(name){
+  if (!name) return '';
+  const n = String(name).toLowerCase();
+  // Eksplisitt vekt i navnet → bruk den enheten
+  if (/\b\d+\s*kg\b/i.test(n)) return 'kg';
+  if (/\b\d+\s*g\b/i.test(n))  return 'g';
+  if (/\b\d+\s*stk\b/i.test(n)) return 'stk';
+  // Tradisjonelle stk-varer (skjell, østers, krabbeklør, hummer, glass, kasse, abonnement)
+  const stkHints = ['østers','hummer','krabbeklør','blåskjell','muslinger','kamskjell','sjøkreps levende','sjøkreps fryst','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff'];
+  for (const h of stkHints) if (n.includes(h)) return 'stk';
+  // Fisk/skalldyr i kg er normen
+  return 'kg';
+}
+
 // Bestemmer om en ordre er manuelt opprettet (admin) — bare disse skal være editerbare,
 // Stripe/Vipps-ordre er låst fordi qty kommer fra checkout-flyten og ville bli overskrevet.
 function _orderIsManual(orderId){
@@ -1662,10 +1682,10 @@ function _orderIsManual(orderId){
 
 function renderItemQtyEditor(item, i){
   const qty = (item && (item.qty ?? item.quantity)) ?? 1;
-  const unit = (item && item.unit) || '';
+  const unit = (item && item.unit) || _guessUnitFromName(item && item.name) || 'stk';
   const editable = _orderIsManual(currentOrderId);
   if (!editable) {
-    return `<div class="item-qty-edit readonly" title="Hentet fra kasseflyten — kan ikke endres her">${qty}${unit?' '+unit:''}</div>`;
+    return `<div class="item-qty-edit readonly" title="Hentet fra kasseflyten — kan ikke endres her"><span class="qty-num">${qty}</span><span class="qty-unit">${unit}</span></div>`;
   }
   const baseUnits = ['kg','g','stk'];
   const allUnits = (unit && !baseUnits.includes(unit)) ? [...baseUnits, unit] : baseUnits;
