@@ -41,11 +41,19 @@
     .stat-card.s-green  { border-left: 3px solid var(--c-green); }
 
     /* Filter bar */
-    .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
     .filter-btn { padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 13px; font-weight: 500; font-family: 'DM Sans', sans-serif; color: var(--muted); cursor: pointer; transition: all .15s; }
     .filter-btn:hover { border-color: var(--primary); color: var(--primary-dk); }
     .filter-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
     .sep { width: 1px; background: var(--border); align-self: stretch; margin: 0 2px; }
+    .range-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-right: 2px; }
+    .range-custom { display: inline-flex; align-items: center; gap: 6px; }
+    .range-custom input[type=date] { font-family: 'DM Sans', sans-serif; font-size: 13px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--dark); }
+    .range-custom .arrow { color: var(--muted); font-family: 'DM Mono', monospace; }
+    .range-meta { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); margin-left: 4px; }
+    /* Total-behov chip i hovedraden */
+    .need-chip { font-family: 'DM Mono', monospace; font-size: 12px; font-weight: 600; padding: 4px 10px; background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4; border-radius: 6px; white-space: nowrap; }
+    .need-chip.empty { background: #f1f5f9; color: var(--muted); border-color: var(--border); }
 
     /* Product list */
     .product-list { display: flex; flex-direction: column; gap: 8px; }
@@ -94,6 +102,7 @@
     .order-pill:hover { border-color: var(--primary); background: #f0fdfb; }
     .order-pill .p-id   { font-family: 'DM Mono', monospace; color: var(--muted); font-size: 11px; }
     .order-pill .p-date { font-family: 'DM Mono', monospace; color: var(--muted); font-size: 11px; }
+    .order-pill .p-w    { font-family: 'DM Mono', monospace; color: var(--primary-dk); font-size: 11px; font-weight: 600; }
     .order-pill .p-miss-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c-red); flex-shrink: 0; }
     .order-pill .p-ok-dot   { width: 6px; height: 6px; border-radius: 50%; background: var(--c-green); flex-shrink: 0; }
 
@@ -181,6 +190,20 @@
 <div class="flask-banner" id="flaskBanner"></div>
 
 <main>
+
+  <div class="filter-bar">
+    <span class="range-label">Periode:</span>
+    <button class="filter-btn"        id="r2d"     onclick="setRange('2d')">Neste 2 dager</button>
+    <button class="filter-btn active" id="r1w"     onclick="setRange('1w')">1 uke</button>
+    <button class="filter-btn"        id="r1m"     onclick="setRange('1m')">1 måned</button>
+    <button class="filter-btn"        id="rCustom" onclick="setRange('custom')">Egendefinert</button>
+    <span class="range-custom" id="rangeCustomBox" style="display:none">
+      <input type="date" id="rangeFrom" onchange="onCustomChange()">
+      <span class="arrow">→</span>
+      <input type="date" id="rangeTo" onchange="onCustomChange()">
+    </span>
+    <span class="range-meta" id="rangeMeta"></span>
+  </div>
 
   <div class="filter-bar">
     <button class="filter-btn" id="swHavoyet" onclick="setStore('havoyet')">Havøyet</button>
@@ -280,6 +303,54 @@ const MOCK_ORDERS = [
 
 let ORDERS = [];
 let activeFilter = 'all';
+let activeRange  = '1w'; // '2d' | '1w' | '1m' | 'custom'
+let customFrom   = todayISO;
+let customTo     = dayOff(30);
+
+// ── PERIODE-FILTER ──────────────────────────────────────────────
+function rangeBounds() {
+  if (activeRange === '2d')     return [todayISO, dayOff(2)];
+  if (activeRange === '1m')     return [todayISO, dayOff(30)];
+  if (activeRange === 'custom') return [customFrom || todayISO, customTo || dayOff(30)];
+  return [todayISO, dayOff(7)]; // default 1w
+}
+function rangeFilter(o) {
+  const d = String(o.delivery || '').slice(0, 10);
+  if (!d) return false;
+  const [from, to] = rangeBounds();
+  return d >= from && d <= to;
+}
+function fmtRangeShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('nb-NO', { day: '2-digit', month: '2-digit' });
+}
+function updateRangeMeta() {
+  const [from, to] = rangeBounds();
+  const meta = document.getElementById('rangeMeta');
+  if (meta) meta.textContent = `${fmtRangeShort(from)} – ${fmtRangeShort(to)}`;
+}
+function setRange(r) {
+  activeRange = r;
+  ['2d','1w','1m','Custom'].forEach(id => {
+    const btn = document.getElementById('r' + id);
+    const key = id === 'Custom' ? 'custom' : id.toLowerCase();
+    if (btn) btn.classList.toggle('active', r === key);
+  });
+  const box = document.getElementById('rangeCustomBox');
+  if (box) box.style.display = r === 'custom' ? 'inline-flex' : 'none';
+  if (r === 'custom') {
+    document.getElementById('rangeFrom').value = customFrom;
+    document.getElementById('rangeTo').value   = customTo;
+  }
+  updateRangeMeta();
+  render();
+}
+function onCustomChange() {
+  customFrom = document.getElementById('rangeFrom').value || todayISO;
+  customTo   = document.getElementById('rangeTo').value   || dayOff(30);
+  if (activeRange === 'custom') { updateRangeMeta(); render(); }
+}
 
 // ── BUTIKKFILTER ─────────────────────────────────────────────────
 function getStore() { return localStorage.getItem('hv_active_store') || 'havoyet'; }
@@ -367,7 +438,7 @@ function buildProductMap(orders) {
   const packingState = getPackingState();
   const groups = {};
 
-  orders.filter(storeFilter).forEach(order => {
+  orders.filter(storeFilter).filter(rangeFilter).forEach(order => {
     const orderState = packingState[order.id];
     (order.items || []).forEach((item, i) => {
       const fullName = item.name || '(ukjent)';
@@ -501,15 +572,39 @@ function variantStatus(v) {
   };
 }
 
-function pillsHtml(orders, dotClass) {
+function pillsHtml(orders, dotClass, weightLabel) {
   return orders.map(o =>
     `<a class="order-pill" href="pakke.html?ordre=${encodeURIComponent(o.orderId)}">
       <span class="${dotClass}"></span>
+      ${weightLabel ? `<span class="p-w">${escH(weightLabel)}</span>` : ''}
       <span>${escH(o.customer.split(' ')[0])}</span>
       <span class="p-id">${escH(o.orderId)}</span>
       <span class="p-date">${o.dateStr} ${o.slotStr}</span>
     </a>`
   ).join('');
+}
+
+// Beregner totalt behov for en variant (sum over alle bestillinger som krever den)
+function variantTotalNeed(v) {
+  const grams = (v.weightGrams || 0) * v.total;
+  const stk   = (v.weightStk   || 0) * v.total;
+  const parts = [];
+  if (grams > 0) parts.push(fmtWeight(grams));
+  if (stk   > 0) parts.push(`${stk} stk`);
+  return parts.join(' + ');
+}
+
+// Sum av total-behov for hele produktgruppen (på tvers av varianter)
+function groupTotalNeed(grp) {
+  let grams = 0, stk = 0;
+  Object.values(grp.variants).forEach(v => {
+    grams += (v.weightGrams || 0) * v.total;
+    stk   += (v.weightStk   || 0) * v.total;
+  });
+  const parts = [];
+  if (grams > 0) parts.push(fmtWeight(grams));
+  if (stk   > 0) parts.push(`${stk} stk`);
+  return parts.join(' + ');
 }
 
 function variantDetailHtml(v) {
@@ -528,14 +623,21 @@ function variantDetailHtml(v) {
   }
   const estStr = estParts.join(' + ');
 
+  const perOrder = v.weightStr || ''; // hver bestilling i denne varianten har samme vekt
+  const totalNeed = variantTotalNeed(v);
+
   return `
     ${missing > 0 ? `
     <div class="detail-section">
       <div class="detail-section-label">Mangler (${missing})</div>
-      <div class="order-pills">${pillsHtml(v.missingOrders, 'p-miss-dot')}</div>
+      <div class="order-pills">${pillsHtml(v.missingOrders, 'p-miss-dot', perOrder)}</div>
     </div>` : ''}
     <div class="detail-section">
       <div class="weight-summary">
+        <div class="wsum-item">
+          <div class="wsum-label">Total behov</div>
+          <div class="wsum-value">${totalNeed || '—'}</div>
+        </div>
         <div class="wsum-item">
           <div class="wsum-label">Mangler (ikke bestilt inn)</div>
           <div class="wsum-value ${missing > 0 ? 'red' : 'green'}">${missing > 0 ? estStr || `${missing} varer` : '—'}</div>
@@ -553,7 +655,7 @@ function variantDetailHtml(v) {
     ${v.confirmed > 0 ? `
     <div class="detail-section">
       <div class="detail-section-label">Bestilt inn (${v.confirmed})</div>
-      <div class="order-pills">${pillsHtml(v.confirmedOrders, 'p-ok-dot')}</div>
+      <div class="order-pills">${pillsHtml(v.confirmedOrders, 'p-ok-dot', perOrder)}</div>
     </div>` : ''}`;
 }
 
@@ -573,11 +675,16 @@ function renderProductGroup(grp) {
     const weightChip = confStr
       ? `<span class="conf-weight" title="${v.confirmed}/${v.total} bekreftet med vekt">${confStr} bekreftet</span>`
       : '';
+    const totalNeed = variantTotalNeed(v);
+    const needChip  = totalNeed
+      ? `<span class="need-chip" title="Sum vekt for ${v.total} bestilling${v.total === 1 ? '' : 'er'}">Trenger ${escH(totalNeed)}</span>`
+      : '';
     const nameHtml = escH(grp.name) + (v.weightStr ? `<div class="product-variant">${escH(v.weightStr)}</div>` : '');
     return `<div class="product-row ${cls}" onclick="toggleRow(this)">
       <div class="product-main">
         <div class="product-name-wrap">${nameHtml}</div>
         <div class="product-right">
+          ${needChip}
           ${weightChip}
           <span class="mbadge ${badgeCls}">${badgeTxt}</span>
           <div class="pbar-wrap">
@@ -608,10 +715,16 @@ function renderProductGroup(grp) {
 
   const subRows = variantList.map(v => renderVariantSubRow(v)).join('');
 
+  const grpTotalNeed = groupTotalNeed(grp);
+  const grpNeedChip  = grpTotalNeed
+    ? `<span class="need-chip" title="Sum vekt for ${grp.total} bestilling${grp.total === 1 ? '' : 'er'} på tvers av varianter">Trenger ${escH(grpTotalNeed)}</span>`
+    : '';
+
   return `<div class="product-row ${grpCls}">
     <div class="product-header" onclick="toggleGroup(this.closest('.product-row'))">
       <div class="product-header-name">${escH(grp.name)}</div>
       <div class="product-right">
+        ${grpNeedChip}
         <span class="mbadge ${grpBadgeCls}">${grpBadgeTxt}</span>
         <div class="pbar-wrap">
           <div class="pbar-bg"><div class="pbar-fill ${grpBarCls}" style="width:${grpPct}%"></div></div>
@@ -629,12 +742,18 @@ function renderVariantSubRow(v) {
   const label      = v.category || v.weightStr || 'Standard';
   const weightHint = v.category && v.weightStr ? v.weightStr : null;
 
+  const totalNeed = variantTotalNeed(v);
+  const needChip  = totalNeed
+    ? `<span class="need-chip" title="Sum vekt for ${v.total} bestilling${v.total === 1 ? '' : 'er'}">Trenger ${escH(totalNeed)}</span>`
+    : '';
+
   return `<div class="variant-row" onclick="toggleVariant(this)">
     <div class="variant-label">
       <div class="variant-name">${escH(label)}</div>
       ${weightHint ? `<div class="variant-weight-hint">${escH(weightHint)}</div>` : ''}
     </div>
     <div class="product-right">
+      ${needChip}
       <span class="mbadge ${badgeCls}">${badgeTxt}</span>
       <div class="pbar-wrap">
         <div class="pbar-bg"><div class="pbar-fill ${barCls}" style="width:${pct}%"></div></div>
@@ -855,6 +974,7 @@ async function syncPrisliste() {
 
 // ── INIT ─────────────────────────────────────────────────────────
 initStoreSwitcher();
+updateRangeMeta();
 render();        // vis mock-data umiddelbart
 loadFromFlask(); // erstatt med live-data om Flask er oppe
 loadPrisliste(); // last prisliste fra PowerOffice-cache
