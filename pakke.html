@@ -2215,10 +2215,18 @@ function switchTab(tab) {
   if (tab === 'innkjop') { updateProdRangeMeta(); renderProductList(); }
 }
 
-function parseVariantQty(variantStr, qty) {
-  if (!variantStr) return { amount: qty, unit: 'stk' };
+// Parser variant-streng (f.eks. "500 g per pkg") og vekter den med qty.
+// itemUnit (valgfri): brukes når variantStr er tom — gjelder typisk admin-laget
+// manuell ordre der mengden er oppgitt direkte med enhet på hver linje.
+function parseVariantQty(variantStr, qty, itemUnit) {
+  if (!variantStr) {
+    const u = String(itemUnit || '').toLowerCase();
+    if (u === 'kg') return { amount: Number(qty) * 1000, unit: 'g' };
+    if (u === 'g')  return { amount: Number(qty),        unit: 'g' };
+    return { amount: Number(qty), unit: 'stk' };
+  }
   const m = variantStr.match(/^(\d+(?:[.,]\d+)?)\s*(g|kg|stk)\b/i);
-  if (!m) return { amount: qty, unit: 'stk' };
+  if (!m) return { amount: Number(qty), unit: String(itemUnit||'').toLowerCase() === 'kg' ? 'g' : (itemUnit || 'stk') };
   const num  = parseFloat(m[1].replace(',', '.'));
   const unit = m[2].toLowerCase();
   if (unit === 'kg') return { amount: num * qty * 1000, unit: 'g' };
@@ -2303,14 +2311,17 @@ function buildProductSummary() {
         p.confirmedOrders++;
       }
       const vStr = item.variantStr || '';
-      if (!p.variants.has(vStr)) {
-        const { amount, unit } = parseVariantQty(vStr, item.qty);
-        p.variants.set(vStr, { amount: 0, unit, orders: [] });
+      // For manuelle ordre er enheten på linjen (kg/g/stk) — for Stripe ligger den i variantStr.
+      // Bruker item.unit som key-tillegg så samme produkt med ulik enhet ikke blandes.
+      const variantKey = vStr || (item.unit ? `__unit:${item.unit}` : '');
+      if (!p.variants.has(variantKey)) {
+        const { amount, unit } = parseVariantQty(vStr, item.qty, item.unit);
+        p.variants.set(variantKey, { amount: 0, unit, orders: [], displayLabel: vStr });
       }
-      const v = p.variants.get(vStr);
-      const { amount } = parseVariantQty(vStr, item.qty);
+      const v = p.variants.get(variantKey);
+      const { amount } = parseVariantQty(vStr, item.qty, item.unit);
       v.amount += amount;
-      v.orders.push({ id: o.id, customer: o.customer, qty: item.qty, variantStr: vStr });
+      v.orders.push({ id: o.id, customer: o.customer, qty: item.qty, unit: item.unit || '', variantStr: vStr });
     });
   });
   return products;
@@ -2393,12 +2404,12 @@ function renderProductDetail(productName) {
     </div>
     <div class="section-label">Varianter bestilt</div>
   `;
-  p.variants.forEach((v, vStr) => {
-    const label = vStr || 'Standard';
+  p.variants.forEach((v, key) => {
+    const label = v.displayLabel || (key.startsWith('__unit:') ? '' : key) || 'Standard';
     const totalStr = formatTotal(v.amount, v.unit);
     const orderChips = v.orders.map(ord =>
       `<span class="order-ref" onclick="event.stopPropagation();goToOrder('${ord.id}')">
-        ${ord.customer} · ${ord.qty} stk
+        ${ord.customer} · ${ord.qty}${ord.unit ? ' ' + ord.unit : ' stk'}
       </span>`
     ).join('');
     html += `
