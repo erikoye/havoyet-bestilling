@@ -832,8 +832,21 @@ function isUnseen(o) {
   return true;
 }
 
+// Speiler admin-oversikten: en ordre er "ferdig" og skjules KUN når den
+// er både betalt OG i sluttstatus (DONE/CANCELLED/REFUNDED). Ubetalte
+// fakturaer forblir synlige selv etter levering, til de er gjort opp.
+function _isClosedOrderIdx(o){
+  const s = String((o && o.status) || 'NEW').toUpperCase();
+  const finalStatus = s === 'DONE' || s === 'CANCELLED' || s === 'REFUNDED' ||
+                      s === 'DELIVERED' || s === 'LEVERT' || s === 'AVBRUTT' || s === 'REFUNDERT';
+  if (!finalStatus) return false;
+  const ps = String((o && o.paymentStatus) || '').toLowerCase();
+  const paid = !(ps === 'unpaid' || ps === 'pending' || ps === 'awaiting_payment');
+  return paid;
+}
+
 function renderAll(){
-  const visible = ORDERS.filter(storeFilter);
+  const visible = ORDERS.filter(storeFilter).filter(o => !_isClosedOrderIdx(o));
   const sets = {
     unseen: visible.filter(o=>isUnseen(o)),
     today:  visible.filter(o=>o.delivery===todayISO),

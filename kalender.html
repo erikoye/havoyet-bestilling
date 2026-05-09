@@ -976,7 +976,17 @@ function buildCalendar() {
   document.getElementById('weekLabel').textContent =
     fmt(days[0]) + ' – ' + fmt(days[6]) + ' ' + days[6].getFullYear();
 
-  const visible = ORDERS.filter(storeFilter);
+  // Speiler admin: skjul ordre som er BÅDE betalt OG i sluttstatus.
+  // Ubetalte fakturaer forblir i kalenderen til de er gjort opp.
+  const _isClosedKal = (o) => {
+    const s = String((o && o.status) || 'NEW').toUpperCase();
+    const finalStatus = s === 'DONE' || s === 'CANCELLED' || s === 'REFUNDED' ||
+                        s === 'DELIVERED' || s === 'LEVERT' || s === 'AVBRUTT' || s === 'REFUNDERT';
+    if (!finalStatus) return false;
+    const ps = String((o && o.paymentStatus) || '').toLowerCase();
+    return !(ps === 'unpaid' || ps === 'pending' || ps === 'awaiting_payment');
+  };
+  const visible = ORDERS.filter(storeFilter).filter(o => !_isClosedKal(o));
   const weekDates = new Set(days.map(isoDate));
   const count = visible.filter(o => weekDates.has(o.delivery)).length;
   document.getElementById('weekCount').textContent = count + ' ordre denne uken';

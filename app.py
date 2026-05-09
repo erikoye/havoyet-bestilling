@@ -151,6 +151,12 @@ def _normalize_manual_order(o):
             or ("admin"   if o.get("manual") else "")
         ),
         "manual":     bool(o.get("manual")),
+        # Betalings-info forplantes så iPad-filteret kan speile admin sin
+        # "skjul ferdige+betalte"-regel uten å gjette på status alene.
+        # Default = "paid" for legacy/Stripe/Shopify (de var betalt før de
+        # ble lagret). Eksplisitt "unpaid"/"pending" på admin-fakturaer bevares.
+        "paymentStatus": (o.get("paymentStatus") or "paid"),
+        "paymentMethod": o.get("paymentMethod") or "",
         # Behold de opprinnelige feltene også, så ny.havoyet.no-spesifikke ting
         # (boxSelection, fee, sum osv.) er fortsatt tilgjengelig for iPad-en.
         "_raw":       o,
