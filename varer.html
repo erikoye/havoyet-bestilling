@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Havøyet — Varer & tilgjengelighet</title>
+  <link rel="icon" type="image/png" href="https://havoyet.no/assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    :root{
+      --primary:#0d9488;--primary-dk:#0f766e;
+      --bg:#f8fafc;--surface:#fff;--surface-2:#f8f6f1;
+      --border:#e2e8f0;--ink:#0f172a;--muted:#64748b;
+      --green:#22c55e;--orange:#f59e0b;--red:#ef4444;--purple:#8b5cf6;
+      --shadow-sm:0 1px 3px rgba(15,23,42,.06);
+      --shadow:0 4px 12px rgba(15,23,42,.08);
+    }
+    html,body{font-family:'DM Sans',sans-serif;color:var(--ink);background:var(--bg);min-height:100vh;-webkit-font-smoothing:antialiased;}
+    a{color:inherit;text-decoration:none;}
+    button{font-family:inherit;cursor:pointer;}
+
+    /* HEADER */
+    header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:50;}
+    .back{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--muted);transition:.15s;}
+    .back:hover{border-color:var(--primary);color:var(--primary);}
+    .title{font-family:'Montserrat',sans-serif;font-weight:700;font-size:18px;letter-spacing:-0.01em;}
+    .title small{display:block;font-family:'DM Sans',sans-serif;font-weight:400;font-size:12px;color:var(--muted);margin-top:1px;letter-spacing:0;}
+    .header-spacer{flex:1;}
+    .sync-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:#f0fdfa;border:1px solid #99f6e4;color:var(--primary);font-size:12px;font-weight:500;}
+    .sync-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(34,197,94,.5);animation:pulse 2s infinite;}
+    .sync-pill.offline{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
+    .sync-pill.offline .dot{background:var(--red);animation:none;}
+    @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.4);}70%{box-shadow:0 0 0 8px rgba(34,197,94,0);}100%{box-shadow:0 0 0 0 rgba(34,197,94,0);}}
+
+    /* TOOLBAR */
+    .toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px 16px;display:flex;flex-direction:column;gap:12px;position:sticky;top:65px;z-index:40;}
+    .search{position:relative;}
+    .search input{width:100%;height:42px;padding:0 14px 0 40px;border:1px solid var(--border);border-radius:10px;font-size:14px;background:var(--surface-2);transition:.15s;}
+    .search input:focus{outline:none;border-color:var(--primary);background:var(--surface);box-shadow:0 0 0 3px rgba(13,148,136,.1);}
+    .search svg{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--muted);}
+    .chip-row{display:flex;flex-wrap:wrap;gap:6px;}
+    .chip{padding:6px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:12.5px;font-weight:500;transition:.15s;}
+    .chip:hover{border-color:var(--primary);color:var(--primary);}
+    .chip.active{background:var(--primary);border-color:var(--primary);color:#fff;}
+    .chip strong{margin-right:4px;font-weight:700;}
+    .status-chip{padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;}
+    .status-chip.active{box-shadow:0 0 0 2px rgba(13,148,136,.15);}
+    .status-chip.s-available.active{border-color:var(--green);color:#15803d;background:#f0fdf4;}
+    .status-chip.s-out_of_stock.active{border-color:var(--red);color:#b91c1c;background:#fef2f2;}
+    .status-chip.s-season.active{border-color:var(--orange);color:#b45309;background:#fffbeb;}
+    .status-chip.s-hidden.active{border-color:var(--purple);color:#6b21a8;background:#faf5ff;}
+    .status-chip.s-all.active{border-color:var(--primary);color:var(--primary);background:#f0fdfa;}
+    .status-chip .dot{width:8px;height:8px;border-radius:50%;}
+    .status-chip.s-available .dot{background:var(--green);}
+    .status-chip.s-out_of_stock .dot{background:var(--red);}
+    .status-chip.s-season .dot{background:var(--orange);}
+    .status-chip.s-hidden .dot{background:var(--purple);}
+    .status-chip.s-all .dot{background:var(--muted);}
+
+    /* MAIN */
+    main{max-width:920px;margin:0 auto;padding:18px 16px 80px;}
+    .group-title{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:18px 4px 10px;}
+    .group-title:first-child{margin-top:0;}
+
+    .product-row{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:8px;display:flex;flex-direction:column;gap:12px;transition:.15s;box-shadow:var(--shadow-sm);}
+    .product-row.dim{opacity:0.55;}
+    .pr-top{display:flex;align-items:center;gap:12px;}
+    .pr-info{flex:1;min-width:0;}
+    .pr-name{font-size:15px;font-weight:600;color:var(--ink);line-height:1.3;}
+    .pr-meta{font-size:12px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;}
+    .pr-badge{flex-shrink:0;font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:6px;letter-spacing:0.01em;display:inline-flex;align-items:center;gap:5px;}
+    .pr-badge .dot{width:7px;height:7px;border-radius:50%;}
+    .pr-badge.b-available{background:#f0fdf4;color:#15803d;}
+    .pr-badge.b-available .dot{background:var(--green);}
+    .pr-badge.b-out_of_stock{background:#fef2f2;color:#b91c1c;}
+    .pr-badge.b-out_of_stock .dot{background:var(--red);}
+    .pr-badge.b-season{background:#fffbeb;color:#b45309;}
+    .pr-badge.b-season .dot{background:var(--orange);}
+    .pr-badge.b-hidden{background:#faf5ff;color:#6b21a8;}
+    .pr-badge.b-hidden .dot{background:var(--purple);}
+
+    .pr-buttons{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;}
+    .pr-btn{padding:9px 6px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:12.5px;font-weight:600;color:var(--muted);transition:.12s;display:flex;flex-direction:column;align-items:center;gap:3px;line-height:1.2;}
+    .pr-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary);}
+    .pr-btn:disabled{cursor:not-allowed;}
+    .pr-btn.saving{position:relative;color:transparent;}
+    .pr-btn.saving::after{content:'';position:absolute;top:50%;left:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--primary);animation:spin 0.6s linear infinite;}
+    .pr-btn .ico{font-size:13px;}
+    .pr-btn.active.b-available{background:var(--green);border-color:var(--green);color:#fff;}
+    .pr-btn.active.b-out_of_stock{background:var(--red);border-color:var(--red);color:#fff;}
+    .pr-btn.active.b-season{background:var(--orange);border-color:var(--orange);color:#fff;}
+    .pr-btn.active.b-hidden{background:var(--purple);border-color:var(--purple);color:#fff;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+
+    .empty,.loading{padding:48px 20px;text-align:center;color:var(--muted);font-size:13.5px;}
+    .loading::before{content:'';display:block;width:32px;height:32px;margin:0 auto 14px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--primary);animation:spin 0.7s linear infinite;}
+
+    /* TOAST */
+    #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--ink);color:#fff;padding:12px 22px;border-radius:10px;font-size:13.5px;font-weight:500;box-shadow:var(--shadow);opacity:0;transition:.25s;pointer-events:none;z-index:100;max-width:90vw;}
+    #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+    #toast.err{background:#b91c1c;}
+
+    @media (max-width:560px){
+      header{padding:12px 14px;}
+      .toolbar{padding:12px 14px 14px;top:61px;}
+      main{padding:14px 12px 80px;}
+      .title{font-size:16px;}
+      .title small{font-size:11px;}
+      .pr-btn{font-size:11.5px;padding:8px 4px;}
+      .pr-btn .ico{font-size:12px;}
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="index.html" class="back" title="Tilbake">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+  </a>
+  <div class="title">Varer<small id="countLine">Laster…</small></div>
+  <div class="header-spacer"></div>
+  <div class="sync-pill" id="syncPill"><span class="dot"></span>Live-sync</div>
+</header>
+
+<div class="toolbar">
+  <label class="search">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input id="searchInput" type="search" placeholder="Søk produkt…" autocomplete="off" />
+  </label>
+  <div class="chip-row" id="catChips"></div>
+  <div class="chip-row" id="statusChips"></div>
+</div>
+
+<main>
+  <div id="productsList"><div class="loading">Henter produkter fra havoyet.no…</div></div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+// ── KONFIG ─────────────────────────────────────────────
+const API_BASE = (function(){
+  if (window.HV_API_BASE_OVERRIDE) return window.HV_API_BASE_OVERRIDE;
+  if (location.protocol === 'file:') return 'https://havoyet-bestilling.onrender.com';
+  return location.origin;
+})();
+const STATUS_OPTIONS = [
+  { key: 'available',    label: 'Tilgj.',    full: 'Tilgjengelig', ico: '✓' },
+  { key: 'out_of_stock', label: 'Utsolgt',   full: 'Utsolgt',      ico: '✕' },
+  { key: 'season',       label: 'Sesong',    full: 'Sesong',       ico: '◐' },
+  { key: 'hidden',       label: 'Skjult',    full: 'Skjult',       ico: '◯' },
+];
+const POLL_MS = 30000;
+
+// ── STATE ──────────────────────────────────────────────
+let _products = [];     // baseline + override applied
+let _cats = [];
+let _search = '';
+let _activeCat = 'Alle';
+let _activeStatus = 'all'; // 'all' | 'available' | 'out_of_stock' | 'season' | 'hidden'
+let _saving = new Set(); // slug currently saving
+let _lastFetchAt = 0;
+
+// ── HELPERS ────────────────────────────────────────────
+function escH(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function priceLabel(p){
+  if (!p || p.price == null) return '';
+  const n = Number(p.price);
+  if (!isFinite(n)) return '';
+  if (p.kind === 'fish') return `${n} kr/kg`;
+  return `${n} kr/${p.unitLabel || 'stk'}`;
+}
+
+function effectiveStatus(p){
+  return p && p.status && STATUS_OPTIONS.find(s => s.key === p.status) ? p.status : 'available';
+}
+
+function showToast(msg, isErr){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+function setSyncStatus(online){
+  const pill = document.getElementById('syncPill');
+  pill.classList.toggle('offline', !online);
+  pill.lastChild.textContent = online ? 'Live-sync' : 'Frakoblet';
+}
+
+// ── DATA ───────────────────────────────────────────────
+async function fetchProducts(opts){
+  opts = opts || {};
+  try {
+    const url = `${API_BASE}/api/products/list${opts.refresh ? '?refresh=1' : ''}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data || !Array.isArray(data.products)) throw new Error('Ugyldig respons');
+    _products = data.products;
+    _cats = Array.isArray(data.cats) ? data.cats : [];
+    _lastFetchAt = Date.now();
+    setSyncStatus(true);
+    return true;
+  } catch (e) {
+    setSyncStatus(false);
+    if (!opts.silent) showToast('Kunne ikke hente produkter: ' + e.message, true);
+    return false;
+  }
+}
+
+async function patchOverride(slug, patch){
+  const r = await fetch(`${API_BASE}/api/products/overrides/${encodeURIComponent(slug)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return await r.json();
+}
+
+async function setStatus(slug, status){
+  if (_saving.has(slug)) return;
+  const p = _products.find(x => x.slug === slug);
+  if (!p) return;
+  const previous = effectiveStatus(p);
+  if (previous === status) return;
+  _saving.add(slug);
+  // Optimistic update
+  p.status = status;
+  renderProducts();
+  try {
+    await patchOverride(slug, { status });
+    showToast(`${p.name} → ${STATUS_OPTIONS.find(s => s.key === status).full}`);
+  } catch (e) {
+    p.status = previous; // rollback
+    showToast('Lagring feilet: ' + e.message, true);
+    setSyncStatus(false);
+  } finally {
+    _saving.delete(slug);
+    renderProducts();
+  }
+}
+
+// ── RENDER ─────────────────────────────────────────────
+function renderCountLine(){
+  const total = _products.length;
+  const counts = { available: 0, out_of_stock: 0, season: 0, hidden: 0 };
+  _products.forEach(p => { counts[effectiveStatus(p)] = (counts[effectiveStatus(p)] || 0) + 1; });
+  const cl = document.getElementById('countLine');
+  if (total === 0) {
+    cl.textContent = 'Ingen produkter';
+  } else {
+    cl.textContent = `${total} produkter · ${counts.available} tilgjengelige · ${counts.out_of_stock} utsolgte`;
+  }
+  return counts;
+}
+
+function renderCats(){
+  const wrap = document.getElementById('catChips');
+  const cats = ['Alle', ..._cats];
+  wrap.innerHTML = cats.map(c => {
+    const count = c === 'Alle' ? _products.length : _products.filter(p => p.cat === c).length;
+    const active = c === _activeCat;
+    return `<button class="chip${active ? ' active' : ''}" data-cat="${escH(c)}"><strong>${count}</strong>${escH(c)}</button>`;
+  }).join('');
+}
+
+function renderStatusChips(counts){
+  const wrap = document.getElementById('statusChips');
+  const total = _products.length;
+  const items = [
+    { key: 'all',          label: 'Alle',        cnt: total },
+    { key: 'available',    label: 'Tilgjengelig',cnt: counts.available || 0 },
+    { key: 'out_of_stock', label: 'Utsolgt',     cnt: counts.out_of_stock || 0 },
+    { key: 'season',       label: 'Sesong',      cnt: counts.season || 0 },
+    { key: 'hidden',       label: 'Skjult',      cnt: counts.hidden || 0 },
+  ];
+  wrap.innerHTML = items.map(it => {
+    const active = it.key === _activeStatus;
+    return `<button class="status-chip s-${it.key}${active ? ' active' : ''}" data-status="${it.key}">
+      <span class="dot"></span><strong>${it.cnt}</strong>${escH(it.label)}
+    </button>`;
+  }).join('');
+}
+
+function renderProducts(){
+  const counts = renderCountLine();
+  renderCats();
+  renderStatusChips(counts);
+
+  const list = document.getElementById('productsList');
+  let filtered = _products.slice();
+  if (_activeCat !== 'Alle') filtered = filtered.filter(p => p.cat === _activeCat);
+  if (_activeStatus !== 'all') filtered = filtered.filter(p => effectiveStatus(p) === _activeStatus);
+  if (_search) {
+    const q = _search.toLowerCase();
+    filtered = filtered.filter(p => (p.name || '').toLowerCase().includes(q) || (p.slug || '').toLowerCase().includes(q));
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty">Ingen produkter matcher filteret.</div>`;
+    return;
+  }
+
+  // Grupper etter kategori for visning når Alle er valgt
+  const grouped = {};
+  const order = [];
+  filtered.forEach(p => {
+    const c = p.cat || 'Annet';
+    if (!grouped[c]) { grouped[c] = []; order.push(c); }
+    grouped[c].push(p);
+  });
+
+  const html = order.map(cat => {
+    const items = grouped[cat].map(p => renderRow(p)).join('');
+    if (_activeCat !== 'Alle') return items;
+    return `<div class="group-title">${escH(cat)}</div>${items}`;
+  }).join('');
+
+  list.innerHTML = html;
+
+  // Bind event-delegering kun én gang
+  if (!list.dataset.bound) {
+    list.addEventListener('click', e => {
+      const btn = e.target.closest('.pr-btn[data-status]');
+      if (!btn) return;
+      const slug = btn.getAttribute('data-slug');
+      const status = btn.getAttribute('data-status');
+      if (slug && status) setStatus(slug, status);
+    });
+    list.dataset.bound = '1';
+  }
+}
+
+function renderRow(p){
+  const cur = effectiveStatus(p);
+  const saving = _saving.has(p.slug);
+  const dim = cur === 'hidden' ? ' dim' : '';
+  const meta = [p.cat, priceLabel(p)].filter(Boolean).join(' · ');
+  const badge = STATUS_OPTIONS.find(s => s.key === cur);
+  const buttons = STATUS_OPTIONS.map(s => {
+    const active = s.key === cur;
+    const cls = `pr-btn b-${s.key}${active ? ' active' : ''}${saving ? ' saving' : ''}`;
+    return `<button class="${cls}" data-slug="${escH(p.slug)}" data-status="${s.key}" ${saving ? 'disabled' : ''}>
+      <span class="ico">${s.ico}</span>${escH(s.label)}
+    </button>`;
+  }).join('');
+  return `<div class="product-row${dim}" data-slug="${escH(p.slug)}">
+    <div class="pr-top">
+      <div class="pr-info">
+        <div class="pr-name">${escH(p.name)}</div>
+        <div class="pr-meta">${escH(meta)}</div>
+      </div>
+      <span class="pr-badge b-${cur}"><span class="dot"></span>${escH(badge ? badge.full : cur)}</span>
+    </div>
+    <div class="pr-buttons">${buttons}</div>
+  </div>`;
+}
+
+// ── EVENTS ─────────────────────────────────────────────
+document.getElementById('searchInput').addEventListener('input', e => {
+  _search = (e.target.value || '').trim();
+  renderProducts();
+});
+
+document.getElementById('catChips').addEventListener('click', e => {
+  const btn = e.target.closest('.chip[data-cat]');
+  if (!btn) return;
+  _activeCat = btn.getAttribute('data-cat') || 'Alle';
+  renderProducts();
+});
+
+document.getElementById('statusChips').addEventListener('click', e => {
+  const btn = e.target.closest('.status-chip[data-status]');
+  if (!btn) return;
+  _activeStatus = btn.getAttribute('data-status') || 'all';
+  renderProducts();
+});
+
+// ── BOOT + POLL ────────────────────────────────────────
+(async () => {
+  const ok = await fetchProducts();
+  if (ok) renderProducts();
+  else document.getElementById('productsList').innerHTML = `<div class="empty">Klarte ikke hente produkter. Sjekk at backend er oppe og prøv igjen.</div>`;
+
+  // Poll for endringer fra admin/nettside; hopp over hvis vi har en pågående lagring
+  setInterval(async () => {
+    if (_saving.size) return;
+    if (document.hidden) return;
+    const ok = await fetchProducts({ silent: true });
+    if (ok) renderProducts();
+  }, POLL_MS);
+
+  // Når fanen blir synlig igjen → frisk-hent umiddelbart
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden || _saving.size) return;
+    if (Date.now() - _lastFetchAt < 5000) return;
+    const ok = await fetchProducts({ silent: true });
+    if (ok) renderProducts();
+  });
+})();
+</script>
+</body>
+</html>

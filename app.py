@@ -696,6 +696,162 @@ def api_product_override(slug):
     return jsonify({"ok": True, "slug": slug, "override": existing})
 
 
+# ── PRODUKTLISTE (baseline + overrides) ────────────────────────────────────────
+# Henter PRODUCTS-arrayen fra havoyet.no/components/data2.jsx, parser ut feltene
+# vi trenger (slug/name/cat/price/kind/unitLabel/img/status), og merger gjeldende
+# overrides på toppen. Caches 5 min så vi ikke hamrer Vercel.
+
+_PRODUCTS_BASELINE_URL = os.environ.get(
+    "PRODUCTS_BASELINE_URL",
+    "https://havoyet.no/components/data2.jsx",
+)
+_PRODUCTS_CACHE = {"data": None, "ts": 0.0}
+_PRODUCTS_TTL = 300  # 5 minutter
+
+# Strengfelter vi vil hente ut fra hver produkt-objekt-blokk i data2.jsx
+_PRODUCT_STR_FIELDS = (
+    "slug", "name", "cat", "kind", "unitLabel", "img", "tag", "desc",
+    "origin", "weight", "shelf", "packed", "status",
+)
+
+
+def _parse_products_from_data2(text):
+    """Parser PRODUCTS-arrayen fra data2.jsx (JS-syntaks) til en liste av dicts.
+    Henter ut feltene vi bruker i bestillingssiden — ikke hele struct.
+    """
+    import re as _re
+    m = _re.search(r"const\s+PRODUCTS\s*=\s*\[", text)
+    if not m:
+        return []
+    start_idx = m.end() - 1  # peker på "["
+    # Finn matchende "]" — naivt nok ettersom data2.jsx ikke har "]" i strenger her
+    depth = 0
+    end_idx = None
+    in_str = None  # 'sq' / 'dq' / None
+    esc = False
+    for i in range(start_idx, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif (in_str == "sq" and ch == "'") or (in_str == "dq" and ch == '"'):
+                in_str = None
+            continue
+        if ch == "'":
+            in_str = "sq"
+        elif ch == '"':
+            in_str = "dq"
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                end_idx = i
+                break
+    if end_idx is None:
+        return []
+    body = text[start_idx + 1:end_idx]
+
+    # Splitt body på top-level "}" — dvs. der depth (kun {}) treffer 0 igjen
+    products = []
+    depth = 0
+    obj_start = None
+    in_str = None
+    esc = False
+    for i, ch in enumerate(body):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif (in_str == "sq" and ch == "'") or (in_str == "dq" and ch == '"'):
+                in_str = None
+            continue
+        if ch == "'":
+            in_str = "sq"
+        elif ch == '"':
+            in_str = "dq"
+        elif ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and obj_start is not None:
+                products.append(body[obj_start:i + 1])
+                obj_start = None
+
+    out = []
+    for chunk in products:
+        prod = {}
+        for key in _PRODUCT_STR_FIELDS:
+            mm = _re.search(rf'\b{key}\s*:\s*"((?:[^"\\]|\\.)*)"', chunk)
+            if not mm:
+                mm = _re.search(rf"\b{key}\s*:\s*'((?:[^'\\]|\\.)*)'", chunk)
+            if mm:
+                # JS escape-sekvenser bevarer vi som de er — godt nok for visning
+                prod[key] = mm.group(1)
+        mm = _re.search(r"\bprice\s*:\s*(-?\d+(?:\.\d+)?)", chunk)
+        if mm:
+            num = mm.group(1)
+            prod["price"] = float(num) if "." in num else int(num)
+        if prod.get("slug") and prod.get("name"):
+            prod.setdefault("status", "available")
+            prod.setdefault("kind", "fish")
+            out.append(prod)
+    return out
+
+
+def _get_products_baseline(force_refresh=False):
+    global _PRODUCTS_CACHE
+    now = time.time()
+    if not force_refresh and _PRODUCTS_CACHE["data"] and (now - _PRODUCTS_CACHE["ts"] < _PRODUCTS_TTL):
+        return [dict(p) for p in _PRODUCTS_CACHE["data"]]
+    try:
+        r = requests.get(_PRODUCTS_BASELINE_URL, timeout=8)
+        r.raise_for_status()
+        data = _parse_products_from_data2(r.text)
+        if data:
+            _PRODUCTS_CACHE = {"data": data, "ts": now}
+            return [dict(p) for p in data]
+    except Exception as e:
+        print(f"[products] Klarte ikke hente baseline: {e}")
+    # Fallback: returner cache uansett alder hvis vi har noe
+    if _PRODUCTS_CACHE["data"]:
+        return [dict(p) for p in _PRODUCTS_CACHE["data"]]
+    return []
+
+
+@app.route("/api/products/list", methods=["GET"])
+def api_products_list():
+    """Returnerer komplett produktliste (baseline + overrides anvendt).
+    Brukes av varer.html på bestillingssiden til å redigere tilgjengelighet.
+    Query: ?refresh=1 tvinger ny henting av data2.jsx."""
+    force = request.args.get("refresh") in ("1", "true", "yes")
+    products = _get_products_baseline(force_refresh=force)
+    overrides = _product_overrides or {}
+    for p in products:
+        ov = overrides.get(p.get("slug"))
+        if isinstance(ov, dict):
+            p.update(ov)
+    cats = []
+    seen = set()
+    for p in products:
+        c = p.get("cat")
+        if c and c not in seen:
+            seen.add(c)
+            cats.append(c)
+    return jsonify({
+        "ok": True,
+        "count": len(products),
+        "cats": cats,
+        "products": products,
+        "cached_age": int(time.time() - _PRODUCTS_CACHE["ts"]) if _PRODUCTS_CACHE["ts"] else None,
+    })
+
+
 # ── KUNDEANMELDELSER ────────────────────────────────────────────────────────
 import uuid as _uuid
 
@@ -3096,6 +3252,66 @@ def api_subscription_customer_cancel(sub_id):
             f"Abonnementet er kansellert, men det siste trekket ({sub.get('amount',0)/100:.0f} kr) blir gjennomført fordi det er mindre enn {CANCEL_REFUND_DEADLINE_DAYS} dager til neste trekk."
         ),
     })
+
+
+@app.route("/api/subscription/<sub_id>/sync-price", methods=["POST"])
+def api_subscription_sync_price(sub_id):
+    """Synkroniser abonnement-pris til ønsket beløp (rekomputert i frontend
+    fra dagens nettside-priser × original rabatt-prosent). Lager ny Stripe
+    Price + bytter price-itemet på subscriptionen. Endringen slår inn ved
+    neste fornyelse — ingen ekstra trekk skjer her.
+    Body: {email, amount} (amount i ØRE; valgfri — frontend kan utelate hvis
+    backend skal rekomputere selv basert på lagret kasse-meta)."""
+    if not _stripe_configured():
+        return jsonify({"error": "Stripe ikke konfigurert"}), 503
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    sub, err = _subscription_for_email(sub_id, email)
+    if err: return err
+    new_amount_kr = data.get("amount_kr")
+    new_amount    = data.get("amount")
+    # Aksepter både kroner og øre — clamp til rimelig intervall
+    if new_amount_kr is not None and new_amount is None:
+        new_amount = int(round(float(new_amount_kr) * 100))
+    if not isinstance(new_amount, (int, float)) or new_amount < 5000 or new_amount > 5000000:
+        return jsonify({"error": "Ugyldig beløp (må være 50–50 000 kr)"}), 400
+    new_amount = int(new_amount)
+    try:
+        # Hent gjeldende subscription fra Stripe for product-id og items
+        stripe_sub = _stripe.Subscription.retrieve(sub_id, expand=["items.data.price"])
+        items = stripe_sub.get("items", {}).get("data", []) if isinstance(stripe_sub, dict) else stripe_sub.items.data
+        if not items:
+            return jsonify({"error": "Subscriptionen har ingen items"}), 502
+        item = items[0]
+        old_price = item.get("price") if isinstance(item, dict) else item.price
+        product_id = (old_price.get("product") if isinstance(old_price, dict) else old_price.product) if old_price else None
+        if not product_id:
+            # Fallback: opprett nytt product
+            product = _stripe.Product.create(name=sub.get("description") or "Sjømatkasse abonnement")
+            product_id = product.id
+        # Opprett ny price med samme intervall (måned)
+        new_price = _stripe.Price.create(
+            currency="nok",
+            unit_amount=new_amount,
+            recurring={"interval": "month", "interval_count": 1},
+            product=product_id,
+        )
+        item_id = item.get("id") if isinstance(item, dict) else item.id
+        # Bytt subscription-itemet til den nye prisen — proration_behavior=none
+        # gjør at endringen kun gjelder fremover, ingen umiddelbar diff-belastning.
+        _stripe.Subscription.modify(
+            sub_id,
+            items=[{"id": item_id, "price": new_price.id}],
+            proration_behavior="none",
+        )
+        sub["amount"] = new_amount
+        sub["last_price_sync_at"] = int(time.time())
+        _save_subscriptions()
+        return jsonify({"ok": True, "amount": new_amount, "message": "Abonnement-pris synkronisert. Endringen slår inn ved neste trekk."})
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        return jsonify({"error": f"Kunne ikke synke pris: {e}"}), 502
 
 
 @app.route("/api/checkout/card-payment-intent", methods=["POST"])

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Innkjøpsstatus — Havøyet AS</title>
+  <link rel="icon" type="image/png" href="https://havoyet.no/assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
@@ -408,7 +409,7 @@ function buildProductMap(orders) {
         if (isBestilt && item.weight) packedGrams = parseFloat(item.weight) || 0;
       }
 
-      const d = new Date((order.delivery || todayISO) + 'T00:00:00');
+      const d = new Date(String(order.delivery || todayISO).slice(0, 10) + 'T00:00:00');
       const dateStr = d.toLocaleDateString('nb-NO', {day:'2-digit', month:'2-digit'});
       const slotStr = order.slot === 'a' ? '13–15' : '15–18';
       const pill = { customer: order.customer, orderId: order.id, delivery: order.delivery, dateStr, slotStr };
@@ -707,7 +708,10 @@ function mergeManualOrders() {
   try {
     const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
     const ids = new Set(ORDERS.map(o => o.id));
-    manual.forEach(o => { if (!ids.has(o.id)) ORDERS.push(o); });
+    manual.forEach(o => {
+      if (!o || o.manual !== true) return;
+      if (!ids.has(o.id)) ORDERS.push(o);
+    });
   } catch(e) {}
 }
 

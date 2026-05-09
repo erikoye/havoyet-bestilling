@@ -628,6 +628,22 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </div>
     </a>
+    <a href="varer.html" class="nav-card">
+      <div class="nav-icon" style="background:#fef3f2;border-color:#fecaca;color:#dc2626">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 7h-3V5a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3v2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
+          <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          <path d="M2 13h20"/>
+        </svg>
+      </div>
+      <div class="nav-content">
+        <h2>Varer</h2>
+        <p>Endre tilgjengelighet — synker live til admin og nettsiden</p>
+      </div>
+      <div class="nav-arrow">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+    </a>
   </div>
 
   <!-- TABLE -->
@@ -840,7 +856,7 @@ function renderAll(){
 
   if (sorted.length === 0) {
     document.getElementById('ordreTabell').innerHTML =
-      `<tr><td colspan="6" style="text-align:center;padding:32px 0;color:var(--muted);font-size:13px;">Ingen betalte bestillinger ennå. Når kunder fullfører kjøp på havoyet.no dukker de opp her.</td></tr>`;
+      `<tr><td colspan="5" style="text-align:center;padding:32px 0;color:var(--muted);font-size:13px;">Ingen betalte bestillinger ennå. Når kunder fullfører kjøp på havoyet.no dukker de opp her.</td></tr>`;
     window._sets = sets;
     return;
   }
@@ -1076,8 +1092,7 @@ async function pollPackingState() {
 // ─── OPPSTART ─────────────────────────────────
 mergeManualOrders();
 filterHiddenOrders();
-renderAll();          // vis mock-data umiddelbart
-loadFromFlask();      // erstatt med live-data om Flask er oppe
+loadFromFlask();      // henter live-data + merger manuelle ordre + render
 setInterval(loadFromFlask, 30 * 1000);  // poll hvert 30. sekund — kontinuerlig live fra havoyet.no
 setInterval(pollPackingState, 15000);        // sync pakkingstilstand hvert 15 sek
 

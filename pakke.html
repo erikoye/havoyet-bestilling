@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Pakke &amp; Merk &mdash; Havøyet AS</title>
+  <link rel="icon" type="image/png" href="https://havoyet.no/assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
@@ -742,7 +743,7 @@
   </div>
 </header>
 
-<div id="flaskBanner" style="display:none;padding:10px 20px;font-size:13px;font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:10px"></div>
+<div id="flaskBanner" style="display:none;padding:10px 20px;font-size:13px;font-family:'DM Sans',sans-serif;align-items:center;gap:10px"></div>
 
 <main>
 
@@ -1457,7 +1458,6 @@ function renderDetail() {
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="detailProgressBar" style="width:${pct}%"></div>
         </div>
-        </div>
       </div>
     </div>
 
@@ -1738,10 +1738,12 @@ function updateToolbar() {
 
 // ─── PRINT & SAVE ───────────────────────────
 document.getElementById('btnPrint').addEventListener('click', () => {
+  if (!currentOrderId) return;
   window.location.href = 'etikett.html?ordre=' + encodeURIComponent(currentOrderId);
 });
 
 document.getElementById('btnSave').addEventListener('click', () => {
+  if (!currentOrderId) return;
   saveState();
   showToast('Lagret ✓');
   setTimeout(() => showList(), 800);
@@ -1788,7 +1790,7 @@ async function pollPackingState() {
         renderList(); // oppdater listevisning umiddelbart
       }
       // Vis en kort melding om at data er synkronisert
-      toast('Synkronisert fra annen enhet');
+      showToast('Synkronisert fra annen enhet');
     }
   } catch(e) { /* server ikke nådd */ }
 }

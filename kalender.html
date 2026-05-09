@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Kalendervisning &mdash; Havøyet AS</title>
+  <link rel="icon" type="image/png" href="https://havoyet.no/assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
@@ -772,6 +773,12 @@
 const TODAY = new Date();
 TODAY.setHours(0, 0, 0, 0);
 
+function escH(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function isoDate(d) {
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
@@ -911,10 +918,9 @@ async function loadFromFlask() {
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
     if (!r.ok) throw new Error();
     const data = await r.json();
-    if (data.orders && data.orders.length > 0) {
-      ORDERS = data.orders.map(normalizeOrder);
-      localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
-    }
+    const fresh = Array.isArray(data.orders) ? data.orders : [];
+    ORDERS = fresh.map(normalizeOrder);
+    localStorage.setItem('havøyet_orders', JSON.stringify(fresh));
   } catch(e) {
     // Fallback: bruk sist kjente bestillinger fra localStorage
     try {
@@ -1024,10 +1030,10 @@ function renderCard(o) {
   const slotLabel = o.slot === 'a' ? '13–15' : o.slot === 'b' ? '15–18' : o.slot;
   const slotClass = isStd ? o.slot : 'other';
 
-  return `<div class="order-card conf-${cls}" data-id="${o.id}" title="${o.customer} – ${o.id}">
+  return `<div class="order-card conf-${cls}" data-id="${escH(o.id)}" title="${escH(o.customer)} – ${escH(o.id)}">
     <div class="card-top">
-      <div class="card-customer">${o.customer}</div>
-      <div class="card-id">${o.id}</div>
+      <div class="card-customer">${escH(o.customer)}</div>
+      <div class="card-id">${escH(o.id)}</div>
     </div>
     <div class="card-progress-wrap">
       <div class="card-progress-bar" style="width:${pct}%"></div>
@@ -1095,14 +1101,14 @@ function openModal(id) {
     <div class="edit-row">
       <div class="edit-group">
         <label class="edit-label">Endre dato</label>
-        <input class="edit-input" type="date" id="editDate" value="${o.delivery}" />
+        <input class="edit-input" type="date" id="editDate" value="${escH(o.delivery || '')}" />
       </div>
       <div class="edit-group">
         <label class="edit-label">Endre tidspunkt</label>
-        <input class="edit-input" type="text" id="editSlot" value="${o.slot}" placeholder="eks. a, b, 10:00" />
+        <input class="edit-input" type="text" id="editSlot" value="${escH(o.slot || '')}" placeholder="eks. a, b, 10:00" />
       </div>
     </div>
-    <button class="edit-save" onclick="saveOrderEdit('${o.id}')">Lagre endringer</button>
+    <button class="edit-save" data-edit-save="${escH(o.id)}">Lagre endringer</button>
     ` : ''}
     <div class="conf-block">
       <div class="conf-block-header">
@@ -1127,6 +1133,12 @@ document.getElementById('modalClose').onclick    = closeModal;
 document.getElementById('modalCloseBtn').onclick = closeModal;
 document.getElementById('modalOverlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modalOverlay')) closeModal();
+});
+
+// Delegert handler for "Lagre endringer"-knapp (sikker mot ' i ordre-id)
+document.getElementById('modalBody').addEventListener('click', e => {
+  const btn = e.target.closest('[data-edit-save]');
+  if (btn) saveOrderEdit(btn.getAttribute('data-edit-save'));
 });
 
 function closeModal() {
@@ -1188,7 +1200,7 @@ async function pollPackingState() {
 }
 
 initStoreSwitcher();
-loadFromFlask();
+loadFromFlask().then(() => pollPackingState());
 setInterval(loadFromFlask, 5 * 60 * 1000);
 setInterval(pollPackingState, 15000);
 </script>

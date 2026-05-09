@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Hav&oslash;yet AS &mdash; Betalinger</title>
+  <link rel="icon" type="image/png" href="https://havoyet.no/assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
@@ -203,7 +204,10 @@ async function doLogin() {
   }
 }
 
-function logout() {
+async function logout() {
+  try {
+    await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", headers: authHeaders() });
+  } catch (e) {}
   clearToken();
   location.reload();
 }
@@ -346,7 +350,9 @@ async function askRefund(piId, maxOre, currency) {
   if (ans === null) return;
   let amount = null;
   if (ans.trim()) {
-    const v = parseFloat(ans.replace(",", "."));
+    // Tillat norske tall: "1 234,56" eller "1.234,56" → 1234.56
+    const cleaned = ans.replace(/\s/g, "").replace(/\.(?=\d{3}\b)/g, "").replace(",", ".");
+    const v = parseFloat(cleaned);
     if (isNaN(v) || v <= 0) return alert("Ugyldig beløp");
     amount = Math.round(v * 100);
     if (amount > maxOre) return alert(`Beløpet kan ikke overstige ${fmtNok(maxOre, currency)}`);
