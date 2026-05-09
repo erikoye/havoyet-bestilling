@@ -1052,8 +1052,9 @@ function initKasseComponents(kasseInfo) {
 
 function initState(orders) {
   orders.forEach(o => {
+    _ensureItems(o);
     if (!STATE[o.id]) {
-      STATE[o.id] = o.items.map(item => {
+      STATE[o.id] = (o.items || []).map(item => {
         const k = parseKasseInfo(item.name);
         if (k) {
           return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k), itemComment: '' };
@@ -1062,7 +1063,7 @@ function initState(orders) {
       });
     } else {
       // Bakoverkompatibilitet: fyll inn kasse-state hvis det mangler på en eksisterende ordre
-      o.items.forEach((item, i) => {
+      (o.items || []).forEach((item, i) => {
         const entry = STATE[o.id][i];
         const k = parseKasseInfo(item.name);
         if (k && (!entry || !entry.isKasse)) {
@@ -1225,11 +1226,18 @@ function mergeManualOrders() {
   // skal ikke vises — de filtreres bort på server-siden i /api/orders.
   try {
     const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
-    const existingIds = new Set(ORDERS.map(o => o.id || o.ordrenr));
     manual.forEach(o => {
       if (!o || o.manual !== true) return;
       const oid = o.id || o.ordrenr;
-      if (oid && !existingIds.has(oid)) ORDERS.push(_normalizeManualOrder(o));
+      if (!oid) return;
+      const idx = ORDERS.findIndex(x => (x.id || x.ordrenr) === oid);
+      const normalized = _normalizeManualOrder(o);
+      if (idx >= 0) {
+        // Bevar STATE som ligger på id-en (vekt/expiry/avail) — bare oppdater payload-feltene.
+        ORDERS[idx] = normalized;
+      } else {
+        ORDERS.push(normalized);
+      }
     });
   } catch(e) {}
 }
@@ -1625,11 +1633,31 @@ function formatItemName(item) {
   });
 }
 
+// Sikrer at ordren har items-array. Manuelle ordre kan ankomme i admin-shape (varer) —
+// her gjør vi en lazy normalisering så rendringen ikke krasjer på .map().
+function _ensureItems(o){
+  if (!o) return;
+  if (Array.isArray(o.items) && o.items.length === (o.varer?.length || o.items.length)) return;
+  if (typeof _normalizeManualOrder === 'function' && (o.manual || o.varer)) {
+    const norm = _normalizeManualOrder(o);
+    o.items = norm.items;
+    o.varer = norm.items; // delt referanse — endringer reflekteres begge veier
+    o.customer = o.customer || norm.customer;
+    o.delivery = o.delivery || norm.delivery;
+    o.slot = o.slot || norm.slot;
+    o.phone = o.phone || norm.phone;
+  } else if (!Array.isArray(o.items)) {
+    o.items = [];
+  }
+}
+
 // ─── RENDER DETAIL ──────────────────────────
 function renderDetail() {
   const o = ORDERS.find(x => x.id === currentOrderId);
   if (!o) return;
-  const s = STATE[o.id];
+  _ensureItems(o);
+  if (!STATE[o.id]) initState([o]);
+  const s = STATE[o.id] || [];
 
   const d = new Date(o.delivery + 'T00:00:00');
   const dateStr = d.toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long' });
@@ -1667,7 +1695,7 @@ function renderDetail() {
 
     <div class="section-label">Varer (${total})</div>
     <div class="items-list" id="itemsList">
-      ${o.items.map((item, i) => renderItemCard(item, i, s[i])).join('')}
+      ${(o.items || []).map((item, i) => renderItemCard(item, i, s[i] || {})).join('')}
     </div>
 
     <div class="order-note-section">
