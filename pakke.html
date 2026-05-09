@@ -724,7 +724,10 @@
     .view-tab-btn.active{background:var(--primary);border-color:var(--primary);color:#fff;}
 
     /* ── PRODUKTOVERSIKT ── */
-    .prod-list{display:flex;flex-direction:column;gap:10px;}
+    .prod-list{display:flex;flex-direction:column;gap:18px;}
+    .prod-cat-group{display:flex;flex-direction:column;gap:8px;}
+    .prod-cat-header{font-family:'DM Sans',sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:0 4px 4px;border-bottom:1px solid var(--border);margin-bottom:4px;display:flex;align-items:center;gap:8px;}
+    .prod-cat-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 6px;background:#f1f5f9;color:var(--muted);border-radius:9px;font-family:'DM Mono',monospace;font-size:10px;font-weight:600;letter-spacing:0;}
     .prod-row{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .1s;}
     .prod-row:hover{border-color:var(--primary);box-shadow:0 2px 12px rgba(13,148,136,.10);transform:translateY(-1px);}
     .prod-row.ps-red{border-left:4px solid var(--c-red);}
@@ -2400,11 +2403,11 @@ function onProdCustomChange() {
 
 function buildProductSummary() {
   const products = new Map();
-  // Innkjøpslisten reflekterer kun aktive ordre (samme status-filter som
-  // Bestillingslisten — ekskluderer Levert/Avbrutt/Refundert) innen valgt
-  // periode (default 1 uke).
+  // Innkjøpslisten viser ALLTID kombinert behov for Havøyet + Nesttun siden
+  // innkjøpene gjøres samlet (én leverandør). Status-filter og periode-filter
+  // er det samme som for Bestillingslisten.
   const [rangeFrom, rangeTo] = prodRangeBounds();
-  ORDERS.filter(storeFilter).filter(_isActiveOrder).filter(o => {
+  ORDERS.filter(_isActiveOrder).filter(o => {
     const d = String(o.delivery || '').slice(0, 10);
     return d && d >= rangeFrom && d <= rangeTo;
   }).forEach(o => {
@@ -2435,6 +2438,41 @@ function buildProductSummary() {
   return products;
 }
 
+// Cache av produktnavn (lowercase) → kategori. Hentes fra /api/products/list.
+let _productCatMap = null;
+async function _ensureProductCatMap(){
+  if (_productCatMap) return _productCatMap;
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/products/list`, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) throw new Error('http ' + r.status);
+    const d = await r.json();
+    const m = {};
+    (d.products || []).forEach(p => { if (p && p.name && p.cat) m[String(p.name).toLowerCase().trim()] = p.cat; });
+    _productCatMap = m;
+  } catch (e) { _productCatMap = {}; }
+  return _productCatMap;
+}
+
+// Slå opp kategori for et navn. Først eksakt match, deretter base-navn (uten
+// parenteser/variant), til slutt heuristikk for tilbehør og kasser.
+function _categorizeProduct(name){
+  if (!_productCatMap) return 'Annet';
+  const n = String(name || '').toLowerCase().trim();
+  if (_productCatMap[n]) return _productCatMap[n];
+  const base = n.replace(/\s*\([^)]*\)\s*/g, '').replace(/\s*[-–]\s.*$/, '').replace(/\s+\d+(?:[.,]\d+)?\s*(?:g|gram|kg|stk|pk)\b\.?\s*$/i, '').trim();
+  if (_productCatMap[base]) return _productCatMap[base];
+  // Fuzzy: er n en prefiks av et produktnavn?
+  for (const k of Object.keys(_productCatMap)) {
+    if (k.startsWith(base) || base.startsWith(k)) return _productCatMap[k];
+  }
+  // Heuristikker for ingredienser som ikke er egne PRODUCTS
+  if (/(aioli|majones|sitron|dill|loff|surdeig|rødløk|koriander|salat|krydder|saus)/i.test(n)) return 'Tilbehør';
+  if (/skalldyrkasse|sjømatkasse|fiskekasse/i.test(n))                                          return 'Kasser';
+  return 'Annet';
+}
+
+const _PROD_CAT_ORDER = ['Hvit fisk', 'Rød fisk', 'Skalldyr og skjell', 'Fiskemat', 'Tilbehør', 'Kasser', 'Annet'];
+
 function renderProductList() {
   const products = buildProductSummary();
   const listEl   = document.getElementById('prodList');
@@ -2444,8 +2482,19 @@ function renderProductList() {
     listEl.innerHTML = `<div class="empty-state"><h2>Ingen bestillinger</h2><p>Når kunder bestiller på havoyet.no vises innkjøpslisten her.</p></div>`;
     return;
   }
-  listEl.innerHTML = '';
+  // Sørg for at kategori-mappen er hentet — render synkront først, og oppdater
+  // når kart kommer (slik at brukeren ikke ser blank skjerm under fetch).
+  if (!_productCatMap) _ensureProductCatMap().then(() => renderProductList());
+
+  // Grupper på kategori
+  const byCat = new Map();
   products.forEach((p, pName) => {
+    const cat = _categorizeProduct(pName);
+    if (!byCat.has(cat)) byCat.set(cat, []);
+    byCat.get(cat).push({ name: pName, data: p });
+  });
+
+  const renderProdRow = (pName, p) => {
     const pct      = p.totalOrders ? Math.round(p.confirmedOrders / p.totalOrders * 100) : 0;
     const mangler  = p.totalOrders - p.confirmedOrders;
     const barClass = pct === 100 ? 'green' : pct >= 50 ? 'orange' : 'red';
@@ -2462,10 +2511,7 @@ function renderProductList() {
     if (hasGrams && hasStk)      totalStr = formatTotal(totalGrams, 'g') + ' + ' + formatTotal(totalStk, 'stk');
     else if (hasGrams)           totalStr = formatTotal(totalGrams, 'g');
     else                         totalStr = formatTotal(totalStk, 'stk');
-    const row = document.createElement('div');
-    row.className = `prod-row ${rowClass}`;
-    row.onclick = () => openProductDetail(pName);
-    row.innerHTML = `
+    return `<div class="prod-row ${rowClass}" data-prod="${(pName||'').replace(/"/g,'&quot;')}">
       <div class="prod-main">
         <div class="prod-name">${pName}</div>
         <div class="prod-qty">${totalStr}</div>
@@ -2476,9 +2522,33 @@ function renderProductList() {
         <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">${p.confirmedOrders}/${p.totalOrders}</span>
         <svg class="prod-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </div>
-    `;
-    listEl.appendChild(row);
-  });
+    </div>`;
+  };
+
+  // Bygg HTML i ønsket kategori-rekkefølge, hopp over tomme
+  const sectionsHtml = _PROD_CAT_ORDER
+    .filter(cat => byCat.has(cat) && byCat.get(cat).length > 0)
+    .map(cat => {
+      const items = byCat.get(cat).sort((a, b) => a.name.localeCompare(b.name, 'nb'));
+      const total = items.length;
+      const rows = items.map(it => renderProdRow(it.name, it.data)).join('');
+      return `
+        <div class="prod-cat-group">
+          <div class="prod-cat-header">${cat} <span class="prod-cat-count">${total}</span></div>
+          ${rows}
+        </div>`;
+    }).join('');
+
+  listEl.innerHTML = sectionsHtml;
+
+  // Delegert click-handler for produktrader
+  if (!listEl.dataset.bound) {
+    listEl.addEventListener('click', e => {
+      const row = e.target.closest('.prod-row[data-prod]');
+      if (row) openProductDetail(row.getAttribute('data-prod'));
+    });
+    listEl.dataset.bound = '1';
+  }
 }
 
 function openProductDetail(productName) {
