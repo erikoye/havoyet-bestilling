@@ -910,7 +910,6 @@
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
       Slett ordre
     </button>
-    <button class="btn-ghost" id="btnSave">Lagre utkast</button>
     <button class="btn-print" id="btnPrint" disabled>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 6 2 18 2 18 9"/>
@@ -2228,13 +2227,6 @@ function updateToolbar() {
 document.getElementById('btnPrint').addEventListener('click', () => {
   if (!currentOrderId) return;
   window.location.href = 'etikett.html?ordre=' + encodeURIComponent(currentOrderId);
-});
-
-document.getElementById('btnSave').addEventListener('click', () => {
-  if (!currentOrderId) return;
-  saveState();
-  showToast('Lagret ✓');
-  setTimeout(() => showList(), 800);
 });
 
 function showToast(msg) {
