@@ -1304,21 +1304,51 @@ def _notify_customer_order_update(order, event, change_summary=""):
     )
 
     # Send via Resend → SMTP fallback (samme prioritet som _send_contact_mail).
+    mail_ok = False
+    mail_detail = "no-mail-service"
     if RESEND_API_KEY:
-        ok, detail = _send_via_resend(
+        mail_ok, mail_detail = _send_via_resend(
             CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
         )
-        if ok:
-            print(f"[CUSTOMER-MAIL] Resend → {epost}: {detail}")
-            return True, detail
-        print(f"[CUSTOMER-MAIL] Resend feilet, prøver SMTP: {detail}")
-    if SMTP_USER and SMTP_PASS:
-        ok, detail = _send_via_smtp(
+        if mail_ok:
+            print(f"[CUSTOMER-MAIL] Resend → {epost}: {mail_detail}")
+        else:
+            print(f"[CUSTOMER-MAIL] Resend feilet, prøver SMTP: {mail_detail}")
+    if not mail_ok and SMTP_USER and SMTP_PASS:
+        mail_ok, mail_detail = _send_via_smtp(
             CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
         )
-        print(f"[CUSTOMER-MAIL] SMTP → {epost}: {detail}")
-        return ok, detail
-    return False, "no-mail-service"
+        print(f"[CUSTOMER-MAIL] SMTP → {epost}: {mail_detail}")
+
+    # SMS-varsel — bare hvis kunden har telefon og Twilio er konfigurert.
+    # Kunden kan opt-out via kunde.notify.sms = False på ordren eller kunden-objektet.
+    sms_ok = False
+    sms_detail = "no-phone-or-twilio"
+    tlf = (kunde.get("tlf") or kunde.get("phone") or order.get("phone") or "").strip()
+    notify_pref = (kunde.get("notify") or order.get("notify") or {})
+    sms_opt_in = notify_pref.get("sms", True) and not notify_pref.get("opted_out", False)
+    if tlf and sms_opt_in and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM:
+        # Normaliser telefon til E.164-likt format (Twilio krever +CC...).
+        clean_phone = tlf.replace(" ", "").replace("-", "")
+        if clean_phone and not clean_phone.startswith("+"):
+            # Anta norsk nummer hvis 8 siffer
+            digits = "".join(ch for ch in clean_phone if ch.isdigit())
+            if len(digits) == 8:
+                clean_phone = "+47" + digits
+        if event == "order_delivered":
+            sms_text = f"Havøyet: bestilling #{nr} er levert. Tusen takk! Følg på {konto}"
+        else:
+            sms_text = f"Havøyet: bestilling #{nr} oppdatert"
+            if status:
+                sms_text += f" — status {status.lower()}"
+            sms_text += f". Se {konto}"
+        # _send_admin_sms gjenbrukes — den trimmer til 160 tegn og sender via Twilio.
+        sms_ok, sms_detail = _send_admin_sms(clean_phone, sms_text)
+        print(f"[CUSTOMER-SMS] {clean_phone}: {sms_detail}")
+
+    if mail_ok or sms_ok:
+        return True, f"mail={mail_detail}, sms={sms_detail}"
+    return False, f"mail={mail_detail}, sms={sms_detail}"
 
 
 def _notify_admins(event, subject, body):
