@@ -1653,19 +1653,28 @@ function _ensureItems(o){
 
 // ─── RENDER DETAIL ──────────────────────────
 function renderDetail() {
-  const o = ORDERS.find(x => x.id === currentOrderId);
-  if (!o) return;
-  _ensureItems(o);
-  if (!STATE[o.id]) initState([o]);
-  const s = STATE[o.id] || [];
+  const detailEl = document.getElementById('detailContent');
+  try {
+    const o = ORDERS.find(x => x.id === currentOrderId);
+    if (!o) {
+      detailEl.innerHTML = `<div style="padding:32px;text-align:center;color:var(--muted);">
+        <div style="font-size:15px;margin-bottom:8px;">Fant ikke ordre</div>
+        <div style="font-size:13px;">ID: ${currentOrderId || '?'} — ble den slettet eller endret?</div>
+      </div>`;
+      return;
+    }
+    _ensureItems(o);
+    if (!STATE[o.id]) initState([o]);
+    const s = STATE[o.id] || [];
 
-  const d = new Date(o.delivery + 'T00:00:00');
-  const dateStr = d.toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long' });
-  const slotStr = o.slot === 'a' ? '13:00 – 15:00' : '15:00 – 18:00';
-  const { confirmed, total } = countConfirmed(s);
-  const pct       = total ? Math.round(confirmed/total*100) : 0;
+    const deliveryStr = String(o.delivery || todayISO).slice(0, 10);
+    const d = new Date(deliveryStr + 'T00:00:00');
+    const dateStr = isNaN(d.getTime()) ? deliveryStr : d.toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long' });
+    const slotStr = o.slot === 'a' ? '13:00 – 15:00' : (o.slot === 'b' ? '15:00 – 18:00' : (o.kunde?.leveringstid || ''));
+    const { confirmed, total } = countConfirmed(s);
+    const pct       = total ? Math.round(confirmed/total*100) : 0;
 
-  document.getElementById('detailContent').innerHTML = `
+    detailEl.innerHTML = `
     <div class="order-header">
       <div class="order-header-left">
         <div class="order-customer">${o.customer}</div>
@@ -1704,6 +1713,14 @@ function renderDetail() {
         oninput="onNoteChange('${o.id}',this.value)">${ORDER_NOTES[o.id] || ''}</textarea>
     </div>
   `;
+  } catch (err) {
+    console.error('[pakke] renderDetail krasjet:', err, 'orderId=', currentOrderId);
+    detailEl.innerHTML = `<div style="padding:32px;text-align:center;color:var(--muted);max-width:520px;margin:0 auto;">
+      <div style="font-size:15px;font-weight:600;color:var(--c-red);margin-bottom:8px;">Kunne ikke vise ordren</div>
+      <div style="font-size:13px;margin-bottom:16px;">En feil skjedde under rendering. Sjekk konsollen for detaljer.</div>
+      <code style="font-size:11px;display:block;padding:10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;text-align:left;white-space:pre-wrap;">${(err && err.message) || String(err)}</code>
+    </div>`;
+  }
 }
 
 // Gjetter enhet ut fra produktnavnet hvis item.unit ikke er satt.
