@@ -849,6 +849,19 @@
           <span class="list-count" id="prodListCount">–</span>
         </div>
       </div>
+      <div class="prod-range-bar" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 16px;padding:12px 16px;background:#fff;border:1px solid var(--border);border-radius:10px">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Periode:</span>
+        <button class="sort-btn" id="prodR2d"     onclick="setProdRange('2d')">Neste 2 dager</button>
+        <button class="sort-btn active" id="prodR1w"     onclick="setProdRange('1w')">1 uke</button>
+        <button class="sort-btn" id="prodR1m"     onclick="setProdRange('1m')">1 måned</button>
+        <button class="sort-btn" id="prodRCustom" onclick="setProdRange('custom')">Egendefinert</button>
+        <span id="prodRangeCustomBox" style="display:none;align-items:center;gap:6px">
+          <input type="date" id="prodRangeFrom" style="font-family:'DM Sans',sans-serif;font-size:13px;padding:6px 9px;border:1px solid var(--border);border-radius:7px" onchange="onProdCustomChange()">
+          <span style="color:var(--muted);font-family:'DM Mono',monospace">→</span>
+          <input type="date" id="prodRangeTo" style="font-family:'DM Sans',sans-serif;font-size:13px;padding:6px 9px;border:1px solid var(--border);border-radius:7px" onchange="onProdCustomChange()">
+        </span>
+        <span id="prodRangeMeta" style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-left:auto"></span>
+      </div>
       <div class="prod-list" id="prodList"></div>
     </div>
 
@@ -1175,6 +1188,35 @@ function serverPost(endpoint, data) {
   }).catch(()=>{});
 }
 
+// Konverterer admin-shape (varer:[{name,qty,unit,price,pris}]) til iPad-shape (items + topp-felter).
+// Beholder `varer` på objektet så lagring tilbake til /api/manual-orders ikke mister format.
+function _normalizeManualOrder(o){
+  const k = o.kunde || {};
+  const id = o.id || o.ordrenr || ('M' + Math.random().toString(16).slice(2, 8).toUpperCase());
+  const items = (o.items && o.items.length ? o.items : (o.varer || [])).map(v => ({
+    name: v.name || v.navn || v.title || '',
+    productName: v.name || v.navn || '',
+    variantStr: v.variant || '',
+    qty: Number(v.qty || v.quantity || 1),
+    unit: v.unit || '',
+    price: Number(v.price || 0),
+    pris: Number(v.pris || 0),
+  }));
+  return {
+    ...o,
+    id,
+    customer: o.customer || k.navn || 'Ukjent',
+    phone: o.phone || k.tlf || '',
+    delivery: o.delivery || k.leveringsdag || todayISO,
+    slot: o.slot || (k.leveringstid && /13|15/.test(k.leveringstid) ? 'a' : 'b'),
+    seen: o.seen ?? false,
+    status: o.status || 'NEW',
+    items,
+    // Delt referanse — endringer i items[i] reflekteres automatisk i varer[i] ved POST.
+    varer: items,
+  };
+}
+
 function mergeManualOrders() {
   // Kun staff-laget ordre (manual:true). Ubetalte kunde-ordre fra havoyet.no
   // skal ikke vises — de filtreres bort på server-siden i /api/orders.
@@ -1184,7 +1226,7 @@ function mergeManualOrders() {
     manual.forEach(o => {
       if (!o || o.manual !== true) return;
       const oid = o.id || o.ordrenr;
-      if (oid && !existingIds.has(oid)) ORDERS.push(o);
+      if (oid && !existingIds.has(oid)) ORDERS.push(_normalizeManualOrder(o));
     });
   } catch(e) {}
 }
@@ -1609,6 +1651,73 @@ function renderDetail() {
         oninput="onNoteChange('${o.id}',this.value)">${ORDER_NOTES[o.id] || ''}</textarea>
     </div>
   `;
+}
+
+// Bestemmer om en ordre er manuelt opprettet (admin) — bare disse skal være editerbare,
+// Stripe/Vipps-ordre er låst fordi qty kommer fra checkout-flyten og ville bli overskrevet.
+function _orderIsManual(orderId){
+  const o = ORDERS.find(x => x.id === orderId);
+  return !!(o && o.manual === true);
+}
+
+function renderItemQtyEditor(item, i){
+  const qty = (item && (item.qty ?? item.quantity)) ?? 1;
+  const unit = (item && item.unit) || '';
+  const editable = _orderIsManual(currentOrderId);
+  if (!editable) {
+    return `<div class="item-qty-edit readonly" title="Hentet fra kasseflyten — kan ikke endres her">${qty}${unit?' '+unit:''}</div>`;
+  }
+  const baseUnits = ['kg','g','stk'];
+  const allUnits = (unit && !baseUnits.includes(unit)) ? [...baseUnits, unit] : baseUnits;
+  return `<div class="item-qty-edit" id="qtyEdit-${i}">
+    <input type="number" min="0" step="any" value="${qty}" id="qtyInput-${i}"
+      oninput="onItemQtyChange('${currentOrderId}',${i},'qty',this.value)" />
+    <select id="qtyUnit-${i}" onchange="onItemQtyChange('${currentOrderId}',${i},'unit',this.value)">
+      ${allUnits.map(u => `<option value="${u}" ${u===(unit||'kg')?'selected':''}>${u}</option>`).join('')}
+    </select>
+    <span class="saved-flash">✓</span>
+  </div>`;
+}
+
+let _qtySaveTimers = {};
+function onItemQtyChange(orderId, i, field, val){
+  const o = ORDERS.find(x => x.id === orderId);
+  if (!o || !o.manual) return;
+  const list = o.varer || o.items || [];
+  const item = list[i];
+  if (!item) return;
+  if (field === 'qty') item.qty = Number(val) || 0;
+  else if (field === 'unit') item.unit = String(val || '').trim() || 'kg';
+  if (item.price != null) {
+    const q = Number(item.qty) || 0;
+    const p = Number(item.price) || 0;
+    item.pris = (item.unit === 'g') ? Math.round((q/1000) * p) : Math.round(q * p);
+  }
+  const total = list.reduce((s, v) => s + (Number(v.pris) || (Number(v.qty)||0) * (Number(v.price)||0)), 0);
+  o.total = Math.round(total);
+  o.sum = o.total;
+  const key = `${orderId}:${i}:${field}`;
+  if (_qtySaveTimers[key]) clearTimeout(_qtySaveTimers[key]);
+  _qtySaveTimers[key] = setTimeout(() => persistManualOrder(o, i), 300);
+}
+
+async function persistManualOrder(o, lineIdx){
+  let manual = [];
+  try { manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]'); } catch(e) {}
+  const oid = o.id || o.ordrenr;
+  const idx = manual.findIndex(x => (x.id || x.ordrenr) === oid);
+  if (idx >= 0) manual[idx] = o; else manual.push(o);
+  try { localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual)); } catch(e) {}
+  try {
+    await serverPost('/api/manual-orders', manual);
+    const wrap = document.getElementById('qtyEdit-' + lineIdx);
+    if (wrap) {
+      wrap.classList.add('saved');
+      setTimeout(() => wrap.classList.remove('saved'), 900);
+    }
+  } catch (e) {
+    console.warn('[pakke] Kunne ikke lagre mengde:', e.message);
+  }
 }
 
 function renderItemCard(item, i, s) {
@@ -2083,7 +2192,7 @@ function switchTab(tab) {
   document.getElementById('ordreListContent').style.display  = tab === 'bestillinger' ? '' : 'none';
   document.getElementById('prodListContent').style.display   = tab === 'innkjop'      ? '' : 'none';
   document.getElementById('prodDetailContent').style.display = 'none';
-  if (tab === 'innkjop') renderProductList();
+  if (tab === 'innkjop') { updateProdRangeMeta(); renderProductList(); }
 }
 
 function parseVariantQty(variantStr, qty) {
@@ -2106,15 +2215,62 @@ function formatTotal(amount, unit) {
   return `${amount} stk`;
 }
 
+// ── PERIODE-VELGER FOR INNKJØPSLISTE ─────────
+let _prodRange     = '1w'; // '2d' | '1w' | '1m' | 'custom'
+let _prodCustomFrom = todayISO;
+let _prodCustomTo   = (() => { const d=new Date(_T); d.setDate(d.getDate()+30); return isoDate(d); })();
+
+function _addDaysISO(iso, n) {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return isoDate(d);
+}
+function prodRangeBounds() {
+  if (_prodRange === '2d')     return [todayISO, _addDaysISO(todayISO, 2)];
+  if (_prodRange === '1m')     return [todayISO, _addDaysISO(todayISO, 30)];
+  if (_prodRange === 'custom') return [_prodCustomFrom || todayISO, _prodCustomTo || _addDaysISO(todayISO, 30)];
+  return [todayISO, _addDaysISO(todayISO, 7)]; // default 1w
+}
+function _fmtRangeShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('nb-NO', { day: '2-digit', month: '2-digit' });
+}
+function updateProdRangeMeta() {
+  const [from, to] = prodRangeBounds();
+  const meta = document.getElementById('prodRangeMeta');
+  if (meta) meta.textContent = `${_fmtRangeShort(from)} – ${_fmtRangeShort(to)}`;
+}
+function setProdRange(r) {
+  _prodRange = r;
+  ['2d','1w','1m','Custom'].forEach(id => {
+    const btn = document.getElementById('prodR' + id);
+    const key = id === 'Custom' ? 'custom' : id.toLowerCase();
+    if (btn) btn.classList.toggle('active', r === key);
+  });
+  const box = document.getElementById('prodRangeCustomBox');
+  if (box) box.style.display = r === 'custom' ? 'inline-flex' : 'none';
+  if (r === 'custom') {
+    document.getElementById('prodRangeFrom').value = _prodCustomFrom;
+    document.getElementById('prodRangeTo').value   = _prodCustomTo;
+  }
+  updateProdRangeMeta();
+  renderProductList();
+}
+function onProdCustomChange() {
+  _prodCustomFrom = document.getElementById('prodRangeFrom').value || todayISO;
+  _prodCustomTo   = document.getElementById('prodRangeTo').value   || _addDaysISO(todayISO, 30);
+  if (_prodRange === 'custom') { updateProdRangeMeta(); renderProductList(); }
+}
+
 function buildProductSummary() {
   const products = new Map();
-  // Innkjøpslisten skal kun reflektere ordre som faktisk fortsatt er aktive,
-  // dvs. de som vises i Bestillingslisten (leveringsdato i dag eller senere).
-  // Uten dette filteret ble innkjøpslisten oppblåst med varer fra 100+ gamle
-  // ordre fra forrige sesong.
+  // Innkjøpslisten reflekterer kun ordre i valgt periode (default 1 uke fra
+  // i dag). Brukeren kan endre periode via knappene over listen.
+  const [rangeFrom, rangeTo] = prodRangeBounds();
   ORDERS.filter(storeFilter).filter(o => {
     const d = String(o.delivery || '').slice(0, 10);
-    return d && d >= todayISO;
+    return d && d >= rangeFrom && d <= rangeTo;
   }).forEach(o => {
     const s = STATE[o.id] || [];
     o.items.forEach((item, idx) => {
