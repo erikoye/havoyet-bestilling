@@ -2465,9 +2465,12 @@ function _categorizeProduct(name){
   for (const k of Object.keys(_productCatMap)) {
     if (k.startsWith(base) || base.startsWith(k)) return _productCatMap[k];
   }
-  // Heuristikker for ingredienser som ikke er egne PRODUCTS
-  if (/(aioli|majones|sitron|dill|loff|surdeig|rødløk|koriander|salat|krydder|saus)/i.test(n)) return 'Tilbehør';
+  // Heuristikker for varer som ikke er egne PRODUCTS i data2.jsx — typisk
+  // sub-varer fra skalldyrkasse-builder (østers, kamskjell etc.) og tilbehør.
   if (/skalldyrkasse|sjømatkasse|fiskekasse/i.test(n))                                          return 'Kasser';
+  if (/(østers|oester|blåskjell|blaaskjell|kamskjell|musling|skjell)/i.test(n))                 return 'Skalldyr og skjell';
+  if (/(reker|sjøkreps|sjokreps|kongekrabbe|hummer|krabbe|krabbekl|skalldyr)/i.test(n))         return 'Skalldyr og skjell';
+  if (/(aioli|majones|sitron|dill|loff|surdeig|rødløk|rodlok|koriander|salat|krydder|saus)/i.test(n)) return 'Tilbehør';
   return 'Annet';
 }
 
