@@ -2827,7 +2827,13 @@ def _api_economy_stats_impl():
     card_total_month = _card_sum(card_imported, start_month)
     card_total_year  = _card_sum(card_imported, start_year)
 
+    # I dag — kun rader med dato == today
+    web_total_today    = sum(_order_total_kr(o) for o in web_orders if _parse_date(_order_date(o)) == today)
+    vipps_total_today  = sum((r.get("amount_ore") or 0) for r in vipps_imported if _parse_date(r.get("date")) == today) / 100.0
+    card_total_today   = sum(_card_signed_kr(r) for r in card_imported if _parse_date(r.get("date")) == today)
+
     grand_total       = web_total + vipps_total + card_total
+    grand_total_today = web_total_today + vipps_total_today + card_total_today
     grand_total_week  = web_total_week + vipps_total_week + card_total_week
     grand_total_month = web_total_month + vipps_total_month + card_total_month
     grand_total_year  = web_total_year + vipps_total_year + card_total_year
@@ -2909,6 +2915,7 @@ def _api_economy_stats_impl():
         "by_year": by_year_out,
         "totals": {
             "all_time_kr":  round(grand_total, 2),
+            "today_kr":     round(grand_total_today, 2),
             "this_week_kr": round(grand_total_week, 2),
             "this_month_kr": round(grand_total_month, 2),
             "this_year_kr":  round(grand_total_year, 2),
