@@ -697,13 +697,15 @@ def api_product_override(slug):
 
 
 # ── PRODUKTLISTE (baseline + overrides) ────────────────────────────────────────
-# Henter PRODUCTS-arrayen fra havoyet.no/components/data2.jsx, parser ut feltene
-# vi trenger (slug/name/cat/price/kind/unitLabel/img/status), og merger gjeldende
-# overrides på toppen. Caches 5 min så vi ikke hamrer Vercel.
+# Henter PRODUCTS-arrayen fra Vercel-nettsiden (admin.havoyet.no peker dit).
+# havoyet.no selv er Shopify, så vi må bruke admin.havoyet.no eller
+# Vercel-deploy-URL som baseline-kilde.
+# Parser ut feltene vi trenger (slug/name/cat/price/kind/unitLabel/img/status),
+# og merger gjeldende overrides på toppen. Caches 5 min så vi ikke hamrer Vercel.
 
 _PRODUCTS_BASELINE_URL = os.environ.get(
     "PRODUCTS_BASELINE_URL",
-    "https://havoyet.no/components/data2.jsx",
+    "https://admin.havoyet.no/components/data2.jsx",
 )
 _PRODUCTS_CACHE = {"data": None, "ts": 0.0}
 _PRODUCTS_TTL = 300  # 5 minutter
