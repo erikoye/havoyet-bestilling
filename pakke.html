@@ -1395,7 +1395,12 @@ function initStoreSwitcher() {
 
 function getSorted() {
   const dir = sortDir[currentSortKey] || 1;
-  return [...ORDERS].filter(storeFilter).sort((a, b) => {
+  // Skjul ordre med leveringsdato i fortiden — de regnes som ferdig levert
+  // og forurenser "Upakkede bestillinger"-listen ellers (forblir der i flere år).
+  return [...ORDERS].filter(storeFilter).filter(o => {
+    const d = String(o.delivery || '').slice(0, 10);
+    return d && d >= todayISO;
+  }).sort((a, b) => {
     if (currentSortKey === 'dato') {
       const cmp = a.delivery.localeCompare(b.delivery);
       // Secondary: slot a before b
