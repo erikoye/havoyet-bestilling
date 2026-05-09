@@ -1518,7 +1518,12 @@ function initStoreSwitcher() {
 // ikke kalender, som styrer.
 function _isActiveOrder(o) {
   const st = String((o && o.status) || 'NEW').toUpperCase();
-  return st !== 'DONE' && st !== 'CANCELLED' && st !== 'REFUNDED' && st !== 'DELIVERED';
+  const finalStatus = st === 'DONE' || st === 'CANCELLED' || st === 'REFUNDED' || st === 'DELIVERED';
+  // Speiler admin-oversikten: ordren forsvinner BARE når den er både
+  // betalt OG i sluttstatus. Ubetalte fakturaer blir liggende — selv
+  // etter levering — til de er gjort opp.
+  const paid = !o || o.paid !== false;
+  return !(finalStatus && paid);
 }
 
 function getSorted() {
