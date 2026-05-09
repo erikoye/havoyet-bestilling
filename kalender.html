@@ -803,29 +803,47 @@ function getPackingState() {
 // 33–99% → oransje
 // 100%   → grønn
 // ─────────────────────────────────────────────
-function _confirmedItems(order) {
+// Returnerer { confirmed, total } for en ordre. Kasser teller hver komponent
+// som en separat varelinje, slik at progress speiler pakke.html sin telling.
+function _orderProgress(order) {
   const s = getPackingState()[order.id];
-  if (s) return s.filter(i => i.avail === 'ok' && i.weight && i.expiry).length;
-  return order.items.filter(i => i.weight !== null && i.expiry !== null).length;
+  let confirmed = 0, total = 0;
+  if (s && Array.isArray(s)) {
+    s.forEach(e => {
+      if (e && e.isKasse) {
+        (e.components || []).forEach(c => {
+          total++;
+          if (c.weight && c.expiry && c.avail === 'ok') confirmed++;
+        });
+      } else if (e) {
+        total++;
+        if (e.weight && e.expiry && e.avail === 'ok') confirmed++;
+      }
+    });
+    if (total > 0) return { confirmed, total };
+  }
+  // Fallback: ingen state → tell varer som har vekt+expiry direkte på item
+  total = (order.items || []).length;
+  confirmed = (order.items || []).filter(i => i.weight !== null && i.expiry !== null).length;
+  return { confirmed, total };
 }
 
 function confirmationClass(order) {
-  const total = order.items.length;
+  const { confirmed, total } = _orderProgress(order);
   if (total === 0) return 'red';
-  const pct = _confirmedItems(order) / total;
+  const pct = confirmed / total;
   if (pct === 1)   return 'green';
   if (pct >= 0.33) return 'orange';
   return 'red';
 }
 
 function confirmationPct(order) {
-  const total = order.items.length;
-  if (total === 0) return 0;
-  return Math.round(_confirmedItems(order) / total * 100);
+  const { confirmed, total } = _orderProgress(order);
+  return total === 0 ? 0 : Math.round(confirmed / total * 100);
 }
 
 function confirmedCount(order) {
-  return _confirmedItems(order);
+  return _orderProgress(order).confirmed;
 }
 
 // ─────────────────────────────────────────────
@@ -1024,8 +1042,9 @@ function buildCalendar() {
 function renderCard(o) {
   const cls  = confirmationClass(o);
   const pct  = confirmationPct(o);
-  const conf = confirmedCount(o);
-  const total = o.items.length;
+  const _prog = _orderProgress(o);
+  const conf = _prog.confirmed;
+  const total = _prog.total;
   const isStd = o.slot === 'a' || o.slot === 'b';
   const slotLabel = o.slot === 'a' ? '13–15' : o.slot === 'b' ? '15–18' : o.slot;
   const slotClass = isStd ? o.slot : 'other';
@@ -1059,8 +1078,9 @@ function openModal(id) {
   const dateStr = deliveryDate.toLocaleDateString('nb-NO', { weekday: 'long', day: 'numeric', month: 'long' });
   const cls   = confirmationClass(o);
   const pct   = confirmationPct(o);
-  const conf  = confirmedCount(o);
-  const total = o.items.length;
+  const _prog = _orderProgress(o);
+  const conf  = _prog.confirmed;
+  const total = _prog.total;
 
   const pctLabel = cls === 'green'
     ? '100 % – klar for pakking'
