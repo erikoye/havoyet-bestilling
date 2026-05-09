@@ -1063,10 +1063,12 @@ def _send_contact_mail(from_email, from_name, subject, body):
         if ok:
             return True, detail
 
-    # Ingen sending konfigurert
+    # Ingen sending konfigurert — IKKE returner suksess, kunden skal få beskjed
+    # om at meldingen ikke kom fram. Disk-loggen beholdes som backup, men API
+    # returnerer 5xx slik at kontakt-skjemaet viser feil i stedet for «sendt».
     print(f"[CONTACT] Ingen mail-tjeneste konfigurert — meldingen ble logget til {CONTACT_LOG_FILE}")
     print(f"[CONTACT] Sett RESEND_API_KEY (anbefalt) eller SMTP_USER/SMTP_PASS i .env")
-    return True, "logged-only"
+    return False, "no-mail-service-configured"
 
 
 # ── ADMIN-VARSLER ──────────────────────────────────────────────────────────────
