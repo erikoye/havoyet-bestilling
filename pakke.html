@@ -1816,7 +1816,15 @@ function onItemQtyChange(orderId, i, field, val){
   const item = list[i];
   if (!item) return;
   if (field === 'qty') item.qty = Number(val) || 0;
-  else if (field === 'unit') item.unit = String(val || '').trim() || 'kg';
+  else if (field === 'unit') {
+    item.unit = String(val || '').trim() || 'kg';
+    // Speil til STATE.weightUnit så Vekt-feltets suffix oppdateres når
+    // brukeren bytter mellom kg/g/stk.
+    if (STATE[orderId] && STATE[orderId][i] && !STATE[orderId][i].isKasse) {
+      STATE[orderId][i].weightUnit = item.unit;
+      saveState();
+    }
+  }
   if (item.price != null) {
     const q = Number(item.qty) || 0;
     const p = Number(item.price) || 0;
@@ -1828,6 +1836,14 @@ function onItemQtyChange(orderId, i, field, val){
   const key = `${orderId}:${i}:${field}`;
   if (_qtySaveTimers[key]) clearTimeout(_qtySaveTimers[key]);
   _qtySaveTimers[key] = setTimeout(() => persistManualOrder(o, i), 300);
+  // Re-render Vekt-feltets suffix umiddelbart slik at "g"/"stk"/"kg" speiler valget
+  if (field === 'unit') {
+    const card = document.getElementById('card-' + i);
+    if (card) {
+      const suffix = card.querySelector('.field-group .field-suffix span:last-child');
+      if (suffix) suffix.textContent = item.unit;
+    }
+  }
 }
 
 async function persistManualOrder(o, lineIdx){
@@ -1903,7 +1919,7 @@ function renderItemCard(item, i, s) {
           <input class="field-input${weightOk?' filled':''}" id="weight-${i}" type="number" min="1"
             placeholder="0" value="${s.weight}"
             oninput="onFieldChange('${currentOrderId}',${i},'weight',this.value)"/>
-          <span style="font-size:12px;font-weight:600;color:var(--muted);padding:0 6px;align-self:center">${s.weightUnit||'g'}</span>
+          <span style="font-size:12px;font-weight:600;color:var(--muted);padding:0 6px;align-self:center">${item && item.unit ? item.unit : (s.weightUnit||'g')}</span>
         </div>
         <div class="field-check ${weightOk?'ok':'empty'}">
           ${weightOk?`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Lagret`:''}
