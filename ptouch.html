@@ -426,6 +426,34 @@ function fmtDate(iso) {
   return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
 }
 
+// ─── KASSE-OPPSKRIFTER (speilet fra pakke.html) ─────
+const KASSE_RECIPES = {
+  klassisk: {
+    displayName: 'Klassisk Skalldyrkasse',
+    components: [
+      { name: 'Reker',      perPersonGrams: 250, unit: 'g'   },
+      { name: 'Blåskjell',  perPersonGrams: 200, unit: 'g'   },
+      { name: 'Østers',     perPersonStk:   2,   unit: 'stk' },
+      { name: 'Krabbeklør', perPersonGrams: 250, unit: 'g'   },
+    ],
+  },
+  custom: { displayName: 'Din Skalldyrkasse', components: [] },
+};
+function parseKasseInfo(name) {
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  let type = null;
+  if (lower.includes('klassisk') && lower.includes('skalldyr')) type = 'klassisk';
+  else if (lower.includes('din skalldyrkasse') || lower.includes('din-skalldyrkasse')) type = 'custom';
+  if (!type) return null;
+  let persons = 2;
+  const m1 = name.match(/[-–]\s*(\d+)\s*\//);
+  const m2 = name.match(/\((\d+)\s*pers/i);
+  if (m1) persons = parseInt(m1[1], 10);
+  else if (m2) persons = parseInt(m2[1], 10);
+  return { type, persons, displayName: KASSE_RECIPES[type].displayName };
+}
+
 // ─── STATE ──────────────────────────────────────────
 const STATE = {
   product: '', weight: '', unit: 'g', expiry: '',
@@ -434,6 +462,11 @@ const STATE = {
   ing: '', all: '', opb: '0–4 °C',
   selectedOrder: null,    // hele ordren
   selectedItemIdx: null,  // valgt item-index i ordren
+  // Kasse-modus: hvis isKasse=true erstatter "Vekt"-feltet en liste over
+  // bekreftede komponenter (Reker 500 g, Blåskjell 400 g, …) hentet fra
+  // pakke.html sin packing-state.
+  isKasse: false,
+  components: [], // [{name, weight, weightUnit, expiry, avail}]
 };
 let ORDERS = [];
 let PACKING = {};
@@ -581,25 +614,65 @@ function selectItem(id, idx) {
   const s = (PACKING[o.id] || [])[idx] || {};
   STATE.selectedOrder = o;
   STATE.selectedItemIdx = idx;
-  // Fyll skjema
-  STATE.product = (it.name || '').replace(/\s*\([^)]*\)/g,'').trim();
-  STATE.weight = s.weight || it.weight || '';
-  STATE.unit = s.weightUnit || it.unit || 'g';
-  STATE.expiry = s.expiry || it.expiry || '';
+
+  // Kasse: bruk basisnavn + komponentliste i stedet for variant-navnet og "Vekt"
+  const kasseInfo = parseKasseInfo(it.name || '');
+  if (kasseInfo) {
+    STATE.isKasse = true;
+    STATE.product = kasseInfo.displayName;
+    // Hent komponenter fra packing-state (s.components). Bruk kun bekreftede
+    // varer (avail==='ok' med vekt+holdbarhet), siden de andre ikke skal med
+    // på etiketten.
+    const compsFromState = Array.isArray(s.components) ? s.components.filter(c => c && c.avail === 'ok' && c.weight && c.expiry) : [];
+    STATE.components = compsFromState.map(c => ({
+      name: c.name || '',
+      weight: c.weight || '',
+      weightUnit: c.weightUnit || 'g',
+      expiry: c.expiry || '',
+    }));
+    // Tidligste holdbarhet → Holdbarhetsdato på etiketten
+    let earliest = null;
+    STATE.components.forEach(c => { if (c.expiry && (!earliest || c.expiry < earliest)) earliest = c.expiry; });
+    STATE.expiry = earliest || '';
+    STATE.weight = '';
+    STATE.unit  = 'g';
+  } else {
+    STATE.isKasse = false;
+    STATE.components = [];
+    STATE.product = stripWeightSuffix(it.name || '');
+    STATE.weight = s.weight || it.weight || '';
+    STATE.unit = s.weightUnit || it.unit || 'g';
+    STATE.expiry = s.expiry || it.expiry || '';
+  }
+
   STATE.capture = defaultCapture(STATE.product);
   STATE.orderId = String(o.id);
   STATE.customer = o.customer || '';
   STATE.address = o.address || o.shipping_address || '';
   STATE.phone = o.phone || '';
-  // Auto-fill innhold fra NUTR_DB
+  // Auto-fill innhold fra NUTR_DB. For kasser: bygg ingredienser av komponent-navnene.
   const nutr = lookupNutr(STATE.product);
-  STATE.ing = nutr.ing;
-  STATE.all = nutr.all;
+  if (STATE.isKasse && STATE.components.length) {
+    STATE.ing = STATE.components.map(c => c.name).join(', ');
+    STATE.all = nutr.all || 'Skalldyr/Bløtdyr';
+  } else {
+    STATE.ing = nutr.ing;
+    STATE.all = nutr.all;
+  }
   STATE.opb = nutr.opb;
   syncFormFromState();
   document.getElementById('formCtx').textContent = `Fra ordre ${o.id}`;
   renderOrders();
   renderPreview();
+}
+
+// Fjerner trailing vekt fra produktnavn ("Laks røkt 200g" → "Laks røkt").
+function stripWeightSuffix(name) {
+  if (!name) return '';
+  return String(name)
+    .replace(/\s*\([^)]*\)/g, '')
+    .replace(/\s+\d+(?:[.,]\d+)?\s*(?:g|gram|kg|stk|pk|pakke|porsjon(?:er)?)\b\.?\s*$/i, '')
+    .trim();
 }
 
 // ─── FORM ───────────────────────────────────────────
@@ -666,7 +739,12 @@ function resetForm() {
 
 // ─── PREVIEW ────────────────────────────────────────
 function buildLabelHTML() {
-  const cleanName = (STATE.product || '—').replace(/\s*\([^)]*\)/g,'').trim();
+  // Kasse: rens variant-info ("- 2 / Med is / Med tilbehør") fra navnet og bruk
+  // bare basisnavnet ("Klassisk Skalldyrkasse").
+  const rawName = STATE.product || '—';
+  const cleanName = STATE.isKasse
+    ? rawName.replace(/\s*[-–]\s*\d+\s*\/.*/, '').replace(/\s*\([^)]*\)/g, '').trim()
+    : rawName.replace(/\s*\([^)]*\)/g,'').trim();
   const cap = STATE.capture;
   const capLabel = cap === 'villfanget' ? 'Villfanget' : cap === 'oppdrett' ? 'Oppdrett' : '';
   const ordNum = STATE.orderId ? (STATE.orderId.startsWith('#') ? STATE.orderId : '#' + STATE.orderId.replace(/^M-/,'')) : '';
@@ -694,10 +772,26 @@ function buildLabelHTML() {
         <strong>Allergener:</strong> ${escapeHTML(STATE.all || '—')}
       </div>
       <div class="lbl-trio">
-        <div class="lbl-trio-row">
-          <span class="lbl-trio-label">Vekt</span>
-          <span class="lbl-trio-val">${STATE.weight ? escapeHTML(STATE.weight) + ' ' + escapeHTML(STATE.unit || 'g') : '–'}</span>
-        </div>
+        ${STATE.isKasse
+          ? (STATE.components.length
+              ? `<div class="lbl-trio-row">
+                   <span class="lbl-trio-label">Innhold</span>
+                   <span class="lbl-trio-val" style="display:flex;flex-direction:column;gap:1px">
+                     ${STATE.components.map(c => {
+                       const w = String(c.weight || '').trim();
+                       const u = c.weightUnit || 'g';
+                       return `<span>${escapeHTML(c.name)}${w ? ' ' + escapeHTML(w) + ' ' + escapeHTML(u) : ''}</span>`;
+                     }).join('')}
+                   </span>
+                 </div>`
+              : `<div class="lbl-trio-row">
+                   <span class="lbl-trio-label">Innhold</span>
+                   <span class="lbl-trio-val">– (ingen komponenter bekreftet)</span>
+                 </div>`)
+          : `<div class="lbl-trio-row">
+              <span class="lbl-trio-label">Vekt</span>
+              <span class="lbl-trio-val">${STATE.weight ? escapeHTML(STATE.weight) + ' ' + escapeHTML(STATE.unit || 'g') : '–'}</span>
+             </div>`}
         <div class="lbl-trio-row">
           <span class="lbl-trio-label">Holdbarhetsdato:</span>
           <span class="lbl-trio-val">${fmtDate(STATE.expiry)}</span>
