@@ -317,9 +317,14 @@ _VIPPS_PAID_STATES   = {"AUTHORIZED", "CAPTURED", "CHARGED", "COMPLETED", "RESER
 _STRIPE_PAID_STATES  = {"PAID"}
 
 def _paid_ordrenrs():
-    """Returnerer settet av ordrenumre som har bekreftet betaling
-    via Stripe eller Vipps. Brukes til å filtrere bort ubetalte ordre
-    fra iPad-dashbordet (butikken skal kun se betalte bestillinger)."""
+    """Returnerer settet av ordrenumre som har bekreftet betaling.
+    Tre kilder:
+      1. Stripe (Stripe paid_states i payments-cache)
+      2. Vipps (Vipps paid_states)
+      3. Manuelt markert som 'paid' i admin-drawer (paymentStatus='paid')
+         eller via Shopify orders_export-import (samme felt) — disse må også
+         med i økonomi-statistikken så manuelt registrerte betalinger
+         oppdateres umiddelbart i Omsetning."""
     paid = set()
     try:
         for rec in _stripe_load_payments().values():
@@ -331,6 +336,14 @@ def _paid_ordrenrs():
         for rec in _vipps_load_payments().values():
             if rec.get("state") in _VIPPS_PAID_STATES and rec.get("ordrenr"):
                 paid.add(str(rec["ordrenr"]))
+    except Exception:
+        pass
+    try:
+        for o in _manual_orders:
+            if (o.get("paymentStatus") or "").lower() == "paid":
+                ordrenr = str(o.get("ordrenr") or o.get("id") or "").strip()
+                if ordrenr:
+                    paid.add(ordrenr)
     except Exception:
         pass
     return paid
@@ -1256,10 +1269,9 @@ def _notify_customer_order_update(order, event, change_summary=""):
         return False, "no-order"
     kunde = order.get("kunde") or {}
     epost = (kunde.get("epost") or kunde.get("email") or "").strip()
-    if not epost:
-        return False, "no-customer-email"
-    if not (RESEND_API_KEY or (SMTP_USER and SMTP_PASS)):
-        return False, "no-mail-service"
+    has_mail_service = bool(RESEND_API_KEY or (SMTP_USER and SMTP_PASS))
+    # Tillater at funksjonen fortsetter selv uten e-post — SMS-grenen lengre nede
+    # kan fortsatt kjøre hvis kunden har telefon og Twilio er konfigurert.
 
     nr     = order.get("ordrenr") or order.get("id") or "?"
     navn   = (kunde.get("navn") or kunde.get("name") or "").strip()
@@ -1303,22 +1315,24 @@ def _notify_customer_order_update(order, event, change_summary=""):
         + "— Havøyet"
     )
 
-    # Send via Resend → SMTP fallback (samme prioritet som _send_contact_mail).
+    # Send via Resend → SMTP fallback. Skipper helt hvis kunden mangler e-post
+    # eller mail-tjeneste ikke er konfigurert — SMS-delen kan fortsatt fyre.
     mail_ok = False
-    mail_detail = "no-mail-service"
-    if RESEND_API_KEY:
-        mail_ok, mail_detail = _send_via_resend(
-            CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
-        )
-        if mail_ok:
-            print(f"[CUSTOMER-MAIL] Resend → {epost}: {mail_detail}")
-        else:
-            print(f"[CUSTOMER-MAIL] Resend feilet, prøver SMTP: {mail_detail}")
-    if not mail_ok and SMTP_USER and SMTP_PASS:
-        mail_ok, mail_detail = _send_via_smtp(
-            CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
-        )
-        print(f"[CUSTOMER-MAIL] SMTP → {epost}: {mail_detail}")
+    mail_detail = "skipped" if not (epost and has_mail_service) else "no-mail-service"
+    if epost and has_mail_service:
+        if RESEND_API_KEY:
+            mail_ok, mail_detail = _send_via_resend(
+                CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
+            )
+            if mail_ok:
+                print(f"[CUSTOMER-MAIL] Resend → {epost}: {mail_detail}")
+            else:
+                print(f"[CUSTOMER-MAIL] Resend feilet, prøver SMTP: {mail_detail}")
+        if not mail_ok and SMTP_USER and SMTP_PASS:
+            mail_ok, mail_detail = _send_via_smtp(
+                CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
+            )
+            print(f"[CUSTOMER-MAIL] SMTP → {epost}: {mail_detail}")
 
     # SMS-varsel — bare hvis kunden har telefon og Twilio er konfigurert.
     # Kunden kan opt-out via kunde.notify.sms = False på ordren eller kunden-objektet.
@@ -2061,21 +2075,26 @@ def api_order_patch(order_id):
                 f"Status endret fra '{old_status}' til '{new_status}'."
                 if status_changed else "Bestillingen ble oppdatert i admin."
             )
-            if became_delivered:
-                _notify_admins(
-                    "order_delivered",
-                    f"[Havøyet] Bestilling #{nr} er levert",
-                    change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
-                )
-                _notify_customer_order_update(o, "order_delivered", change_summary)
-            else:
-                # Alle andre redigeringer regnes som "oppdatert"
-                _notify_admins(
-                    "order_updated",
-                    f"[Havøyet] Bestilling #{nr} oppdatert",
-                    change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
-                )
-                _notify_customer_order_update(o, "order_updated", change_summary)
+            # Varsler kjøres best-effort: en feil i SMTP/Twilio/Telegram skal
+            # IKKE føre til at lagringen returnerer 5xx — ordren er allerede
+            # persistert via _save_sync_state() over.
+            try:
+                if became_delivered:
+                    _notify_admins(
+                        "order_delivered",
+                        f"[Havøyet] Bestilling #{nr} er levert",
+                        change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
+                    )
+                    _notify_customer_order_update(o, "order_delivered", change_summary)
+                else:
+                    _notify_admins(
+                        "order_updated",
+                        f"[Havøyet] Bestilling #{nr} oppdatert",
+                        change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
+                    )
+                    _notify_customer_order_update(o, "order_updated", change_summary)
+            except Exception as _notify_err:
+                print(f"[PATCH-NOTIFY] Varsel feilet (ordren ble lagret OK): {_notify_err}")
             return jsonify({"ok": True, "order": o})
     return jsonify({"error": "Ikke funnet"}), 404
 

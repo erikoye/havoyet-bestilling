@@ -1120,6 +1120,9 @@ function multiplyWeight(variant, qty) {
 
 // Normaliser Shopify-ordre til pakke.html sitt format
 function normalizeOrder(o) {
+  // Betalingsstatus speiler admin: betalt hvis ikke eksplisitt unpaid/pending.
+  const ps = String(o.paymentStatus || '').toLowerCase();
+  const paid = !(ps === 'unpaid' || ps === 'pending' || ps === 'awaiting_payment');
   return {
     id:       o.id,
     customer: o.customer,
@@ -1128,6 +1131,8 @@ function normalizeOrder(o) {
     slot:     o.slot || 'a',
     seen:     o.seen || false,
     status:   o.status || 'NEW',
+    paymentStatus: paid ? 'paid' : 'unpaid',
+    paid,
     items:    (o.items || []).map(i => {
       const qty = i.quantity || 1;
       const variant = multiplyWeight(i.variant, qty);
@@ -1139,6 +1144,16 @@ function normalizeOrder(o) {
       };
     }),
   };
+}
+
+// Speiler admin-filteret: ordren skjules fra upakkede-listen BARE når den
+// er både betalt OG i sluttstatus (DONE/CANCELLED/REFUNDED). Det matcher
+// reglene i admin slik at admin og iPad alltid viser samme aktive sett.
+function _isOrderClosedPakke(o){
+  const s = String(o.status || '').toUpperCase();
+  const finalStatus = s === 'DONE' || s === 'CANCELLED' || s === 'REFUNDED' ||
+                      s === 'LEVERT' || s === 'AVBRUTT' || s === 'REFUNDERT';
+  return finalStatus && (o.paid !== false);
 }
 
 function setBanner(ok, msg) {
@@ -1213,6 +1228,9 @@ function _normalizeManualOrder(o){
     price: Number(v.price || 0),
     pris: Number(v.pris || 0),
   }));
+  // Bevar paymentStatus fra admin-shape — brukes til "skjul betalt+levert"-filteret.
+  const psRaw = String(o.paymentStatus || '').toLowerCase();
+  const paid = !(psRaw === 'unpaid' || psRaw === 'pending' || psRaw === 'awaiting_payment');
   return {
     ...o,
     id,
@@ -1222,6 +1240,8 @@ function _normalizeManualOrder(o){
     slot: o.slot || (k.leveringstid && /13|15/.test(k.leveringstid) ? 'a' : 'b'),
     seen: o.seen ?? false,
     status: o.status || 'NEW',
+    paymentStatus: paid ? 'paid' : 'unpaid',
+    paid,
     items,
     // Delt referanse — endringer i items[i] reflekteres automatisk i varer[i] ved POST.
     varer: items,
@@ -1491,14 +1511,19 @@ function initStoreSwitcher() {
   document.getElementById('swNesttun').classList.toggle('active', s === 'nesttun');
 }
 
+// Skjul ordre som er ferdige fra admins perspektiv. Speiler logikken i
+// Nettside/admin.html — ordre forsvinner fra "Upakkede bestillinger" når
+// admin endrer status til Levert / Avbrutt / Refundert (eller backend
+// markerer dem slik). Dato-baserte filtre er fjernet — det er status,
+// ikke kalender, som styrer.
+function _isActiveOrder(o) {
+  const st = String((o && o.status) || 'NEW').toUpperCase();
+  return st !== 'DONE' && st !== 'CANCELLED' && st !== 'REFUNDED' && st !== 'DELIVERED';
+}
+
 function getSorted() {
   const dir = sortDir[currentSortKey] || 1;
-  // Skjul ordre med leveringsdato i fortiden — de regnes som ferdig levert
-  // og forurenser "Upakkede bestillinger"-listen ellers (forblir der i flere år).
-  return [...ORDERS].filter(storeFilter).filter(o => {
-    const d = String(o.delivery || '').slice(0, 10);
-    return d && d >= todayISO;
-  }).sort((a, b) => {
+  return [...ORDERS].filter(storeFilter).filter(_isActiveOrder).sort((a, b) => {
     if (currentSortKey === 'dato') {
       const cmp = a.delivery.localeCompare(b.delivery);
       // Secondary: slot a before b
@@ -2370,10 +2395,11 @@ function onProdCustomChange() {
 
 function buildProductSummary() {
   const products = new Map();
-  // Innkjøpslisten reflekterer kun ordre i valgt periode (default 1 uke fra
-  // i dag). Brukeren kan endre periode via knappene over listen.
+  // Innkjøpslisten reflekterer kun aktive ordre (samme status-filter som
+  // Bestillingslisten — ekskluderer Levert/Avbrutt/Refundert) innen valgt
+  // periode (default 1 uke).
   const [rangeFrom, rangeTo] = prodRangeBounds();
-  ORDERS.filter(storeFilter).filter(o => {
+  ORDERS.filter(storeFilter).filter(_isActiveOrder).filter(o => {
     const d = String(o.delivery || '').slice(0, 10);
     return d && d >= rangeFrom && d <= rangeTo;
   }).forEach(o => {
