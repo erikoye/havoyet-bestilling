@@ -2694,6 +2694,15 @@ def api_vipps_imported_delete(tx_id):
 # ─── Økonomi/statistikk-endepunkt ─────────────────────────────────────────
 @app.route("/api/economy/stats")
 def api_economy_stats():
+    try:
+        return _api_economy_stats_impl()
+    except Exception as _ec_e:
+        import traceback as _tb
+        print(f"[economy/stats] ERROR: {_ec_e}\n{_tb.format_exc()}")
+        return jsonify({"error": str(_ec_e), "totals": {}, "by_year": [], "period": {}}), 200
+
+
+def _api_economy_stats_impl():
     """Aggregert statistikk for økonomi-fanen.
     Query-parametre:
       ?year=YYYY         filtrer til ett kalenderår (default: hittil i år)
