@@ -1062,14 +1062,22 @@ function initState(orders) {
         return { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
       });
     } else {
-      // Bakoverkompatibilitet: fyll inn kasse-state hvis det mangler på en eksisterende ordre
+      // Bakoverkompatibilitet: fyll inn kasse-state hvis det mangler på en eksisterende ordre,
+      // og initialiser nye linjer som ikke fantes da STATE først ble bygd (eks: admin
+      // la til en vare etter at iPad lastet ordren).
       (o.items || []).forEach((item, i) => {
         const entry = STATE[o.id][i];
         const k = parseKasseInfo(item.name);
         if (k && (!entry || !entry.isKasse)) {
           STATE[o.id][i] = { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k), itemComment: entry?.itemComment || '' };
+        } else if (!entry) {
+          STATE[o.id][i] = { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
         }
       });
+      // Trim bort STATE-entries for varer som er fjernet i den oppdaterte ordren.
+      if (Array.isArray(STATE[o.id]) && STATE[o.id].length > (o.items || []).length) {
+        STATE[o.id].length = (o.items || []).length;
+      }
     }
   });
 }
@@ -1664,7 +1672,9 @@ function renderDetail() {
       return;
     }
     _ensureItems(o);
-    if (!STATE[o.id]) initState([o]);
+    // Alltid kjør initState — den er idempotent og fyller inn STATE-entries
+    // for nye items som er lagt til etter forrige load.
+    initState([o]);
     const s = STATE[o.id] || [];
 
     const deliveryStr = String(o.delivery || todayISO).slice(0, 10);
@@ -1811,9 +1821,17 @@ function renderItemCard(item, i, s) {
   // Kasse → expand til komponent-cards
   if (s && s.isKasse) return renderKasseCard(item, i, s);
 
+  // Defensiv default — beskytter mot s={} når en oppdatert ordre har
+  // flere items enn STATE rakk å initialisere (rev .map på undefined).
+  s = Object.assign(
+    { weight:'', expiry:'', weightUnit:item?.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' },
+    s || {}
+  );
+  if (!Array.isArray(s.replacements)) s.replacements = [];
+
   const statusClass = s.avail ? `status-${s.avail}` : '';
-  const weightOk    = s.weight && s.weight.trim() !== '';
-  const expiryOk    = s.expiry && s.expiry.trim() !== '';
+  const weightOk    = s.weight && String(s.weight).trim() !== '';
+  const expiryOk    = s.expiry && String(s.expiry).trim() !== '';
   const fieldsVisible = s.avail === 'ok' ? 'visible' : '';
   const replVisible   = (s.avail === 'unsure' || s.avail === 'no') ? 'visible' : '';
 
