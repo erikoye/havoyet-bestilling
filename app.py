@@ -2858,19 +2858,22 @@ def _api_economy_stats_impl():
     for o in web_orders:
         d = _parse_date(_order_date(o))
         if d:
-            by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "count": 0})
+            by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "card_kr": 0.0, "count": 0})
+            by_year[d.year].setdefault("card_kr", 0.0)
             by_year[d.year]["web_kr"]   += _order_total_kr(o)
             by_year[d.year]["count"]    += 1
     for r in vipps_imported:
         d = _parse_date(r.get("date"))
         if d:
             by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "card_kr": 0.0, "count": 0})
+            by_year[d.year].setdefault("card_kr", 0.0)
             by_year[d.year]["vipps_kr"] += (r.get("amount_ore") or 0) / 100.0
             by_year[d.year]["count"]    += 1
     for r in card_imported:
         d = _parse_date(r.get("date"))
         if d:
             by_year.setdefault(d.year, {"web_kr": 0.0, "vipps_kr": 0.0, "card_kr": 0.0, "count": 0})
+            by_year[d.year].setdefault("card_kr", 0.0)
             by_year[d.year]["card_kr"] += _card_signed_kr(r)
             by_year[d.year]["count"]   += 1
     # Filtrer bort år før 2025 (ingen data eldre enn januar 2025)
