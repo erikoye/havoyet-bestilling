@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Etiketter — Havøyet AS</title>
+  <link rel="icon" type="image/png" href="https://havoyet.no/assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Montserrat:wght@700;900&display=swap" rel="stylesheet" />
   <style>
@@ -132,8 +133,9 @@
       width: 36mm;
       height: auto;
       display: block;
-      filter: brightness(0);
     }
+    .lbl-logo-section img.havoyet { filter: brightness(0); }
+    .lbl-logo-section img.nesttun { width: 32mm; }
 
     .lbl-hr {
       border: none;
@@ -393,9 +395,22 @@ function defaultCapture(name) {
   return 'villfanget';
 }
 
+// Fjerner trailing vekt/antall fra produktnavn ("Laks røkt 200g" → "Laks røkt",
+// "Østers Fine de Clair Nr. 3 6 stk" → "Østers Fine de Clair Nr. 3"). Vekten
+// legges inn i Vekt-feltet selv, så vi vil ikke duplisere det i navnet.
+function stripWeightSuffix(name) {
+  if (!name) return '';
+  return String(name)
+    // Fjern parenteser med vekt/variant-info
+    .replace(/\s*\([^)]*\)/g, '')
+    // Fjern trailing "200g", "1,5 kg", "6 stk", "2 pk" etc.
+    .replace(/\s+\d+(?:[.,]\d+)?\s*(?:g|gram|kg|stk|pk|pakke|porsjon(?:er)?)\b\.?\s*$/i, '')
+    .trim();
+}
+
 function buildLabel(order, name, weight, expiry, capture, weightUnit) {
   const n         = lookupNutr(name);
-  const cleanName = name.replace(/\s*\([^)]*\)/g,'').trim();
+  const cleanName = stripWeightSuffix(name);
   const ordNum    = order.id.startsWith('#') ? order.id : '#' + order.id.replace(/^M-/,'');
   const cap       = capture || defaultCapture(name);
   const capLabel  = cap === 'villfanget' ? 'Villfanget' : cap === 'oppdrett' ? 'Oppdrett' : '';
@@ -403,10 +418,15 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
   const addrLine  = order.address ? `<div class="lbl-order-addr">${order.address}</div>` : '';
   const phoneLine = order.phone   ? `<div class="lbl-order-addr">${order.phone}</div>`   : '';
 
+  const isNesttun = String(order.store || '').toLowerCase().includes('nesttun');
+  const logoSrc   = isNesttun ? 'Nesttun logo.png' : 'Color logo - no background.png';
+  const logoCls   = isNesttun ? 'nesttun' : 'havoyet';
+  const logoAlt   = isNesttun ? 'Nesttun Fisk &amp; Vilt' : 'Havøyet';
+
   return `<div class="label">
 
   <div class="lbl-logo-section">
-    <img src="Color logo - no background.png" alt="Havøyet">
+    <img src="${logoSrc}" alt="${logoAlt}" class="${logoCls}">
   </div>
 
   <div class="lbl-hr"></div>

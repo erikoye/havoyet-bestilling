@@ -1404,8 +1404,17 @@ function openOrder(id) {
 }
 
 // ─── FORMATERING AV VARENAVN MED ENHET ───────
+// Fjerner trailing vekt/antall fra produktnavn — vekt registreres separat per pakke,
+// så "Laks røkt 200g" → "Laks røkt", "Østers Fine de Clair Nr. 3 6 stk" → "Østers Fine de Clair Nr. 3".
+function stripWeightSuffix(name) {
+  if (!name) return '';
+  return String(name)
+    .replace(/\s+\d+(?:[.,]\d+)?\s*(?:g|gram|kg|stk|pk|pakke|porsjon(?:er)?)\b\.?\s*$/i, '')
+    .trim();
+}
+
 function formatItemName(item) {
-  const name = item.name || '';
+  const name = stripWeightSuffix(item.name || '');
   const unit = item.unit || '';
   if (!unit) return name;
   // Finn tall i parentes, f.eks. "(2300)" eller "(2300 – uten skinn)"

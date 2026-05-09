@@ -852,7 +852,7 @@ function renderAll(){
     unseen: visible.filter(o=>isUnseen(o)),
     today:  visible.filter(o=>o.delivery===todayISO),
     tmrw:   visible.filter(o=>o.delivery===tmrwISO),
-    urgent: visible.filter(o=>confClass(o)==='red'),
+    urgent: visible.filter(o => o.delivery >= todayISO && confClass(o)==='red'),
   };
 
   document.getElementById('stat-unseen').textContent = sets.unseen.length;
