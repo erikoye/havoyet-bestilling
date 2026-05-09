@@ -382,6 +382,17 @@
       transition: border-color 0.2s;
     }
 
+    /* Kasse-rad — beholder for underprodukter */
+    .kasse-card { background: #f8fafc; border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 12px; padding: 14px 16px 8px; margin-bottom: 10px; }
+    .kasse-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+    .kasse-info { flex: 1; min-width: 0; }
+    .kasse-title { font-size: 14px; font-weight: 600; color: var(--dark); }
+    .kasse-meta  { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; margin-top: 3px; letter-spacing: 0.02em; }
+    .kasse-progress { font-size: 11px; color: var(--muted); padding: 4px 9px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; white-space: nowrap; flex-shrink: 0; font-family: 'DM Mono', monospace; }
+    .kasse-progress.green { background: #f0fdf4; color: var(--avail-ok); border-color: #bbf7d0; }
+    .kasse-empty { font-size: 12px; color: var(--muted); padding: 12px; background: var(--surface); border: 1px dashed var(--border); border-radius: 8px; text-align: center; }
+    .kasse-components { display: flex; flex-direction: column; gap: 8px; }
+    .kasse-card .item-card { margin-bottom: 0; background: var(--surface); }
     .item-card.status-ok     { border-left: 4px solid var(--avail-ok); }
     .item-card.status-unsure { border-left: 4px solid var(--avail-unsure); }
     .item-card.status-no     { border-left: 4px solid var(--avail-no); }
@@ -943,12 +954,102 @@ let ORDERS = [];
 // ─── STATE ──────────────────────────────────
 const STATE = {};
 
+// ─── KASSE-OPPSKRIFTER ──────────────────────
+// Mapping fra kasse-type → komponenter med per-pers-mengde.
+// Brukes til å splitte kasse-bestillinger i pakke-flyten så hver komponent kan
+// markeres tilgjengelig/usikker/ikke mulig og veies separat. Etiketten skrives
+// fortsatt ut for hele kassen (én etikett per kasse).
+const KASSE_RECIPES = {
+  klassisk: {
+    displayName: 'Klassisk Skalldyrkasse',
+    components: [
+      { name: 'Reker',      perPersonGrams: 250, unit: 'g'   },
+      { name: 'Blåskjell',  perPersonGrams: 200, unit: 'g'   },
+      { name: 'Østers',     perPersonStk:   2,   unit: 'stk' },
+      { name: 'Krabbeklør', perPersonGrams: 250, unit: 'g'   },
+    ],
+  },
+  // Custom skalldyrkasse: komponenter er valgt av kunden.
+  // Foreløpig vises melding "Komponenter ikke registrert" inntil vi piper
+  // dem gjennom checkout-payloaden.
+  custom: { displayName: 'Din Skalldyrkasse', components: [] },
+};
+
+// Parser kasse-info ut fra item.name (slik den kommer fra ordre).
+// "Klassisk Skalldyrkasse (549kr pr pers) - 2 / Med is / Med tilbehør"
+//   → { type: 'klassisk', persons: 2, displayName: 'Klassisk Skalldyrkasse' }
+// "Din Skalldyrkasse - 3 / Med is" → { type: 'custom', persons: 3, ... }
+function parseKasseInfo(name) {
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  let type = null;
+  if (lower.includes('klassisk') && lower.includes('skalldyr')) type = 'klassisk';
+  else if (lower.includes('din skalldyrkasse') || lower.includes('din-skalldyrkasse')) type = 'custom';
+  if (!type) return null;
+  // Finn antall personer: enten "- 2 /" eller "(2 pers)" eller bare "- 2"
+  let persons = 2;
+  const m1 = name.match(/[-–]\s*(\d+)\s*\//);
+  const m2 = name.match(/\((\d+)\s*pers/i);
+  if (m1) persons = parseInt(m1[1], 10);
+  else if (m2) persons = parseInt(m2[1], 10);
+  return { type, persons, displayName: KASSE_RECIPES[type].displayName };
+}
+
+// Lager state for hver komponent i en kasse.
+function initKasseComponents(kasseInfo) {
+  const recipe = KASSE_RECIPES[kasseInfo.type];
+  if (!recipe || !recipe.components.length) return [];
+  return recipe.components.map(c => {
+    const expectedGrams = c.perPersonGrams ? c.perPersonGrams * kasseInfo.persons : 0;
+    const expectedStk   = c.perPersonStk   ? c.perPersonStk   * kasseInfo.persons : 0;
+    return {
+      name: c.name,
+      weight: '', expiry: '',
+      weightUnit: c.unit || 'g',
+      avail: null, replacements: [], confirmedReplacement: null, itemComment: '',
+      expected: expectedGrams ? `${expectedGrams} g` : (expectedStk ? `${expectedStk} stk` : ''),
+    };
+  });
+}
+
 function initState(orders) {
   orders.forEach(o => {
     if (!STATE[o.id]) {
-      STATE[o.id] = o.items.map(item => ({ weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' }));
+      STATE[o.id] = o.items.map(item => {
+        const k = parseKasseInfo(item.name);
+        if (k) {
+          return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k), itemComment: '' };
+        }
+        return { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
+      });
+    } else {
+      // Bakoverkompatibilitet: fyll inn kasse-state hvis det mangler på en eksisterende ordre
+      o.items.forEach((item, i) => {
+        const entry = STATE[o.id][i];
+        const k = parseKasseInfo(item.name);
+        if (k && (!entry || !entry.isKasse)) {
+          STATE[o.id][i] = { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k), itemComment: entry?.itemComment || '' };
+        }
+      });
     }
   });
+}
+
+// Tell bekreftede varer; en kasse teller hver komponent som en separat varelinje.
+function countConfirmed(s) {
+  let confirmed = 0, total = 0;
+  (s || []).forEach(e => {
+    if (e && e.isKasse) {
+      (e.components || []).forEach(c => {
+        total++;
+        if (c.weight && c.expiry && c.avail === 'ok') confirmed++;
+      });
+    } else if (e) {
+      total++;
+      if (e.weight && e.expiry && e.avail === 'ok') confirmed++;
+    }
+  });
+  return { confirmed, total };
 }
 
 // Multipliser mengde i variant-streng med antall
@@ -1244,10 +1345,11 @@ let sortDir         = {};  // per sort key: 1=asc, -1=desc
 
 // ─── PRIORITET ──────────────────────────────
 function confPct(o) {
-  // For list view: we count items with weight+expiry set in STATE
+  // For list view: we count items with weight+expiry set in STATE.
+  // Kasser teller hver komponent som en separat varelinje.
   const s = STATE[o.id] || [];
-  const confirmed = s.filter(i => i.weight && i.expiry && i.avail === 'ok').length;
-  return o.items.length ? Math.round(confirmed / o.items.length * 100) : 0;
+  const { confirmed, total } = countConfirmed(s);
+  return total ? Math.round(confirmed / total * 100) : 0;
 }
 function confClass(o) { const p=confPct(o); return p===100?'green':p>=33?'orange':'red'; }
 
@@ -1339,7 +1441,7 @@ function renderList() {
     const dot     = !o.seen ? `<div class="unseen-dot" title="Ikke åpnet"></div>` : '';
     const todayBadge = isToday ? `<span class="today-badge">i dag</span>` : '';
     const stateForOrder = STATE[o.id] || [];
-    const confirmed = stateForOrder.filter(i=>i.weight&&i.expiry&&i.avail==='ok').length;
+    const { confirmed } = countConfirmed(stateForOrder);
 
     return `<div class="order-row conf-${cls}" onclick="openOrder('${o.id}')">
       <div class="or-date ${isToday?'or-date-today':''}">
@@ -1438,8 +1540,7 @@ function renderDetail() {
   const d = new Date(o.delivery + 'T00:00:00');
   const dateStr = d.toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long' });
   const slotStr = o.slot === 'a' ? '13:00 – 15:00' : '15:00 – 18:00';
-  const confirmed = s.filter(i => i.weight && i.expiry && i.avail === 'ok').length;
-  const total     = o.items.length;
+  const { confirmed, total } = countConfirmed(s);
   const pct       = total ? Math.round(confirmed/total*100) : 0;
 
   document.getElementById('detailContent').innerHTML = `
@@ -1484,6 +1585,9 @@ function renderDetail() {
 }
 
 function renderItemCard(item, i, s) {
+  // Kasse → expand til komponent-cards
+  if (s && s.isKasse) return renderKasseCard(item, i, s);
+
   const statusClass = s.avail ? `status-${s.avail}` : '';
   const weightOk    = s.weight && s.weight.trim() !== '';
   const expiryOk    = s.expiry && s.expiry.trim() !== '';
@@ -1564,6 +1668,86 @@ function renderItemCard(item, i, s) {
   </div>`;
 }
 
+// Rendrer en kasse-bestilling som en gruppe komponent-cards.
+function renderKasseCard(item, i, s) {
+  const recipe = KASSE_RECIPES[s.kasseType];
+  const titleBase = recipe ? recipe.displayName : (item.name || 'Kasse');
+  const personLabel = `${s.persons} pers`;
+  const cleanedItemName = stripWeightSuffix(item.name || '');
+  const components = s.components || [];
+  let confirmed = 0;
+  components.forEach(c => { if (c.weight && c.expiry && c.avail === 'ok') confirmed++; });
+  const total = components.length;
+  const allDone = total > 0 && confirmed === total;
+
+  const componentsHtml = total > 0
+    ? components.map((c, ci) => renderComponentCard(c, i, ci)).join('')
+    : `<div class="kasse-empty">Komponenter ikke registrert ennå. ${escHtml(cleanedItemName)} ble ikke pipet gjennom checkout med komponentliste — registrer manuelt eller pakk som én vare.</div>`;
+
+  return `
+  <div class="kasse-card" id="kasse-${i}">
+    <div class="kasse-head">
+      <div class="kasse-info">
+        <div class="kasse-title">${escHtml(titleBase)} · ${escHtml(personLabel)}</div>
+        <div class="kasse-meta">${escHtml(item.name || '')}</div>
+      </div>
+      ${total > 0 ? `<span class="kasse-progress${allDone ? ' green' : ''}">${confirmed}/${total} bekreftet</span>` : ''}
+    </div>
+    <div class="kasse-components">${componentsHtml}</div>
+    <div class="item-comment-row" style="margin-top:10px">
+      <textarea class="item-comment-input" id="item-comment-${i}" rows="1"
+        placeholder="Merknad til hele kassen…"
+        oninput="onItemComment('${currentOrderId}',${i},this.value)">${s.itemComment||''}</textarea>
+    </div>
+  </div>`;
+}
+
+// Hver komponent inne i en kasse er en mini "item-card" — har egen avail/vekt/holdbarhet.
+function renderComponentCard(c, i, ci) {
+  const statusClass = c.avail ? `status-${c.avail}` : '';
+  const weightOk    = c.weight && String(c.weight).trim() !== '';
+  const expiryOk    = c.expiry && String(c.expiry).trim() !== '';
+  const fieldsVisible = c.avail === 'ok' ? 'visible' : '';
+  const chipClass = val => {
+    if (c.avail !== val) return 'avail-btn';
+    return `avail-btn active-${val === 'ok' ? 'ok' : val === 'unsure' ? 'unsure' : 'no'}`;
+  };
+  const expectedHint = c.expected ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(forv. ${escHtml(c.expected)})</span>` : '';
+  return `
+  <div class="item-card ${statusClass}" id="card-${i}-${ci}">
+    <div class="item-top">
+      <div class="item-name">${escHtml(c.name)}${expectedHint}</div>
+      <div class="avail-toggle">
+        <button class="${chipClass('ok')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'ok')">Tilgjengelig</button>
+        <button class="${chipClass('unsure')}" onclick="setComponentAvail('${currentOrderId}',${i},${ci},'unsure')">Usikkert</button>
+        <button class="${chipClass('no')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'no')">Ikke mulig</button>
+      </div>
+    </div>
+    <div class="item-fields ${fieldsVisible}">
+      <div class="field-group">
+        <label>Vekt</label>
+        <div class="field-suffix">
+          <input class="field-input${weightOk?' filled':''}" type="number" min="1"
+            placeholder="0" value="${escHtml(c.weight)}"
+            oninput="onComponentField('${currentOrderId}',${i},${ci},'weight',this.value)"/>
+          <span style="font-size:12px;font-weight:600;color:var(--muted);padding:0 6px;align-self:center">${escHtml(c.weightUnit||'g')}</span>
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Holdbarhetsdato</label>
+        <input class="field-input${expiryOk?' filled':''}" type="date"
+          value="${escHtml(c.expiry)}" oninput="onComponentField('${currentOrderId}',${i},${ci},'expiry',this.value)"/>
+      </div>
+    </div>
+  </div>`;
+}
+
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 // ─── PERSIST STATE ───────────────────────────
 let ORDER_NOTES = {};
 
@@ -1580,11 +1764,27 @@ function restoreState() {
     const saved = JSON.parse(raw);
     Object.keys(saved).forEach(id => {
       if (STATE[id]) {
-        STATE[id] = saved[id];
-        // Bakoverkompatibilitet
-        STATE[id].forEach(item => {
-          if (!item.weightUnit) item.weightUnit = 'g';
-          if (item.itemComment === undefined) item.itemComment = '';
+        // Beholder forventet kasse-struktur fra initState om saved mangler den
+        const order = ORDERS.find(o => o.id === id);
+        const merged = (saved[id] || []).map((entry, i) => {
+          const item = order && order.items && order.items[i];
+          const k = item ? parseKasseInfo(item.name || '') : null;
+          if (k) {
+            // Hvis lagret state ikke har kasse-format, oppgrader nå
+            if (!entry || !entry.isKasse || !Array.isArray(entry.components)) {
+              return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k), itemComment: (entry && entry.itemComment) || '' };
+            }
+            return entry;
+          }
+          return entry || { weight:'', expiry:'', weightUnit:'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
+        });
+        STATE[id] = merged;
+        // Bakoverkompatibilitet for vanlige items
+        STATE[id].forEach(it => {
+          if (it && !it.isKasse) {
+            if (!it.weightUnit) it.weightUnit = 'g';
+            if (it.itemComment === undefined) it.itemComment = '';
+          }
         });
       }
     });
@@ -1610,6 +1810,39 @@ function onNoteChange(orderId, val) {
 function onItemComment(orderId, i, val) {
   STATE[orderId][i].itemComment = val;
   saveState();
+}
+
+// ─── KASSE-KOMPONENT-HANDLERS ────────────────
+function setComponentAvail(orderId, i, ci, val) {
+  const entry = STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components[ci];
+  if (!c) return;
+  if (c.avail === val) {
+    c.avail = null; c.weight = ''; c.expiry = '';
+  } else {
+    c.avail = val;
+    if (val !== 'ok') { c.weight = ''; c.expiry = ''; }
+  }
+  saveState();
+  renderDetail();
+  updateToolbar();
+}
+
+function onComponentField(orderId, i, ci, field, val) {
+  const entry = STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components[ci];
+  if (!c) return;
+  c[field] = val;
+  // Oppdater progress-bar live
+  const o = ORDERS.find(x => x.id === orderId);
+  const { confirmed, total } = countConfirmed(STATE[orderId]);
+  const pct = total ? Math.round(confirmed/total*100) : 0;
+  const bar = document.getElementById('detailProgressBar');
+  if (bar) bar.style.width = pct + '%';
+  saveState();
+  updateToolbar();
 }
 
 // ─── STATE HANDLERS ──────────────────────────
@@ -1638,8 +1871,8 @@ function onFieldChange(orderId, i, field, val) {
   // Update progress bar
   const o = ORDERS.find(x=>x.id===orderId);
   const s = STATE[orderId];
-  const confirmed = s.filter(x=>x.weight&&x.expiry&&x.avail==='ok').length;
-  const pct = o.items.length ? Math.round(confirmed/o.items.length*100) : 0;
+  const { confirmed, total } = countConfirmed(s);
+  const pct = total ? Math.round(confirmed/total*100) : 0;
   const bar = document.getElementById('detailProgressBar');
   if (bar) bar.style.width = pct + '%';
   saveState();
@@ -1737,9 +1970,13 @@ function updateToolbar() {
   const o = ORDERS.find(x=>x.id===currentOrderId);
   if (!o) return;
   const s = STATE[currentOrderId];
-  const total     = o.items.length;
-  const handled   = s.filter(x=>x.avail!==null).length;
-  const confirmed = s.filter(x=>x.weight&&x.expiry&&x.avail==='ok').length;
+  // Tell både vanlige varer og kasse-komponenter
+  let handled = 0;
+  (s || []).forEach(e => {
+    if (e && e.isKasse) (e.components || []).forEach(c => { if (c.avail !== null) handled++; });
+    else if (e && e.avail !== null) handled++;
+  });
+  const { confirmed, total } = countConfirmed(s);
   document.getElementById('toolbarStatus').textContent =
     `${handled}/${total} varer behandlet  ·  ${confirmed} klar for etikett`;
   document.getElementById('btnPrint').disabled = confirmed === 0;

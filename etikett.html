@@ -453,7 +453,7 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
   <div class="lbl-trio">
     <div class="lbl-trio-row">
       <span class="lbl-trio-label">Vekt</span>
-      <span class="lbl-trio-val">${weight ? weight + '\u00a0' + (weightUnit || 'g') : '–'}</span>
+      <span class="lbl-trio-val">${weight ? (weightUnit ? weight + '\u00a0' + weightUnit : weight) : '–'}</span>
     </div>
     <div class="lbl-trio-row">
       <span class="lbl-trio-label">Holdbarhetsdato:</span>
@@ -512,6 +512,34 @@ function collectLabels(rawOrder) {
   };
   (rawOrder.items || []).forEach((item, i) => {
     const st = s[i] || {};
+    // Kasse: bygg én etikett for kassen med sum-vekt og tidligste holdbarhet
+    // basert på komponentene som er bekreftet "ok".
+    if (st.isKasse && Array.isArray(st.components)) {
+      const okComps = st.components.filter(c => c.avail === 'ok' && c.weight && c.expiry);
+      if (!okComps.length) return;
+      // Sum vekt: konverter alle stk til "stk-strenger", g/kg slås sammen
+      let grams = 0, stk = 0;
+      let earliestExpiry = null;
+      okComps.forEach(c => {
+        const u = (c.weightUnit || 'g').toLowerCase();
+        const v = parseFloat(String(c.weight).replace(',', '.')) || 0;
+        if (u === 'kg') grams += v * 1000;
+        else if (u === 'g' || u === 'gram') grams += v;
+        else if (u === 'stk') stk += v;
+        if (c.expiry && (!earliestExpiry || c.expiry < earliestExpiry)) earliestExpiry = c.expiry;
+      });
+      const parts = [];
+      if (grams > 0) parts.push(grams >= 1000 ? `${(grams/1000).toLocaleString('nb-NO',{maximumFractionDigits:2})} kg` : `${grams} g`);
+      if (stk   > 0) parts.push(`${stk} stk`);
+      labels.push({
+        order,
+        name: item.name || '',
+        weight: parts.join(' + '),
+        weightUnit: '', // allerede formatert
+        expiry: earliestExpiry,
+      });
+      return;
+    }
     if (st.avail === 'ok' && st.weight && st.expiry) {
       labels.push({ order, name: item.name || '', weight: st.weight, expiry: st.expiry, weightUnit: st.weightUnit || item.unit || 'g' });
     }
