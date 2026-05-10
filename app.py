@@ -1886,6 +1886,17 @@ def api_orders_new():
     if not navn or not epost or not varer:
         return jsonify({"ok": False, "error": "Mangler kundenavn, e-post eller varer"}), 400
 
+    # Krev gyldig ISO-leveringsdato (YYYY-MM-DD) og leveringstid. Eldre flyter sendte
+    # ukedag-navn ("torsdag") som ikke kan plottes på en kalender — det blokkeres her
+    # så bestillingssiden får riktig dato på alle nye ordre.
+    lev_dag = (kunde.get("leveringsdag") or "").strip()
+    lev_tid = (kunde.get("leveringstid") or "").strip()
+    import re as _re
+    if not _re.match(r"^\d{4}-\d{2}-\d{2}$", lev_dag):
+        return jsonify({"ok": False, "error": "Velg en konkret leveringsdato før du fullfører bestillingen"}), 400
+    if not lev_tid:
+        return jsonify({"ok": False, "error": "Velg leveringstid før du fullfører bestillingen"}), 400
+
     # Sørg for at ordrenummer finnes
     if not data.get("ordrenr"):
         data["ordrenr"] = "H" + _uuid.uuid4().hex[:6].upper()
