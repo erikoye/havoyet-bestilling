@@ -549,13 +549,31 @@ function confPctOrder(o) {
 }
 function confClsOrder(o){ const p=confPctOrder(o); return p===100?'green':p>=33?'orange':'red'; }
 
+// Aktive ordre = ikke ferdig/avbrutt/levert/oppfylt og ikke historiske Shopify-imports.
+// Brukes til å skjule ferdige/historiske ordrer fra ptouch-listen så bare det som
+// faktisk skal pakkes/etiketteres vises.
+function _isActiveOrder(o) {
+  const status = String(o.status || '').toUpperCase().trim();
+  const INACTIVE = new Set([
+    'DONE', 'COMPLETED', 'COMPLETE', 'FERDIG', 'LEVERT', 'DELIVERED',
+    'FULFILLED', 'CANCELLED', 'CANCELED', 'AVBRUTT', 'REFUNDED', 'ARCHIVED',
+  ]);
+  if (INACTIVE.has(status)) return false;
+  // Historiske Shopify-imports (S1001–S1106 osv.) regnes som ferdige selv om
+  // status-feltet er tomt — de har source = shopify/import.
+  const src = String(o.source || '').toLowerCase();
+  if (src === 'shopify' || src === 'import' || src === 'shopify-import') return false;
+  return true;
+}
+
 function renderOrders() {
   const q = (document.getElementById('orderSearch').value || '').toLowerCase();
   const filtered = ORDERS.filter(o => {
+    if (!_isActiveOrder(o)) return false;
     if (!q) return true;
     return [o.id, o.customer, o.phone, o.address].filter(Boolean).join(' ').toLowerCase().includes(q);
   });
-  document.getElementById('orderCount').textContent = `${filtered.length} ordre${filtered.length === 1 ? '' : 'r'}`;
+  document.getElementById('orderCount').textContent = `${filtered.length} aktiv${filtered.length === 1 ? '' : 'e'} ordre`;
   const list = document.getElementById('orderList');
   if (!filtered.length) {
     list.innerHTML = `<div class="empty-state">Ingen ordre matchet søket</div>`;
