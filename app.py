@@ -1905,7 +1905,34 @@ def api_orders_new():
     if not data.get("status"):
         data["status"] = "NEW"
 
-    # Legg til i state
+    # Idempotent: hvis samme ordrenr er postet før (f.eks. AWAITING_PAYMENT
+    # pre-lagring fulgt av PAID-oppdatering), slå sammen i stedet for å
+    # opprette duplikat. Eksisterende felter bevares unntatt der nye verdier
+    # er ikke-tomme — slik at status-flyt AWAITING_PAYMENT → PAID skrives
+    # over riktig vei.
+    target_id = str(data["ordrenr"])
+    existing_idx = None
+    for i, o in enumerate(_manual_orders):
+        if str(o.get("ordrenr") or o.get("id") or "").strip() == target_id:
+            existing_idx = i
+            break
+    if existing_idx is not None:
+        merged = dict(_manual_orders[existing_idx])
+        for k, v in data.items():
+            # Tillat status å oppdateres fra AWAITING_PAYMENT → PAID/NEW etc.
+            # Ikke skriv over med tom/None.
+            if v is None:
+                continue
+            if isinstance(v, str) and not v.strip():
+                continue
+            merged[k] = v
+        # Ikke send admin-varsel på re-POST av samme ordre — det er bare
+        # en status-oppdatering, ikke en ny bestilling.
+        _manual_orders[existing_idx] = merged
+        _save_sync_state()
+        return jsonify({"ok": True, "ordrenr": target_id, "updated": True})
+
+    # Ny ordre — legg til i state
     _manual_orders.append(data)
     _save_sync_state()
 
@@ -3742,6 +3769,78 @@ def api_webhook_stripe():
         if sess_id in payments:
             payments[sess_id]["state"] = "EXPIRED"
             _stripe_save_payments(payments)
+
+    elif etype == "payment_intent.succeeded":
+        # PaymentIntent-flyt (Stripe Elements på ny.havoyet.no/kasse). Avgjørende
+        # sikkerhetsnett: hvis frontend krasjer eller mister nett etter
+        # confirmCardPayment, vil denne webhooken sørge for at ordren likevel
+        # ender opp som PAID i admin/staff-listen og at varsel går ut.
+        pi_id    = obj.get("id")
+        ordrenr  = (obj.get("metadata") or {}).get("ordrenr")
+        amount   = obj.get("amount") or obj.get("amount_received") or 0
+        payments = _stripe_load_payments()
+        rec = payments.get(pi_id, {})
+        rec.update({
+            "state":          "PAID",
+            "ordrenr":        ordrenr or rec.get("ordrenr"),
+            "amount":         amount,
+            "paid_at":        time.time(),
+            "payment_intent": pi_id,
+            "kind":           rec.get("kind") or "elements",
+        })
+        payments[pi_id] = rec
+        _stripe_save_payments(payments)
+        if ordrenr:
+            # Speil PAID-status inn i selve ordren så admin/staff-lista plukker
+            # den opp uavhengig av om frontend rakk å POSTe /api/orders/new.
+            order_found = False
+            for o in _manual_orders:
+                if str(o.get("ordrenr") or o.get("id") or "").strip() == str(ordrenr):
+                    o["status"] = "PAID"
+                    o["paymentStatus"] = "paid"
+                    o["paid_at"] = datetime.now().isoformat()
+                    order_found = True
+                    break
+            if order_found:
+                _save_sync_state()
+                _notify_admins(
+                    "payment_received",
+                    f"[Havøyet] Kortbetaling mottatt #{ordrenr}",
+                    f"Beløp: {amount/100:.2f} kr (kort via Stripe Elements)\n"
+                    f"Ordre: {ordrenr}\nPaymentIntent: {pi_id}",
+                )
+            else:
+                # Kortet ble trukket, men selve ordre-objektet finnes ikke i
+                # _manual_orders. Det betyr at frontend feilet etter Stripe-bekreftelsen
+                # (nettglipp, lukket fane, JS-feil). Send ALARM til admin så betalingen
+                # ikke forsvinner i tomrommet — admin kan opprette ordren manuelt
+                # basert på Stripe-dashboardet.
+                _notify_admins(
+                    "payment_orphan",
+                    f"[Havøyet] BETALING UTEN ORDRE #{ordrenr}",
+                    f"Stripe har trukket {amount/100:.2f} kr men ordren finnes ikke "
+                    f"i Flask. Sjekk Stripe-dashboardet for kunde-info og opprett "
+                    f"ordren manuelt.\n\nOrdrenr: {ordrenr}\nPaymentIntent: {pi_id}\n"
+                    f"Stripe-link: https://dashboard.stripe.com/payments/{pi_id}",
+                )
+
+    elif etype == "payment_intent.payment_failed":
+        # Marker som FAILED og varsle hvis det er knyttet til en ordre.
+        pi_id    = obj.get("id")
+        ordrenr  = (obj.get("metadata") or {}).get("ordrenr")
+        err_msg  = ((obj.get("last_payment_error") or {}).get("message")
+                    or "Ukjent feil")
+        payments = _stripe_load_payments()
+        rec = payments.get(pi_id, {})
+        rec.update({
+            "state":          "FAILED",
+            "ordrenr":        ordrenr or rec.get("ordrenr"),
+            "failed_at":      time.time(),
+            "error":          err_msg,
+            "payment_intent": pi_id,
+        })
+        payments[pi_id] = rec
+        _stripe_save_payments(payments)
 
     elif etype == "invoice.payment_succeeded":
         # Månedlig trekk på abonnement gikk gjennom
