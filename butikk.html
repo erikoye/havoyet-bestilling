@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Havøyet — Butikkvisning</title>
+  <link rel="icon" type="image/png" href="https://havoyet.no/assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet" />
@@ -194,6 +195,7 @@
     }
     .error-bar.show { display: block; }
   </style>
+  <script src="assets/orders-sync.js"></script>
 </head>
 <body>
 
@@ -462,6 +464,7 @@ try {
 
 refresh();
 setInterval(refresh, POLL_MS);
+if (window.HavoyetOrdersSync) window.HavoyetOrdersSync.onChange(refresh);
 </script>
 </body>
 </html>

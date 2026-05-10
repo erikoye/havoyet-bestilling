@@ -762,6 +762,7 @@
     .prod-detail-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
     .prod-detail-meta-chip{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);}
   </style>
+  <script src="assets/orders-sync.js"></script>
 </head>
 <body>
 
@@ -1214,7 +1215,8 @@ function serverPost(endpoint, data) {
   fetch(`${FLASK_BASE}${endpoint}`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(data)
-  }).catch(()=>{});
+  }).then(r => { if (r && r.ok && window.HavoyetOrdersSync) window.HavoyetOrdersSync.notify(); })
+    .catch(()=>{});
 }
 
 // Konverterer admin-shape (varer:[{name,qty,unit,price,pris}]) til iPad-shape (items + topp-felter).
@@ -2675,6 +2677,7 @@ window.addEventListener('popstate', (e) => {
 // ─── INIT ────────────────────────────────────
 initStoreSwitcher();
 loadFromFlask();
+if (window.HavoyetOrdersSync) window.HavoyetOrdersSync.onChange(loadFromFlask);
 // Initialiser history-state slik at popstate har noe å gå tilbake til
 history.replaceState({ view: 'list' }, '', window.location.search || window.location.pathname);
 </script>

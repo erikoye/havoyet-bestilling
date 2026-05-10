@@ -506,6 +506,7 @@
     }
 
   </style>
+  <script src="assets/orders-sync.js"></script>
 </head>
 <body>
 
@@ -938,14 +939,16 @@ function serverSaveManualOrders(list) {
   fetch(`${FLASK_BASE}/api/manual-orders`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(list)
-  }).catch(()=>{});
+  }).then(r => { if (r && r.ok && window.HavoyetOrdersSync) window.HavoyetOrdersSync.notify(); })
+    .catch(()=>{});
 }
 
 function serverSaveHiddenOrders(list) {
   fetch(`${FLASK_BASE}/api/hidden-orders`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(list)
-  }).catch(()=>{});
+  }).then(r => { if (r && r.ok && window.HavoyetOrdersSync) window.HavoyetOrdersSync.notify(); })
+    .catch(()=>{});
 }
 
 // ─── FLASK-HENTING ────────────────────────────
@@ -1109,6 +1112,7 @@ mergeManualOrders();
 filterHiddenOrders();
 loadFromFlask();      // henter live-data + merger manuelle ordre + render
 setInterval(loadFromFlask, 30 * 1000);  // poll hvert 30. sekund — kontinuerlig live fra havoyet.no
+if (window.HavoyetOrdersSync) window.HavoyetOrdersSync.onChange(loadFromFlask);
 setInterval(pollPackingState, 15000);        // sync pakkingstilstand hvert 15 sek
 
 // ─── NY BESTILLING MODAL ────────────────────────

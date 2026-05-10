@@ -672,6 +672,7 @@
       .cal-wrapper { padding: 0 20px 60px; }
     }
   </style>
+  <script src="assets/orders-sync.js"></script>
 </head>
 <body>
 
@@ -1254,6 +1255,7 @@ initStoreSwitcher();
 loadFromFlask().then(() => pollPackingState());
 setInterval(loadFromFlask, 5 * 60 * 1000);
 setInterval(pollPackingState, 15000);
+if (window.HavoyetOrdersSync) window.HavoyetOrdersSync.onChange(loadFromFlask);
 </script>
 </body>
 </html>

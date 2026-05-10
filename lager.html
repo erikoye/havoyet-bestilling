@@ -178,6 +178,7 @@
       .stat-value { font-size: 22px; }
     }
   </style>
+  <script src="assets/orders-sync.js"></script>
 </head>
 <body>
 
@@ -992,6 +993,7 @@ loadFromFlask(); // erstatt med live-data om Flask er oppe
 loadPrisliste(); // last prisliste fra PowerOffice-cache
 setInterval(loadFromFlask, 5 * 60 * 1000);
 setInterval(pollPackingState, 15000); // sync pakkingstilstand hvert 15. sekund
+if (window.HavoyetOrdersSync) window.HavoyetOrdersSync.onChange(loadFromFlask);
 </script>
 </body>
 </html>
