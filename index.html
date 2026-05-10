@@ -649,6 +649,26 @@
     </a>
   </div>
 
+  <!-- TRENGER LEVERINGSDATO -->
+  <!-- Ordre som mangler leveringsdato (typisk havoyet.no-kasse uten valgt slot)
+       grupperes her så de ikke faller ut av oversikten. Skjules om listen er tom. -->
+  <div class="section-header" id="needsDateHeader" style="display:none;">
+    <span class="section-title" style="color: var(--err, #e11d48);">Trenger leveringsdato</span>
+    <span class="section-link" id="needsDateCount" style="color: var(--err, #e11d48); pointer-events: none;"></span>
+  </div>
+  <table id="needsDateTable" style="display:none;">
+    <thead>
+      <tr>
+        <th>Ordre-ID</th>
+        <th>Kunde</th>
+        <th>Bestilt</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="needsDateBody"></tbody>
+  </table>
+
   <!-- TABLE -->
   <div class="section-header">
     <span class="section-title">Kommende ordre</span>
@@ -867,12 +887,57 @@ function renderAll(){
     sets.tmrw.length===0?'Ingen leveranser i morgen':
     slotCount(sets.tmrw,'a')+' × 13–15   '+slotCount(sets.tmrw,'b')+' × 15–18';
 
+  // Ordre uten leveringsdato — typisk havoyet.no-kasse der kunden ikke
+  // valgte slot. Backend setter `needs_delivery_date: true`; vi grupperer
+  // dem i en egen seksjon over hovedlisten så admin/staff kan kontakte kunde
+  // eller fylle inn dato uten at ordren forsvinner ut av syne.
+  const _isFinal = o => {
+    const s = String((o && o.status) || 'NEW').toUpperCase();
+    return s === 'DONE' || s === 'CANCELLED' || s === 'REFUNDED'
+        || s === 'DELIVERED' || s === 'LEVERT' || s === 'AVBRUTT' || s === 'REFUNDERT';
+  };
+  const needsDate = visible
+    .filter(o => (o.needs_delivery_date || !o.delivery) && !_isFinal(o))
+    .sort((a,b) => String(b.created_at||'').localeCompare(String(a.created_at||'')));
+  const nHdr = document.getElementById('needsDateHeader');
+  const nTbl = document.getElementById('needsDateTable');
+  const nBody = document.getElementById('needsDateBody');
+  const nCount = document.getElementById('needsDateCount');
+  if (needsDate.length && nHdr && nTbl && nBody) {
+    nHdr.style.display = '';
+    nTbl.style.display = '';
+    nCount.textContent = `${needsDate.length} ${needsDate.length === 1 ? 'ordre' : 'ordre'}`;
+    nBody.innerHTML = needsDate.map(o => {
+      const paid = String(o.paymentStatus||'').toLowerCase();
+      const paidBadge = paid === 'unpaid' || paid === 'pending'
+        ? `<span style="font-size:11px;color:var(--err,#e11d48);">Ubetalt</span>`
+        : `<span style="font-size:11px;color:var(--ok,#22c55e);">Betalt</span>`;
+      return `<tr class="ordre-rad" onclick="location.href='pakke.html?ordre=${encodeURIComponent(o.id)}'" title="Åpne for å sette leveringsdato">
+        <td class="order-id">${o.id}</td>
+        <td class="customer-name">${o.customer || '—'}</td>
+        <td class="delivery-date">${o.created_at ? formatDate(o.created_at) : '—'}</td>
+        <td>${paidBadge}</td>
+        <td onclick="event.stopPropagation()">
+          <button class="delete-btn" onclick="deleteOrder('${o.id}')" title="Slett bestilling">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+  } else if (nHdr && nTbl) {
+    nHdr.style.display = 'none';
+    nTbl.style.display = 'none';
+  }
+
   const sorted=visible.filter(o=>o.delivery>=todayISO)
     .sort((a,b)=>a.delivery.localeCompare(b.delivery));
 
   if (sorted.length === 0) {
+    const msg = needsDate.length
+      ? 'Ingen ordre med leveringsdato satt. Se "Trenger leveringsdato" over.'
+      : 'Ingen betalte bestillinger ennå. Når kunder fullfører kjøp på havoyet.no dukker de opp her.';
     document.getElementById('ordreTabell').innerHTML =
-      `<tr><td colspan="5" style="text-align:center;padding:32px 0;color:var(--muted);font-size:13px;">Ingen betalte bestillinger ennå. Når kunder fullfører kjøp på havoyet.no dukker de opp her.</td></tr>`;
+      `<tr><td colspan="5" style="text-align:center;padding:32px 0;color:var(--muted);font-size:13px;">${msg}</td></tr>`;
     window._sets = sets;
     return;
   }

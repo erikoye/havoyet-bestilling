@@ -135,6 +135,10 @@ def _normalize_manual_order(o):
         "phone":      kunde.get("tlf") or kunde.get("phone") or o.get("phone") or "",
         "delivery":   kunde.get("leveringsdag") or o.get("delivery") or "",
         "slot":       kunde.get("leveringstid") or o.get("slot") or "",
+        # True når ordren mangler en konkret leveringsdato — bestillingssiden
+        # gruperer slike ordre i en egen "Trenger leveringsdato"-seksjon istedenfor
+        # å skjule dem helt (typisk havoyet.no-kasse-flow der kunden ikke valgte slot).
+        "needs_delivery_date": not (kunde.get("leveringsdag") or o.get("delivery")),
         "status":     o.get("status") or "NEW",
         "items":      items,
         "note":       kunde.get("kommentar") or o.get("note") or "",
