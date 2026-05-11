@@ -561,6 +561,17 @@
       background: #dcfce7; border-color: #86efac; color: #15803d;
     }
     .replacement-chip.confirmed .chip-confirm { display: none; }
+    .replacement-chip.suggested {
+      background: #fef3c7; border-color: #fcd34d; color: #92400e;
+    }
+    .replacement-chip.suggested .chip-confirm { display: none; }
+    .chip-state {
+      font-size: 10px; font-weight: 600; opacity: 0.85;
+      padding: 1px 6px; border-radius: 8px; background: rgba(255,255,255,0.55);
+    }
+    .repl-price {
+      font-size: 11px; font-weight: 500; opacity: 0.75;
+    }
     .item-name.replaced { color: var(--muted); text-decoration: line-through; font-size: 13px; font-weight: 400; }
     .item-name-replacement { font-size: 15px; font-weight: 600; color: var(--primary-dk); }
 
@@ -1480,6 +1491,8 @@ async function loadFromFlask() {
     // Last admin-definerte kasseInnhold før vi bygger STATE — gjør at initKasseComponents
     // ser riktige komponenter for klassisk/eksklusiv/premium.
     await loadKasseRecipesFromOverrides();
+    // Sørg for at PRODUCT_LIST er populert til erstatningssøk i komponenter.
+    _ensureProductCatMap();
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
     if (!r.ok) throw new Error();
     const data = await r.json();
@@ -1988,7 +2001,7 @@ function renderItemCard(item, i, s) {
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setAvail('${currentOrderId}',${i},'ok')">Tilgjengelig</button>
         <button class="${chipClass('unsure')}" onclick="setAvail('${currentOrderId}',${i},'unsure')">Usikkert</button>
-        <button class="${chipClass('no')}"     onclick="setAvail('${currentOrderId}',${i},'no')">Ikke mulig</button>
+        <button class="${chipClass('no')}"     onclick="setAvail('${currentOrderId}',${i},'no')">Ikke tilgjengelig</button>
       </div>
     </div>
 
@@ -2018,7 +2031,7 @@ function renderItemCard(item, i, s) {
     <div class="replacement-section ${replVisible}" id="repl-${i}">
       <div class="replacement-header">
         <span class="replacement-title">
-          ${s.avail==='no'?'🔴 Ikke mulig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
+          ${s.avail==='no'?'🔴 Ikke tilgjengelig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
         </span>
       </div>
       <div class="search-row">
@@ -2085,15 +2098,23 @@ function renderComponentCard(c, i, ci) {
     return `avail-btn active-${val === 'ok' ? 'ok' : val === 'unsure' ? 'unsure' : 'no'}`;
   };
   const expectedHint = c.expected ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(forv. ${escHtml(c.expected)})</span>` : '';
-  const selectedChips = replacements.map(fid => {
-    const f = FISH_DB.find(x => x.id === fid);
-    if (!f) return '';
-    const isConfirmed = c.confirmedReplacement === fid;
-    return `<span class="replacement-chip ${isConfirmed ? 'confirmed' : ''}">
+  const suggestedKey = c.suggestedReplacement ? _replKey(c.suggestedReplacement) : null;
+  const confirmedKey = c.confirmedReplacement ? _replKey(c.confirmedReplacement) : null;
+  const selectedChips = replacements.map(r => {
+    const repl = _replObj(r);
+    if (!repl) return '';
+    const key = _replKey(repl);
+    const isConfirmed = key === confirmedKey;
+    const isSuggested = !isConfirmed && key === suggestedKey;
+    const cls = isConfirmed ? 'confirmed' : (isSuggested ? 'suggested' : '');
+    const priceStr = repl.price ? ` <span class="repl-price">${repl.price} kr/${escHtml(repl.unitLabel || 'stk')}</span>` : '';
+    const stateLabel = isConfirmed ? 'Bekreftet av admin' : (isSuggested ? 'Foreslått — venter på admin' : '');
+    return `<span class="replacement-chip ${cls}">
       ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
-      ${escHtml(f.name)}
-      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmComponentReplacement('${currentOrderId}',${i},${ci},'${fid}')">Bekreft</button>` : ''}
-      <button class="chip-remove" onclick="removeComponentReplacement('${currentOrderId}',${i},${ci},'${fid}')">✕</button>
+      ${escHtml(repl.name)}${priceStr}
+      ${stateLabel ? `<span class="chip-state">${escHtml(stateLabel)}</span>` : ''}
+      ${(!isConfirmed && !isSuggested) ? `<button class="chip-confirm" onclick="suggestComponentReplacement('${currentOrderId}',${i},${ci},'${escHtml(key)}')">Foreslå</button>` : ''}
+      ${!isConfirmed ? `<button class="chip-remove" onclick="removeComponentReplacement('${currentOrderId}',${i},${ci},'${escHtml(key)}')">✕</button>` : ''}
     </span>`;
   }).join('');
   return `
@@ -2103,7 +2124,7 @@ function renderComponentCard(c, i, ci) {
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'ok')">Tilgjengelig</button>
         <button class="${chipClass('unsure')}" onclick="setComponentAvail('${currentOrderId}',${i},${ci},'unsure')">Usikkert</button>
-        <button class="${chipClass('no')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'no')">Ikke mulig</button>
+        <button class="${chipClass('no')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'no')">Ikke tilgjengelig</button>
       </div>
     </div>
     <div class="item-fields ${fieldsVisible}">
@@ -2125,7 +2146,7 @@ function renderComponentCard(c, i, ci) {
     <div class="replacement-section ${replVisible}" id="comp-repl-${i}-${ci}">
       <div class="replacement-header">
         <span class="replacement-title">
-          ${c.avail==='no'?'🔴 Ikke mulig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
+          ${c.avail==='no'?'🔴 Ikke tilgjengelig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
         </span>
       </div>
       <div class="search-row">
@@ -2219,7 +2240,7 @@ function setComponentAvail(orderId, i, ci, val) {
     c.avail = null; c.weight = ''; c.expiry = '';
   } else {
     c.avail = val;
-    if (val === 'ok') { c.replacements = []; c.confirmedReplacement = null; }
+    if (val === 'ok') { c.replacements = []; c.suggestedReplacement = null; c.confirmedReplacement = null; }
     else              { c.weight = ''; c.expiry = ''; }
   }
   saveState();
@@ -2228,6 +2249,40 @@ function setComponentAvail(orderId, i, ci, val) {
   if (val !== 'ok' && val !== null) {
     setTimeout(() => { const el = document.getElementById('comp-search-' + i + '-' + ci); if (el) el.focus(); }, 50);
   }
+}
+
+// Normaliserer replacement-input til en stabil "key" som identifiserer produktet.
+// Aksepterer både gammelt FISH_DB-id ("f17"), slug, eller {slug,name}-objekter.
+function _replKey(r) {
+  if (!r) return '';
+  if (typeof r === 'string') return r;
+  return r.slug || r.id || r.name || '';
+}
+
+// Slår opp et replacement-objekt ut fra det som er lagret i STATE.
+// Returnerer { slug, name, price, unitLabel } — fyller inn fra PRODUCT_LIST
+// hvis bare keyen er lagret (etter sync fra annen enhet).
+function _replObj(r) {
+  if (!r) return null;
+  if (typeof r === 'object' && r.name) return r;
+  const key = _replKey(r);
+  if (!key) return null;
+  const p = PRODUCT_LIST.find(x => x.slug === key || x.name === key);
+  if (p) return p;
+  // Legacy FISH_DB-id ("fNN") — fall tilbake til navnet derfra
+  const f = FISH_DB.find(x => x.id === key);
+  if (f) return { slug: f.id, name: f.name, price: 0, unitLabel: f.unit, cat: f.category };
+  return { slug: key, name: key, price: 0, unitLabel: 'stk' };
+}
+
+function _replSearchSource(query) {
+  const q = String(query || '').toLowerCase().trim();
+  if (!q) return [];
+  const fromProducts = PRODUCT_LIST.filter(p => p.name.toLowerCase().includes(q) || (p.cat || '').toLowerCase().includes(q));
+  if (fromProducts.length) return fromProducts.slice(0, 40);
+  // Fallback til hardkodet FISH_DB hvis PRODUCT_LIST ikke er lastet ennå
+  return FISH_DB.filter(f => f.name.toLowerCase().includes(q) || f.category.toLowerCase().includes(q))
+                .map(f => ({ slug: f.id, name: f.name, price: 0, unitLabel: f.unit, cat: f.category }));
 }
 
 function onComponentSearch(orderId, i, ci, query) {
@@ -2239,56 +2294,68 @@ function onComponentSearch(orderId, i, ci, query) {
   const resultsEl = document.getElementById('comp-results-' + i + '-' + ci);
   if (!resultsEl) return;
   if (!q) { resultsEl.innerHTML = ''; resultsEl.classList.remove('visible'); return; }
-  const matches = FISH_DB.filter(f => f.name.toLowerCase().includes(q) || f.category.toLowerCase().includes(q));
+  const matches = _replSearchSource(q);
   if (!matches.length) {
     resultsEl.innerHTML = `<div style="padding:12px 14px;font-size:13px;color:var(--muted)">Ingen treff på «${escHtml(query)}»</div>`;
     resultsEl.classList.add('visible');
     return;
   }
-  const selected = Array.isArray(c.replacements) ? c.replacements : [];
-  resultsEl.innerHTML = matches.map(f => {
-    const isSel = selected.includes(f.id);
-    return `<div class="result-item ${isSel?'selected':''}" onclick="toggleComponentReplacement('${orderId}',${i},${ci},'${f.id}')">
+  const selected = (Array.isArray(c.replacements) ? c.replacements : []).map(_replKey);
+  resultsEl.innerHTML = matches.map(p => {
+    const key = _replKey(p);
+    const isSel = selected.includes(key);
+    const priceStr = p.price ? `${p.price} kr/${escHtml(p.unitLabel || 'stk')}` : '';
+    return `<div class="result-item ${isSel?'selected':''}" onclick="toggleComponentReplacement('${orderId}',${i},${ci},'${escHtml(key)}')">
       <div class="result-check">${isSel?'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}</div>
-      <span class="result-name">${escHtml(f.name)}</span>
-      <span class="result-detail">${escHtml(f.category)} · ${escHtml(f.unit)}</span>
+      <span class="result-name">${escHtml(p.name)}</span>
+      <span class="result-detail">${escHtml(p.cat || '')}${priceStr ? ' · ' + priceStr : ''}</span>
     </div>`;
   }).join('');
   resultsEl.classList.add('visible');
 }
 
-function toggleComponentReplacement(orderId, i, ci, fishId) {
+function toggleComponentReplacement(orderId, i, ci, key) {
   const entry = STATE[orderId][i];
   if (!entry || !entry.isKasse) return;
   const c = entry.components[ci];
   if (!c) return;
   if (!Array.isArray(c.replacements)) c.replacements = [];
-  c.replacements = c.replacements.includes(fishId)
-    ? c.replacements.filter(id => id !== fishId)
-    : [...c.replacements, fishId];
+  const existing = c.replacements.findIndex(r => _replKey(r) === key);
+  if (existing >= 0) {
+    c.replacements.splice(existing, 1);
+    if (_replKey(c.suggestedReplacement) === key) c.suggestedReplacement = null;
+  } else {
+    const p = PRODUCT_LIST.find(x => _replKey(x) === key) || _replObj(key);
+    c.replacements.push(p);
+  }
   const q = document.getElementById('comp-search-' + i + '-' + ci)?.value || '';
   onComponentSearch(orderId, i, ci, q);
   updateComponentChips(orderId, i, ci);
   saveState();
 }
 
-function removeComponentReplacement(orderId, i, ci, fishId) {
+function removeComponentReplacement(orderId, i, ci, key) {
   const entry = STATE[orderId][i];
   if (!entry || !entry.isKasse) return;
   const c = entry.components[ci];
   if (!c) return;
-  c.replacements = (c.replacements || []).filter(id => id !== fishId);
-  if (c.confirmedReplacement === fishId) c.confirmedReplacement = null;
+  c.replacements = (c.replacements || []).filter(r => _replKey(r) !== key);
+  if (_replKey(c.suggestedReplacement) === key) c.suggestedReplacement = null;
+  // confirmedReplacement settes kun av admin — fjernes ikke fra pakke
   updateComponentChips(orderId, i, ci);
   saveState();
 }
 
-function confirmComponentReplacement(orderId, i, ci, fishId) {
+// Pakke foreslår en erstatning til admin. Admin må deretter bekrefte (eller avslå)
+// fra ordre-drawer på admin.havoyet.no — først da blir det confirmedReplacement og
+// pris-justering legges til ordren.
+function suggestComponentReplacement(orderId, i, ci, key) {
   const entry = STATE[orderId][i];
   if (!entry || !entry.isKasse) return;
   const c = entry.components[ci];
   if (!c) return;
-  c.confirmedReplacement = c.confirmedReplacement === fishId ? null : fishId;
+  const repl = (c.replacements || []).find(r => _replKey(r) === key) || _replObj(key);
+  c.suggestedReplacement = _replKey(c.suggestedReplacement) === key ? null : repl;
   updateComponentChips(orderId, i, ci);
   saveState();
 }
@@ -2300,21 +2367,29 @@ function updateComponentChips(orderId, i, ci) {
   if (!c) return;
   const chipsEl = document.getElementById('comp-chips-' + i + '-' + ci);
   if (!chipsEl) return;
-  chipsEl.innerHTML = (c.replacements || []).map(fid => {
-    const f = FISH_DB.find(x => x.id === fid);
-    if (!f) return '';
-    const isConfirmed = c.confirmedReplacement === fid;
-    return `<span class="replacement-chip ${isConfirmed ? 'confirmed' : ''}">
+  const suggestedKey = _replKey(c.suggestedReplacement);
+  const confirmedKey = _replKey(c.confirmedReplacement);
+  chipsEl.innerHTML = (c.replacements || []).map(r => {
+    const repl = _replObj(r);
+    if (!repl) return '';
+    const key = _replKey(repl);
+    const isConfirmed = key === confirmedKey;
+    const isSuggested = !isConfirmed && key === suggestedKey;
+    const cls = isConfirmed ? 'confirmed' : (isSuggested ? 'suggested' : '');
+    const priceStr = repl.price ? ` <span class="repl-price">${repl.price} kr/${escHtml(repl.unitLabel || 'stk')}</span>` : '';
+    const stateLabel = isConfirmed ? 'Bekreftet av admin' : (isSuggested ? 'Foreslått — venter på admin' : '');
+    return `<span class="replacement-chip ${cls}">
       ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
-      ${escHtml(f.name)}
-      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmComponentReplacement('${orderId}',${i},${ci},'${fid}')">Bekreft</button>` : ''}
-      <button class="chip-remove" onclick="removeComponentReplacement('${orderId}',${i},${ci},'${fid}')">✕</button>
+      ${escHtml(repl.name)}${priceStr}
+      ${stateLabel ? `<span class="chip-state">${escHtml(stateLabel)}</span>` : ''}
+      ${(!isConfirmed && !isSuggested) ? `<button class="chip-confirm" onclick="suggestComponentReplacement('${orderId}',${i},${ci},'${escHtml(key)}')">Foreslå</button>` : ''}
+      ${!isConfirmed ? `<button class="chip-remove" onclick="removeComponentReplacement('${orderId}',${i},${ci},'${escHtml(key)}')">✕</button>` : ''}
     </span>`;
   }).join('');
-  // Oppdater komponent-navnet med erstatning
+  // Oppdater komponent-navnet med bekreftet erstatning (samme som top-level item-flow).
   const nameEl = document.getElementById('comp-name-' + i + '-' + ci);
   if (nameEl) {
-    const confirmed = c.confirmedReplacement ? FISH_DB.find(x => x.id === c.confirmedReplacement) : null;
+    const confirmed = c.confirmedReplacement ? _replObj(c.confirmedReplacement) : null;
     const expectedHint = c.expected ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(forv. ${escHtml(c.expected)})</span>` : '';
     if (confirmed) {
       nameEl.innerHTML = `<span class="item-name replaced">${escHtml(c.name)}</span> <span class="item-name-replacement">${escHtml(confirmed.name)}</span>${expectedHint}`;
@@ -2661,7 +2736,9 @@ function buildProductSummary() {
 }
 
 // Cache av produktnavn (lowercase) → kategori. Hentes fra /api/products/list.
+// Samme fetch befolker også PRODUCT_LIST som brukes til erstatningssøk i kasse-komponenter.
 let _productCatMap = null;
+let PRODUCT_LIST = [];
 async function _ensureProductCatMap(){
   if (_productCatMap) return _productCatMap;
   try {
@@ -2669,8 +2746,24 @@ async function _ensureProductCatMap(){
     if (!r.ok) throw new Error('http ' + r.status);
     const d = await r.json();
     const m = {};
-    (d.products || []).forEach(p => { if (p && p.name && p.cat) m[String(p.name).toLowerCase().trim()] = p.cat; });
+    const list = [];
+    (d.products || []).forEach(p => {
+      if (!p || !p.name) return;
+      if (p.cat) m[String(p.name).toLowerCase().trim()] = p.cat;
+      const status = (p.status || 'available').toLowerCase();
+      if (status === 'available') {
+        list.push({
+          slug: p.slug || '',
+          name: p.name,
+          cat:  p.cat || 'Annet',
+          price: Number(p.price || 0),
+          unitLabel: p.unitLabel || (p.kind === 'shellfish' ? 'kg' : 'stk'),
+          kind: p.kind || 'unit',
+        });
+      }
+    });
     _productCatMap = m;
+    PRODUCT_LIST = list;
   } catch (e) { _productCatMap = {}; }
   return _productCatMap;
 }
