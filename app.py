@@ -1753,50 +1753,61 @@ def api_admin_notifier_test():
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     mail_sent = mail_failed = sms_sent = sms_failed = push_sent = push_failed = 0
     tg_sent = tg_failed = 0
+    errors = []  # liste over feildetaljer per kanal/mottaker for diagnostikk
     for n in targets:
         email = (n.get("email") or "").strip()
         phone = (n.get("phone") or "").strip()
         ntfy  = (n.get("ntfy_topic") or "").strip()
         tg    = (n.get("telegram_chat_id") or "").strip()
         if email:
-            ok, _ = _send_admin_mail(
+            ok, detail = _send_admin_mail(
                 email,
                 "[Havøyet] Testvarsel fra admin",
                 f"Dette er en test sendt {ts}.\n\n"
                 f"Hvis du mottok denne e-posten er admin-varsler korrekt satt opp for {email}.",
             )
             if ok: mail_sent += 1
-            else:  mail_failed += 1
+            else:
+                mail_failed += 1
+                errors.append({"channel": "email", "to": email, "detail": detail})
         if phone:
             norm = _normalize_phone(phone)
             if not norm:
                 sms_failed += 1
+                errors.append({"channel": "sms", "to": phone, "detail": "ugyldig telefonformat"})
             else:
-                ok, _ = _send_admin_sms(norm, f"Havøyet: testvarsel {ts}")
+                ok, detail = _send_admin_sms(norm, f"Havøyet: testvarsel {ts}")
                 if ok: sms_sent += 1
-                else:  sms_failed += 1
+                else:
+                    sms_failed += 1
+                    errors.append({"channel": "sms", "to": norm, "detail": detail})
         if ntfy:
-            ok, _ = _send_admin_push(
+            ok, detail = _send_admin_push(
                 ntfy,
                 "[Havøyet] Testvarsel",
                 f"Push-varsel sendt {ts}.\n\nNår du ser dette på telefonen, fungerer admin-varsler.",
             )
             if ok: push_sent += 1
-            else:  push_failed += 1
+            else:
+                push_failed += 1
+                errors.append({"channel": "push", "to": ntfy, "detail": detail})
         if tg:
-            ok, _ = _send_admin_telegram(
+            ok, detail = _send_admin_telegram(
                 tg,
                 "[Havøyet] Testvarsel",
                 f"Telegram-varsel sendt {ts}.\n\nNår du ser dette i Telegram, fungerer admin-varsler.",
             )
             if ok: tg_sent += 1
-            else:  tg_failed += 1
+            else:
+                tg_failed += 1
+                errors.append({"channel": "telegram", "to": tg, "detail": detail})
     return jsonify({
         "ok": True,
         "mail_sent": mail_sent, "mail_failed": mail_failed,
         "sms_sent":  sms_sent,  "sms_failed":  sms_failed,
         "push_sent": push_sent, "push_failed": push_failed,
         "telegram_sent": tg_sent, "telegram_failed": tg_failed,
+        "errors": errors,
         # Bakoverkompatibilitet
         "sent": mail_sent + sms_sent + push_sent + tg_sent,
         "failed": mail_failed + sms_failed + push_failed + tg_failed,
