@@ -865,12 +865,15 @@ function resetForm() {
 
 // ─── PREVIEW ────────────────────────────────────────
 function buildLabelHTML() {
-  // Kasse: rens variant-info ("- 2 / Med is / Med tilbehør") fra navnet og bruk
-  // bare basisnavnet ("Klassisk Skalldyrkasse").
+  // Strip all variant-info ("- 1 kg / Uten skinn / Uten bein", "- 2 / Med is",
+  // "(250 g)", etc.) fra produktnavnet. Variant + vekt vises i Innhold-blokken
+  // lengre nede på etiketten — øvre tittel skal kun ha basis-produktnavnet.
   const rawName = STATE.product || '—';
-  const cleanName = STATE.isKasse
-    ? rawName.replace(/\s*[-–]\s*\d+\s*\/.*/, '').replace(/\s*\([^)]*\)/g, '').trim()
-    : rawName.replace(/\s*\([^)]*\)/g,'').trim();
+  const cleanName = rawName
+    .replace(/\s*[–-]\s+.*$/u, '')   // alt fra første " – " eller " - " (med mellomrom) — fanger "1 kg / Uten skinn / Uten bein"
+    .replace(/\s*\/.*$/, '')         // alt fra første " /" — fanger varianter som mangler dash
+    .replace(/\s*\([^)]*\)/g, '')    // parens-suffiks
+    .trim() || rawName;
   const cap = STATE.capture;
   const capLabel = cap === 'villfanget' ? 'Villfanget' : cap === 'oppdrett' ? 'Oppdrett' : '';
   const ordNum = STATE.orderId ? (STATE.orderId.startsWith('#') ? STATE.orderId : '#' + STATE.orderId.replace(/^M-/,'')) : '';
