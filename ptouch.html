@@ -687,24 +687,16 @@ function selectItem(id, idx) {
   if (kasseInfo) {
     STATE.isKasse = true;
     STATE.product = kasseInfo.displayName;
-    // Prioritetsrekkefølge for komponentlista på etiketten:
-    //   1) Pakket data (s.components) — gir faktiske vekter + holdbarhetsdato
-    //   2) Recipe (klassisk) — bruker per-person-mengder × antall pers
-    //   3) Kundens boxSelection (Din skalldyrkasse — custom)
-    // På den måten viser etiketten alltid hva som ER eller SKAL VÆRE i
-    // kassen, selv før varene er pakket og veid.
-    const compsFromState = Array.isArray(s.components) ? s.components.filter(c => c && c.avail === 'ok' && c.weight && c.expiry) : [];
-    if (compsFromState.length) {
-      STATE.components = compsFromState.map(c => ({
-        name: c.name || '',
-        weight: c.weight || '',
-        weightUnit: c.weightUnit || 'g',
-        expiry: c.expiry || '',
-      }));
-    } else if (kasseInfo.type === 'klassisk') {
+    // Bygg ALLTID hele forventet komponentliste fra recipe/boxSelection,
+    // og legg pakket data oppå der det finnes (gir riktig vekt + holdbarhet).
+    // Slik viser etiketten alle 4 ingrediensene i en Klassisk Skalldyrkasse
+    // selv om bare ett produkt er bekreftet pakket — i stedet for bare det
+    // ene som tidligere skjedde.
+    let baseline = [];
+    if (kasseInfo.type === 'klassisk') {
       const recipe = KASSE_RECIPES.klassisk;
       const persons = kasseInfo.persons || 2;
-      STATE.components = recipe.components.map(c => {
+      baseline = recipe.components.map(c => {
         if (c.perPersonGrams != null) {
           return { name: c.name, weight: String(c.perPersonGrams * persons), weightUnit: c.unit || 'g', expiry: '' };
         }
@@ -714,21 +706,56 @@ function selectItem(id, idx) {
         return { name: c.name, weight: '', weightUnit: c.unit || 'g', expiry: '' };
       });
     } else if (kasseInfo.type === 'custom') {
-      // Din skalldyrkasse: kunden valgte selv. Innholdet ligger i
-      // boxSelection-arrayen som ble sendt fra checkout (preserveres av
-      // _ptouchNormalizeRaw / Flask _normalize_manual_order).
       const sel = it.boxSelection || (it._raw && it._raw.boxSelection) || [];
-      STATE.components = (Array.isArray(sel) ? sel : [])
+      baseline = (Array.isArray(sel) ? sel : [])
         .map(b => ({
           name: b.navn || b.name || '',
-          weight: b.weight || b.grams ? String(b.weight || b.grams) : '',
+          weight: (b.weight || b.grams) ? String(b.weight || b.grams) : '',
           weightUnit: b.unit || 'g',
           expiry: '',
         }))
         .filter(c => c.name);
-    } else {
-      STATE.components = [];
     }
+    // Overlay pakket data (s.components) — kun bekreftede med vekt + holdbarhet
+    const packed = Array.isArray(s.components) ? s.components.filter(c => c && c.avail === 'ok' && c.weight && c.expiry) : [];
+    if (packed.length) {
+      const packedByName = new Map(packed.map(p => [String(p.name || '').toLowerCase().trim(), p]));
+      if (baseline.length) {
+        // Merge: behold recipe-rekkefølgen, bytt ut vekt/holdbarhet fra pakket
+        baseline = baseline.map(b => {
+          const m = packedByName.get(String(b.name || '').toLowerCase().trim());
+          if (!m) return b;
+          return {
+            name: m.name || b.name,
+            weight: m.weight || b.weight,
+            weightUnit: m.weightUnit || b.weightUnit,
+            expiry: m.expiry || b.expiry,
+          };
+        });
+        // Pakkede produkter som IKKE er i recipe (admin la til ekstra) — legg til på slutten
+        const baselineNames = new Set(baseline.map(b => String(b.name || '').toLowerCase().trim()));
+        packed.forEach(p => {
+          const k = String(p.name || '').toLowerCase().trim();
+          if (k && !baselineNames.has(k)) {
+            baseline.push({
+              name: p.name || '',
+              weight: p.weight || '',
+              weightUnit: p.weightUnit || 'g',
+              expiry: p.expiry || '',
+            });
+          }
+        });
+      } else {
+        // Ingen baseline (ukjent kassetype) — fall tilbake til kun pakket
+        baseline = packed.map(p => ({
+          name: p.name || '',
+          weight: p.weight || '',
+          weightUnit: p.weightUnit || 'g',
+          expiry: p.expiry || '',
+        }));
+      }
+    }
+    STATE.components = baseline;
     // Tidligste holdbarhet → Holdbarhetsdato på etiketten
     let earliest = null;
     STATE.components.forEach(c => { if (c.expiry && (!earliest || c.expiry < earliest)) earliest = c.expiry; });
