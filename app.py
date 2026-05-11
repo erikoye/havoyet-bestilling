@@ -324,8 +324,19 @@ def fetch_domstein_prisliste():
 # ── SERVE HTML-FILER (iPad / andre enheter på samme WiFi) ─────────────────────
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+_DRIVER_HOST_MARKERS = ("sjåfør", "xn--sjfr-zra", "sjafor.")
+
+
+def _is_driver_host() -> bool:
+    host = (request.host or "").lower()
+    return any(m in host for m in _DRIVER_HOST_MARKERS)
+
+
 @app.route("/")
 def serve_index():
+    # sjåfør.havoyet.no (Unicode eller Punycode) → sjåfør-appen
+    if _is_driver_host():
+        return send_from_directory(_BASE_DIR, "sjafor.html")
     return send_from_directory(_BASE_DIR, "index.html")
 
 # Pretty URLs uten .html — Cloudflare foran bestilling.havoyet.no gjør 308 fra
@@ -344,6 +355,8 @@ _PRETTY_PAGES = {
     "nesttun-admin":    "nesttun-admin.html",
     "tracking-admin":   "tracking-admin.html",
     "rute":             "rute.html",
+    "sjafor":           "sjafor.html",
+    "sjåfør":           "sjafor.html",
 }
 
 @app.route("/<page>")

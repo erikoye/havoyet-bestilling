@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#1A3A5C">
+  <title>Sjåfør — Havøyet</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="">
+  <style>
+    :root{--blue:#1A3A5C;--gold:#C8A45C;--bg:#F4F1EA;--ink:#1B1B1B;--soft:#666;
+          --line:#E4DDD0;--ok:#2F7A4F;--err:#B33A3A}
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,
+              "Segoe UI",sans-serif;background:var(--bg);color:var(--ink);
+              overscroll-behavior:none}
+
+    /* ── PIN-skjerm ──────────────────────────────────────── */
+    .pin-screen{position:fixed;inset:0;background:var(--blue);color:#fff;
+                display:flex;flex-direction:column;align-items:center;justify-content:center;
+                padding:24px;z-index:9999}
+    .pin-screen .brand{font-weight:700;font-size:22px;margin-bottom:6px;color:var(--gold)}
+    .pin-screen p{color:rgba(255,255,255,.75);margin:0 0 28px;font-size:14px}
+    .pin-input{font-size:32px;letter-spacing:14px;width:200px;padding:14px 0;
+               text-align:center;background:rgba(255,255,255,.1);color:#fff;
+               border:2px solid rgba(255,255,255,.25);border-radius:12px;
+               font-family:-apple-system,sans-serif;font-weight:600;
+               -webkit-text-security:disc}
+    .pin-input:focus{outline:none;border-color:var(--gold);
+                     background:rgba(255,255,255,.18)}
+    .pin-btn{margin-top:18px;background:var(--gold);color:var(--blue);
+             border:none;border-radius:10px;padding:14px 32px;font-size:16px;
+             font-weight:700;cursor:pointer;width:200px}
+    .pin-err{color:#FFB4B4;margin-top:14px;font-size:13px;min-height:18px}
+
+    /* ── Hovedvisning ────────────────────────────────────── */
+    .app{display:flex;flex-direction:column;height:100dvh}
+    .topbar{background:var(--blue);color:#fff;padding:env(safe-area-inset-top) 14px 12px;
+            display:flex;align-items:center;gap:10px;flex-shrink:0;
+            padding-top:max(env(safe-area-inset-top),12px)}
+    .topbar .brand{font-weight:700;font-size:15px;color:var(--gold);flex:0 0 auto}
+    .topbar .summary{font-size:12px;color:rgba(255,255,255,.85);flex:1;
+                     line-height:1.4}
+    .topbar .summary b{color:#fff;font-size:14px}
+    .topbar .menu-btn{background:rgba(255,255,255,.12);border:none;color:#fff;
+                      width:36px;height:36px;border-radius:8px;font-size:18px;
+                      cursor:pointer}
+
+    #map{flex:0 0 38vh;width:100%;background:#dde}
+    @media (min-height:800px){ #map{flex-basis:42vh} }
+
+    .stops-panel{flex:1;overflow-y:auto;padding:10px 12px 24px;
+                 padding-bottom:max(env(safe-area-inset-bottom),24px)}
+
+    .next-card{background:linear-gradient(135deg,var(--blue),#2a4f7a);color:#fff;
+               border-radius:14px;padding:16px 16px 14px;margin-bottom:14px;
+               box-shadow:0 6px 18px rgba(26,58,92,.25)}
+    .next-card .label{color:var(--gold);font-size:11px;letter-spacing:.8px;
+                      text-transform:uppercase;font-weight:700}
+    .next-card .name{font-size:20px;font-weight:700;margin:4px 0 2px;line-height:1.2}
+    .next-card .addr{font-size:13px;color:rgba(255,255,255,.85);line-height:1.4}
+    .next-card .meta{display:flex;gap:14px;margin-top:12px;font-size:13px;
+                     color:rgba(255,255,255,.95)}
+    .next-card .meta .val{font-weight:700;font-size:18px;color:#fff;
+                          font-variant-numeric:tabular-nums}
+    .next-card .nav-btn{display:flex;align-items:center;justify-content:center;
+                        gap:8px;width:100%;background:var(--gold);color:var(--blue);
+                        border:none;border-radius:10px;padding:14px;font-weight:700;
+                        font-size:15px;margin-top:14px;cursor:pointer;
+                        text-decoration:none}
+    .next-card .nav-btn:active{filter:brightness(.92)}
+
+    .stop{background:#fff;border:1px solid var(--line);border-radius:10px;
+          padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px}
+    .stop.done{opacity:.5}
+    .stop-num{background:var(--blue);color:#fff;width:28px;height:28px;
+              border-radius:50%;display:flex;align-items:center;justify-content:center;
+              font-weight:700;font-size:13px;flex:0 0 28px}
+    .stop.done .stop-num{background:var(--ok)}
+    .stop-info{flex:1;min-width:0}
+    .stop-info .name{font-weight:600;font-size:14px;
+                     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .stop-info .addr{font-size:12px;color:var(--soft);
+                     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .stop-eta{flex:0 0 auto;text-align:right;font-weight:700;color:var(--blue);
+              font-variant-numeric:tabular-nums;font-size:14px}
+    .stop-eta small{display:block;color:var(--soft);font-weight:500;font-size:10px;
+                    text-transform:uppercase;letter-spacing:.5px}
+
+    .nav-small{background:none;border:none;color:var(--blue);font-size:18px;
+               cursor:pointer;padding:6px 8px}
+    .empty{text-align:center;padding:48px 18px;color:var(--soft);font-size:14px}
+    .pulse-dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+               background:#5fd87b;margin-right:4px;animation:p 1.4s ease-in-out infinite}
+    @keyframes p{50%{opacity:.35}}
+  </style>
+</head>
+<body>
+
+<!-- PIN-skjerm -->
+<div class="pin-screen" id="pinScreen" style="display:none">
+  <div class="brand">Havøyet</div>
+  <p>Skriv inn sjåfør-PIN for å starte</p>
+  <input type="tel" inputmode="numeric" class="pin-input" id="pin"
+         maxlength="8" autocomplete="off" autofocus>
+  <button class="pin-btn" id="pinBtn">Logg inn</button>
+  <div class="pin-err" id="pinErr"></div>
+</div>
+
+<!-- Hovedvisning -->
+<div class="app" id="app" style="display:none">
+  <div class="topbar">
+    <span class="brand">Havøyet</span>
+    <div class="summary" id="summary">Laster …</div>
+    <button class="menu-btn" id="refreshBtn" title="Last på nytt">⟳</button>
+    <button class="menu-btn" id="logoutBtn" title="Logg ut">⏻</button>
+  </div>
+  <div id="map"></div>
+  <div class="stops-panel">
+    <div id="nextCard"></div>
+    <div id="stops"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+<script>
+const $ = id => document.getElementById(id);
+const PIN_KEY = "havoyet_driver_pin";
+const today = () => new Date().toISOString().slice(0,10);
+let map, vehicleMarker, routeLine;
+const stopLayer = (typeof L !== "undefined") ? L.layerGroup() : null;
+const stopMarkers = {};
+let currentRoute = null;
+let livePollTimer = null;
+
+function getPin(){ return localStorage.getItem(PIN_KEY) || ""; }
+function setPin(v){ localStorage.setItem(PIN_KEY, v); }
+function clearPin(){ localStorage.removeItem(PIN_KEY); }
+
+async function tryAuth(pin){
+  const r = await fetch("/api/driver/auth", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({pin}),
+  });
+  return r.ok;
+}
+
+async function showPinScreen(msg){
+  $("app").style.display = "none";
+  $("pinScreen").style.display = "flex";
+  if (msg) $("pinErr").textContent = msg;
+  setTimeout(() => $("pin").focus(), 100);
+}
+
+async function showApp(){
+  $("pinScreen").style.display = "none";
+  $("app").style.display = "flex";
+  if (!map) initMap();
+  await loadRoute();
+}
+
+function initMap(){
+  map = L.map("map", {zoomControl:true, attributionControl:false}).setView([60.39, 5.32], 11);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom:19}).addTo(map);
+  stopLayer.addTo(map);
+}
+
+function makeStopIcon(num, done){
+  const color = done ? "#2F7A4F" : "#1A3A5C";
+  return L.divIcon({
+    className: "",
+    html: `<div style="background:${color};color:#fff;width:30px;height:30px;
+            border-radius:50%;display:flex;align-items:center;justify-content:center;
+            font-weight:700;font-size:13px;border:3px solid #fff;
+            box-shadow:0 2px 6px rgba(0,0,0,.3)">${num}</div>`,
+    iconSize:[30,30], iconAnchor:[15,15],
+  });
+}
+function makeVehicleIcon(){
+  return L.divIcon({
+    className: "",
+    html: `<div style="background:#C8A45C;border:3px solid #fff;
+            width:24px;height:24px;border-radius:50%;
+            box-shadow:0 0 0 4px rgba(200,164,92,.3);
+            animation:vp 1.6s ease-in-out infinite"></div>
+           <style>@keyframes vp{50%{box-shadow:0 0 0 14px rgba(200,164,92,0)}}</style>`,
+    iconSize:[24,24], iconAnchor:[12,12],
+  });
+}
+
+function navLink(lat, lon, label){
+  // Apple Maps universal, fallback til Google Maps på Android
+  const isApple = /iPhone|iPad|iPod|Mac/.test(navigator.platform);
+  if (isApple) return `maps://?daddr=${lat},${lon}&dirflg=d`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving`;
+}
+
+async function fetchRoute(){
+  const r = await fetch(`/api/driver/route/today?date=${today()}&pin=${encodeURIComponent(getPin())}`);
+  if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp. Logg inn på nytt."); return null; }
+  if (!r.ok) return null;
+  return r.json();
+}
+
+async function loadRoute(){
+  $("summary").textContent = "Laster …";
+  $("stops").innerHTML = "";
+  $("nextCard").innerHTML = "";
+  stopLayer.clearLayers();
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+
+  const data = await fetchRoute();
+  if (!data) return;
+  currentRoute = data;
+
+  if (data.error === "no_depot") {
+    $("summary").innerHTML = "Depot ikke konfigurert";
+    return;
+  }
+
+  const stops = data.stops || [];
+  if (!stops.length) {
+    $("summary").innerHTML = "Ingen leveringer i dag";
+    $("stops").innerHTML = `<div class="empty">Ingen ordrer med leveringsdato ${data.date}.</div>`;
+    return;
+  }
+
+  $("summary").innerHTML = `<b>${stops.length}</b> stopp · <b>${Math.round(data.total_duration_min || 0)}</b> min<br>
+    ${data.vehicle ? '<span class="pulse-dot"></span>Bil online' : 'Bil offline'}`;
+
+  if (data.geometry?.coordinates) {
+    const latlngs = data.geometry.coordinates.map(([lon,lat]) => [lat,lon]);
+    routeLine = L.polyline(latlngs, {color:"#1A3A5C", weight:4, opacity:.6}).addTo(map);
+  }
+
+  for (const s of stops) {
+    const m = L.marker([s.lat, s.lon], {icon: makeStopIcon(s.stop_index)}).addTo(stopLayer);
+    stopMarkers[s.order_id] = m;
+  }
+
+  // Neste stopp = første som ikke er levert
+  const next = stops[0];
+  $("nextCard").innerHTML = `
+    <div class="next-card">
+      <div class="label">Neste stopp · ${next.stop_index} av ${stops.length}</div>
+      <div class="name">${next.navn || ('Bestilling #'+next.order_id)}</div>
+      <div class="addr">${[next.adresse, next.postnr, next.poststed].filter(Boolean).join(", ") || "(adresse mangler)"}</div>
+      <div class="meta">
+        <div><div style="opacity:.7;font-size:11px">ETA</div><span class="val" data-next-eta>—</span> min</div>
+        ${next.leveringstid ? `<div><div style="opacity:.7;font-size:11px">Tid</div><span class="val">${next.leveringstid}</span></div>` : ""}
+        ${next.tlf ? `<div><div style="opacity:.7;font-size:11px">Telefon</div><a href="tel:${next.tlf}" style="color:#fff;text-decoration:underline">${next.tlf}</a></div>` : ""}
+      </div>
+      <a class="nav-btn" href="${navLink(next.lat, next.lon, next.navn)}" target="_blank">
+        🧭 Naviger hit
+      </a>
+    </div>`;
+
+  // Liste over alle stopp
+  $("stops").innerHTML = stops.map((s,i) => `
+    <div class="stop" data-id="${s.order_id}">
+      <span class="stop-num">${s.stop_index}</span>
+      <div class="stop-info">
+        <div class="name">${s.navn || ('Bestilling #'+s.order_id)}</div>
+        <div class="addr">${[s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ")}</div>
+      </div>
+      <div class="stop-eta">
+        <span data-eta="${s.order_id}">—</span><small>min unna</small>
+      </div>
+      <a class="nav-small" href="${navLink(s.lat, s.lon)}" target="_blank" title="Naviger">🧭</a>
+    </div>
+  `).join("");
+
+  document.querySelectorAll(".stop").forEach(el => {
+    el.addEventListener("click", e => {
+      if (e.target.closest("a")) return;
+      const m = stopMarkers[el.dataset.id];
+      if (m) map.setView(m.getLatLng(), 15);
+    });
+  });
+
+  const all = [
+    [data.depot.lat, data.depot.lon],
+    ...stops.map(s => [s.lat, s.lon]),
+  ];
+  map.fitBounds(L.latLngBounds(all), {padding:[30,30]});
+
+  updateVehicle(data.vehicle);
+  if (livePollTimer) clearInterval(livePollTimer);
+  livePollTimer = setInterval(pollLive, 30000);
+  pollLive();
+}
+
+function updateVehicle(v){
+  if (!v) {
+    if (vehicleMarker){ map.removeLayer(vehicleMarker); vehicleMarker = null; }
+    return;
+  }
+  const latlng = [v.lat, v.lon];
+  if (!vehicleMarker) {
+    vehicleMarker = L.marker(latlng, {icon: makeVehicleIcon(), zIndexOffset:1000}).addTo(map);
+  } else {
+    vehicleMarker.setLatLng(latlng);
+  }
+}
+
+async function pollLive(){
+  if (!currentRoute) return;
+  try {
+    const r = await fetch(`/api/driver/route/live?date=${today()}&pin=${encodeURIComponent(getPin())}`);
+    if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp."); return; }
+    if (!r.ok) return;
+    const data = await r.json();
+    updateVehicle(data.vehicle);
+    for (const [orderId, eta] of Object.entries(data.eta_by_order || {})) {
+      const el = document.querySelector(`[data-eta="${orderId}"]`);
+      if (el) el.textContent = eta.minutes ?? "—";
+    }
+    // Oppdater "neste stopp"-ETA også
+    const next = currentRoute.stops?.[0];
+    if (next && data.eta_by_order?.[next.order_id]) {
+      const el = document.querySelector("[data-next-eta]");
+      if (el) el.textContent = data.eta_by_order[next.order_id].minutes ?? "—";
+    }
+  } catch(e) {}
+}
+
+async function handleLogin(){
+  const pin = $("pin").value.trim();
+  if (!pin) return;
+  $("pinErr").textContent = "";
+  $("pinBtn").disabled = true;
+  $("pinBtn").textContent = "Sjekker …";
+  const ok = await tryAuth(pin);
+  $("pinBtn").disabled = false;
+  $("pinBtn").textContent = "Logg inn";
+  if (!ok) { $("pinErr").textContent = "Feil PIN. Prøv igjen."; $("pin").value = ""; return; }
+  setPin(pin);
+  showApp();
+}
+
+window.addEventListener("DOMContentLoaded", async () => {
+  $("pinBtn").addEventListener("click", handleLogin);
+  $("pin").addEventListener("keydown", e => { if (e.key === "Enter") handleLogin(); });
+  $("refreshBtn").addEventListener("click", () => loadRoute());
+  $("logoutBtn").addEventListener("click", () => {
+    if (!confirm("Logge ut?")) return;
+    clearPin();
+    showPinScreen("");
+  });
+
+  // Auto-login hvis PIN finnes
+  const saved = getPin();
+  if (saved) {
+    if (await tryAuth(saved)) { showApp(); return; }
+    clearPin();
+  }
+  showPinScreen("");
+});
+</script>
+</body>
+</html>

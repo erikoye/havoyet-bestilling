@@ -112,6 +112,21 @@ def _admin_only():
     return user, None
 
 
+def _driver_only():
+    """Sjåfør-auth: PIN via X-Driver-PIN-header eller ?pin=-query.
+
+    PIN-en settes via env-var DRIVER_PIN. Konstant-tid sammenligning så
+    timing-angrep ikke kan brute-force PINen.
+    """
+    expected = os.environ.get("DRIVER_PIN", "").strip()
+    if not expected:
+        return None, (jsonify({"error": "driver_pin_not_configured"}), 503)
+    provided = (request.headers.get("X-Driver-PIN") or request.args.get("pin") or "").strip()
+    if not provided or not secrets.compare_digest(expected, provided):
+        return None, (jsonify({"error": "unauthorized"}), 401)
+    return {"role": "driver"}, None
+
+
 def _find_order(order_id: str) -> dict | None:
     orders = _state["orders_ref"]() or []
     for o in orders:
@@ -723,21 +738,49 @@ def admin_route_today():
     return jsonify(route)
 
 
-@bp.get("/api/admin/tracking/route/live")
-def admin_route_live():
-    """Live oppdatering: kun bil-posisjon + per-stopp-ETA fra bilens NÅ-posisjon.
-
-    Frontend poller dette hvert 30s for å oppdatere bilmarkør og ETA-tall
-    uten å re-optimalisere ruten.
-    """
-    _, err = _admin_only()
+@bp.get("/api/driver/route/today")
+def driver_route_today():
+    """Sjåfør-versjon av /api/admin/tracking/route/today. PIN-beskyttet."""
+    _, err = _driver_only()
     if err:
         return err
     date_iso = (request.args.get("date") or _today_iso()).strip()
+    route = _build_route(date_iso, optimize=True)
+    route["vehicle"] = _current_vehicle_position()
+    return jsonify(route)
 
-    # Hent dagens stopp i opprinnelig (eller cachet) rekkefølge — vi vil ikke
-    # re-optimalisere her, bare oppdatere ETAs basert på bilens nåværende pos.
-    # /today gjør optimaliseringen; frontend holder rekkefølgen mellom polls.
+
+@bp.get("/api/driver/route/live")
+def driver_route_live():
+    """Sjåfør-versjon av live ETA-poll. PIN-beskyttet."""
+    _, err = _driver_only()
+    if err:
+        return err
+    return _route_live_payload(request.args.get("date") or _today_iso())
+
+
+@bp.post("/api/driver/auth")
+def driver_auth_check():
+    """Sjåfør sender PIN, vi bekrefter eller avslår. Returnerer kun ok-flagg —
+    selve PIN-en må sendes på hver request (vi har ikke session for sjåføren)."""
+    expected = os.environ.get("DRIVER_PIN", "").strip()
+    if not expected:
+        return jsonify({"ok": False, "error": "driver_pin_not_configured"}), 503
+    data = request.get_json(silent=True) or {}
+    provided = str(data.get("pin") or "").strip()
+    ok = bool(provided) and secrets.compare_digest(expected, provided)
+    if not ok:
+        return jsonify({"ok": False, "error": "wrong_pin"}), 401
+    return jsonify({"ok": True})
+
+
+def _route_live_payload(date_iso: str):
+    """Felles live-ETA-payload: brukes både av admin- og sjåfør-endepunktet.
+
+    Vi re-optimaliserer ikke her; vi gir bare oppdaterte ETAs fra bilens
+    NÅ-posisjon til hver stopp. Frontend holder rekkefølgen mellom polls.
+    """
+    date_iso = (date_iso or _today_iso()).strip()
     raw_orders = _orders_for_date(date_iso)
     stops = []
     for o in raw_orders:
@@ -761,7 +804,6 @@ def admin_route_live():
                 fallback_eta(vehicle["lat"], vehicle["lon"], s["lat"], s["lon"])
                 for s in stops
             ]
-    # Map order_id → ETA fra bilens posisjon (frontend matcher)
     eta_by_order: dict[str, dict] = {}
     for s, eta in zip(stops, etas_to_stops):
         eta_by_order[s["order_id"]] = {
@@ -775,6 +817,15 @@ def admin_route_live():
         "vehicle": vehicle,
         "eta_by_order": eta_by_order,
     })
+
+
+@bp.get("/api/admin/tracking/route/live")
+def admin_route_live():
+    """Live ETA-poll for admin."""
+    _, err = _admin_only()
+    if err:
+        return err
+    return _route_live_payload(request.args.get("date") or _today_iso())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
