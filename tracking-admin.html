@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ABAX-oppsett — Havøyet admin</title>
+  <style>
+    :root{--blue:#1A3A5C;--gold:#C8A45C;--bg:#F4F1EA;--ink:#1B1B1B;--soft:#666;
+          --line:#E4DDD0;--ok:#2F7A4F;--err:#B33A3A}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:var(--bg);color:var(--ink)}
+    .wrap{max-width:920px;margin:0 auto;padding:24px 18px 40px}
+    h1{color:var(--blue);font-size:24px;margin:0 0 18px}
+    h2{color:var(--blue);font-size:16px;margin:0 0 10px}
+    .card{background:#fff;border-radius:12px;padding:18px;
+          box-shadow:0 4px 14px rgba(0,0,0,.06);margin-bottom:14px}
+    .pill{display:inline-block;padding:2px 10px;border-radius:999px;
+          font-size:12px;font-weight:600;text-transform:uppercase}
+    .pill.ok{background:rgba(47,122,79,.15);color:var(--ok)}
+    .pill.err{background:rgba(179,58,58,.15);color:var(--err)}
+    .pill.warn{background:rgba(200,164,92,.2);color:#8a6e3a}
+    button,.btn{font-family:inherit;font-size:14px;border:none;cursor:pointer;
+                border-radius:8px;padding:9px 14px;font-weight:600}
+    .btn-primary{background:var(--blue);color:#fff}
+    .btn-secondary{background:#fff;color:var(--blue);border:1.5px solid var(--blue)}
+    .btn-danger{background:#fff;color:var(--err);border:1.5px solid var(--err)}
+    .btn:hover,button:hover{filter:brightness(.95)}
+    select,input[type=text]{padding:8px 10px;border:1px solid var(--line);
+                            border-radius:8px;font-size:14px;font-family:inherit}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+    .muted{color:var(--soft);font-size:13px}
+    table{width:100%;border-collapse:collapse;font-size:14px}
+    th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+    th{background:var(--bg);font-weight:600;color:var(--blue)}
+    .copy-row{display:flex;gap:6px;margin-top:6px}
+    .copy-row input{flex:1;font-size:12px;font-family:Menlo,monospace}
+    .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+           background:var(--blue);color:#fff;padding:10px 18px;border-radius:8px;
+           box-shadow:0 6px 16px rgba(0,0,0,.2);font-size:14px;z-index:100}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>ABAX-oppsett</h1>
+
+<!-- Status-kort -->
+<div class="card">
+  <h2>Tilkobling</h2>
+  <div class="row">
+    <span>Konfig:</span> <span id="pill-conf" class="pill warn">Sjekker…</span>
+    <span>Autorisert:</span> <span id="pill-conn" class="pill warn">Sjekker…</span>
+  </div>
+  <p id="missing-env" class="muted" hidden></p>
+  <div class="row" id="connect-row">
+    <button id="btn-connect" class="btn-primary">Koble til ABAX (OAuth)</button>
+    <button id="btn-disconnect" class="btn-danger" hidden>Koble fra</button>
+    <button id="btn-refresh-status" class="btn-secondary">Oppdater status</button>
+  </div>
+</div>
+
+<!-- Bil-valg -->
+<div class="card">
+  <h2>Aktiv leveringsbil</h2>
+  <p class="muted">Velg hvilket kjøretøy som leverer i dag — alle nye tracking-lenker kobles til denne.</p>
+  <div class="row">
+    <select id="vehicle-select"><option>Henter…</option></select>
+    <button id="btn-save-vehicle" class="btn-primary">Lagre</button>
+    <button id="btn-refresh-vehicles" class="btn-secondary">Hent biler på nytt</button>
+  </div>
+</div>
+
+<!-- Ordre + tracking-link -->
+<div class="card">
+  <h2>Send tracking-link til kunde</h2>
+  <p class="muted">Skriv inn ordrenummer for å generere en lenke kunden kan åpne for å se sanntids-ETA.</p>
+  <div class="row">
+    <input type="text" id="order-id" placeholder="Ordrenr (f.eks. 1234)" style="min-width:160px">
+    <button id="btn-make-link" class="btn-primary">Generer lenke</button>
+  </div>
+  <div id="link-result" hidden style="margin-top:12px">
+    <strong>Tracking-lenke for ordre <span id="result-order"></span>:</strong>
+    <div class="copy-row">
+      <input type="text" id="result-url" readonly>
+      <button id="btn-copy" class="btn-secondary">Kopier</button>
+    </div>
+    <p class="muted" style="margin:6px 0 0">Send via SMS/e-post til kunden. Lenken er gyldig til du tilbakekaller den.</p>
+  </div>
+</div>
+
+<!-- Hjelpetekst -->
+<div class="card">
+  <h2>Slik kommer du i gang</h2>
+  <ol style="margin:0;padding-left:20px;color:var(--soft);font-size:13px;line-height:1.6">
+    <li>Logg inn på <code>api.abax.com/docs</code> som admin og opprett en Client.</li>
+    <li>Sett disse miljøvariablene på Render:
+      <ul>
+        <li><code>ABAX_CLIENT_ID</code></li>
+        <li><code>ABAX_CLIENT_SECRET</code></li>
+        <li><code>ABAX_REDIRECT_URI</code> = <code id="self-callback"></code></li>
+      </ul>
+    </li>
+    <li>Trykk «Koble til» og logg inn med ABAX-kontoen din.</li>
+    <li>Velg aktiv leveringsbil over.</li>
+    <li>Når en ordre er klar for utlevering, generer tracking-lenke og send til kunden.</li>
+  </ol>
+</div>
+
+</div>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  function toast(msg, kind = "") {
+    const t = $("toast");
+    t.textContent = msg;
+    t.style.background = kind === "err" ? "#B33A3A" : kind === "ok" ? "#2F7A4F" : "#1A3A5C";
+    t.style.display = "block";
+    setTimeout(() => { t.style.display = "none"; }, 2800);
+  }
+
+  async function api(path, opts = {}) {
+    const init = { credentials: "include", headers: { Accept: "application/json" } };
+    if (opts.method) init.method = opts.method;
+    if (opts.body !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(opts.body);
+    }
+    const r = await fetch(path, init);
+    let data = null;
+    try { data = await r.json(); } catch (_) {}
+    return { ok: r.ok, status: r.status, data };
+  }
+
+  // Self-URL hint
+  $("self-callback").textContent = `${location.origin}/api/admin/tracking/callback`;
+
+  async function refreshStatus() {
+    const r = await api("/api/admin/tracking/status");
+    if (r.status === 401 || r.status === 403) {
+      $("pill-conf").className = "pill err";
+      $("pill-conf").textContent = "Ikke logget inn som admin";
+      return;
+    }
+    const d = r.data;
+    $("pill-conf").className = "pill " + (d.configured ? "ok" : "err");
+    $("pill-conf").textContent = d.configured ? "OK" : "Mangler env-vars";
+    $("pill-conn").className = "pill " + (d.connected ? "ok" : "warn");
+    $("pill-conn").textContent = d.connected ? "Tilkoblet" : "Ikke tilkoblet";
+
+    if (d.missing_env && d.missing_env.length) {
+      $("missing-env").hidden = false;
+      $("missing-env").textContent = "Mangler env-variabler: " + d.missing_env.join(", ");
+    } else {
+      $("missing-env").hidden = true;
+    }
+    $("btn-disconnect").hidden = !d.connected;
+    if (d.connected) loadVehicles(d.active_vehicle_id);
+  }
+
+  $("btn-refresh-status").onclick = refreshStatus;
+
+  $("btn-connect").onclick = async () => {
+    const r = await api("/api/admin/tracking/connect", { method: "POST" });
+    if (!r.ok) return toast(r.data?.error || "Feil", "err");
+    window.location.href = r.data.authorize_url;
+  };
+
+  $("btn-disconnect").onclick = async () => {
+    if (!confirm("Koble fra ABAX?")) return;
+    await api("/api/admin/tracking/disconnect", { method: "POST" });
+    toast("Frakoblet", "ok");
+    refreshStatus();
+  };
+
+  async function loadVehicles(activeId) {
+    const r = await api("/api/admin/tracking/vehicles");
+    const sel = $("vehicle-select");
+    sel.innerHTML = "";
+    if (!r.ok) {
+      sel.innerHTML = `<option>${r.data?.error || "Kunne ikke hente"}</option>`;
+      return;
+    }
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "— ingen valgt —";
+    sel.appendChild(empty);
+    for (const v of r.data.vehicles || []) {
+      const opt = document.createElement("option");
+      opt.value = v.id ?? v.uuid ?? v.vehicle_id ?? "";
+      opt.textContent = (v.registration_number || v.regnr || v.name || v.label || opt.value);
+      if (String(opt.value) === String(activeId || "")) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
+  $("btn-refresh-vehicles").onclick = () => loadVehicles();
+
+  $("btn-save-vehicle").onclick = async () => {
+    const id = $("vehicle-select").value;
+    const r = await api("/api/admin/tracking/active-vehicle", {
+      method: "POST",
+      body: { vehicle_id: id },
+    });
+    toast(r.ok ? "Aktiv bil oppdatert" : (r.data?.error || "Feil"), r.ok ? "ok" : "err");
+  };
+
+  $("btn-make-link").onclick = async () => {
+    const orderId = $("order-id").value.trim();
+    if (!orderId) return toast("Skriv inn ordrenr", "err");
+    const r = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/track-token`, {
+      method: "POST",
+      body: {},
+    });
+    if (!r.ok) return toast(r.data?.error || "Feil", "err");
+    $("link-result").hidden = false;
+    $("result-order").textContent = orderId;
+    $("result-url").value = r.data.track_url;
+  };
+
+  $("btn-copy").onclick = () => {
+    const inp = $("result-url");
+    inp.select();
+    inp.setSelectionRange(0, 999);
+    navigator.clipboard.writeText(inp.value).then(() => toast("Kopiert", "ok"));
+  };
+
+  refreshStatus();
+</script>
+</body>
+</html>
