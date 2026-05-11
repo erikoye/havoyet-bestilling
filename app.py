@@ -382,6 +382,17 @@ def serve_static(filename):
 _VIPPS_PAID_STATES   = {"AUTHORIZED", "CAPTURED", "CHARGED", "COMPLETED", "RESERVED"}
 _STRIPE_PAID_STATES  = {"PAID"}
 
+# Ordre-statuser som betyr "venter på betaling" — pre-lagret før kunde har betalt.
+# Admin skal IKKE få "new_order"-varsel mens en ordre fortsatt er i en av disse,
+# bare når status flippes til en fullført status ("NEW" for kontant/faktura, eller
+# "PAID" etter at Vipps/Stripe har bekreftet betaling).
+_PENDING_ORDER_STATUSES = {"AWAITING_PAYMENT", "PENDING", "CART"}
+
+def _is_pending_order_status(status):
+    """True hvis ordrestatusen er en pre-betalings-status og ikke skal utløse admin-varsel."""
+    return str(status or "").strip().upper() in _PENDING_ORDER_STATUSES
+
+
 def _build_product_cost_map():
     """Bygg {navn_lc: {price, cost, ratio}} fra baseline + overrides.
     Brukes til kost-beregning i økonomi-stats. ratio = cost/price så vi kan
@@ -957,6 +968,10 @@ def api_manual_orders():
         _manual_orders = new_list
         _save_sync_state()
         for o in added:
+            # Hopp over varsel for ordre som fortsatt venter på betaling —
+            # disse fyrer av "new_order" først når status flippes til PAID/NEW.
+            if _is_pending_order_status(o.get("status")):
+                continue
             nr = o.get("ordrenr") or o.get("id") or "?"
             _notify_admins(
                 "new_order",
@@ -2833,6 +2848,7 @@ def api_orders_new():
             existing_idx = i
             break
     if existing_idx is not None:
+        old_status = _manual_orders[existing_idx].get("status")
         merged = dict(_manual_orders[existing_idx])
         for k, v in data.items():
             # Tillat status å oppdateres fra AWAITING_PAYMENT → PAID/NEW etc.
@@ -2842,11 +2858,23 @@ def api_orders_new():
             if isinstance(v, str) and not v.strip():
                 continue
             merged[k] = v
-        # Ikke send admin-varsel på re-POST av samme ordre — det er bare
-        # en status-oppdatering, ikke en ny bestilling.
         _manual_orders[existing_idx] = merged
         _save_sync_state()
         _mark_carts_converted_for_order(merged)
+        # Fyr av "new_order"-varsel hvis ordren nettopp gikk fra pending → fullført
+        # (typisk AWAITING_PAYMENT → PAID etter at Vipps/Stripe bekreftet betaling).
+        # Dette er det første tidspunktet admin skal få bestillingsvarsel.
+        if _is_pending_order_status(old_status) and not _is_pending_order_status(merged.get("status")):
+            try:
+                navn_n = ((merged.get("kunde") or {}).get("navn") or "?").strip()
+                _notify_admins(
+                    "new_order",
+                    f"[Havøyet] Ny bestilling #{target_id} — {navn_n} ({merged.get('sum', 0)} kr)",
+                    _format_order_lines(merged),
+                    html_body=_format_order_email_html(merged, "Bestillingen er fullført og betalt.", "new_order"),
+                )
+            except Exception as e:
+                print(f"[ADMIN-NOTIFY] new_order varsel (pending→fullført) feilet: {e}")
         return jsonify({"ok": True, "ordrenr": target_id, "updated": True})
 
     # Ny ordre — legg til i state. Fjern eventuelle tombstones for samme nr
@@ -2905,16 +2933,20 @@ def api_orders_new():
     ok, detail = _send_contact_mail(epost, navn, emne, "\n".join(lines))
 
     # Send admin-varsel (e-post / SMS / ntfy / Telegram) til registrerte mottakere.
-    # Dette er separat fra kvitterings-mailen som går til kunden via _send_contact_mail
-    # og sikrer at f.eks. Telegram-varsel går ut umiddelbart når bestillingen kommer inn.
-    try:
-        _notify_admins(
-            "new_order",
-            f"[Havøyet] Ny bestilling #{data['ordrenr']} — {navn} ({data.get('sum', 0)} kr)",
-            "\n".join(lines),
-        )
-    except Exception as e:
-        print(f"[ADMIN-NOTIFY] new_order varsel feilet: {e}")
+    # Dette er separat fra kvitterings-mailen som går til kunden via _send_contact_mail.
+    # Hopp over hvis ordren fortsatt er i en pre-betalings-status (AWAITING_PAYMENT) —
+    # da fyrer varselet først når merge-pathen oppdager pending→PAID-overgangen, eller
+    # Stripe-webhooken bekrefter betalingen. Slik unngår vi falske varsler om bestillinger
+    # som aldri blir fullført.
+    if not _is_pending_order_status(data.get("status")):
+        try:
+            _notify_admins(
+                "new_order",
+                f"[Havøyet] Ny bestilling #{data['ordrenr']} — {navn} ({data.get('sum', 0)} kr)",
+                "\n".join(lines),
+            )
+        except Exception as e:
+            print(f"[ADMIN-NOTIFY] new_order varsel feilet: {e}")
 
     return jsonify({"ok": True, "mail": detail, "ordrenr": data["ordrenr"], "order": data})
 
@@ -4746,12 +4778,16 @@ def api_webhook_stripe():
             # Speil PAID-status inn i selve ordren så admin/staff-lista plukker
             # den opp uavhengig av om frontend rakk å POSTe /api/orders/new.
             order_found = False
+            was_pending = False
+            target_order = None
             for o in _manual_orders:
                 if str(o.get("ordrenr") or o.get("id") or "").strip() == str(ordrenr):
+                    was_pending = _is_pending_order_status(o.get("status"))
                     o["status"] = "PAID"
                     o["paymentStatus"] = "paid"
                     o["paid_at"] = datetime.now().isoformat()
                     order_found = True
+                    target_order = o
                     break
             if order_found:
                 _save_sync_state()
@@ -4761,6 +4797,25 @@ def api_webhook_stripe():
                     f"Beløp: {amount/100:.2f} kr (kort via Stripe Elements)\n"
                     f"Ordre: {ordrenr}\nPaymentIntent: {pi_id}",
                 )
+                # Fyr av "new_order" hvis ordren nettopp flippet fra pending → PAID.
+                # Dette er sikkerhetsnett for tilfellene hvor frontend ikke rakk å
+                # re-POSTe ordren etter Stripe-bekreftelsen — admin skal fortsatt
+                # få sitt vanlige bestillings-varsel.
+                if was_pending and target_order:
+                    try:
+                        navn_n = ((target_order.get("kunde") or {}).get("navn") or "?").strip()
+                        _notify_admins(
+                            "new_order",
+                            f"[Havøyet] Ny bestilling #{ordrenr} — {navn_n} ({target_order.get('sum', 0)} kr)",
+                            _format_order_lines(target_order),
+                            html_body=_format_order_email_html(
+                                target_order,
+                                "Bestillingen er fullført og betalt med kort.",
+                                "new_order",
+                            ),
+                        )
+                    except Exception as e:
+                        print(f"[ADMIN-NOTIFY] new_order varsel (Stripe→PAID) feilet: {e}")
             else:
                 # Kortet ble trukket, men selve ordre-objektet finnes ikke i
                 # _manual_orders. Det betyr at frontend feilet etter Stripe-bekreftelsen
