@@ -209,14 +209,54 @@
       display: block;
     }
 
-    /* Footer */
+    /* Fangstmetode + område */
     .lbl-capture {
       font-size: 6.5pt;
       color: #555;
       font-style: italic;
+      padding: 0 3.5mm 0.5mm;
+      flex-shrink: 0;
+      text-align: center;
+    }
+    .lbl-fao {
+      font-size: 5.5pt;
+      color: #333;
       padding: 0 3.5mm 1.5mm;
       flex-shrink: 0;
       text-align: center;
+      line-height: 1.35;
+    }
+
+    /* Næringsinnhold-tabell */
+    .lbl-nutr {
+      padding: 0.8mm 3.5mm 0.5mm;
+      flex-shrink: 0;
+    }
+    .lbl-nutr-title {
+      font-size: 5.5pt;
+      font-weight: 700;
+      text-align: center;
+      padding-top: 0.5mm;
+      padding-bottom: 0.4mm;
+      letter-spacing: 0.02em;
+    }
+    .lbl-nutr-tbl {
+      width: 100%;
+      font-size: 5pt;
+      border-collapse: collapse;
+      line-height: 1.35;
+    }
+    .lbl-nutr-tbl td { padding: 0.15mm 0; }
+    .lbl-nutr-tbl td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    .lbl-nutr-tbl td.n-indent { padding-left: 1.6mm; color: #333; font-size: 4.7pt; }
+
+    .lbl-packed {
+      font-size: 5pt;
+      color: #333;
+      text-align: center;
+      padding: 0.6mm 3.5mm 0.4mm;
+      flex-shrink: 0;
+      letter-spacing: 0.02em;
     }
 
     .lbl-footer {
@@ -375,6 +415,13 @@ function fmtDate(iso) {
   return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
 }
 
+function todayFmt() {
+  const d = new Date();
+  return String(d.getDate()).padStart(2,'0') + '.' +
+         String(d.getMonth()+1).padStart(2,'0') + '.' +
+         d.getFullYear();
+}
+
 function nutrRow(label, val, sub) {
   const subCls = sub ? ' class="n-sub"' : ' class="n-main"';
   const rowCls = sub ? '' : ' class="n-main"';
@@ -414,6 +461,7 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
   const ordNum    = order.id.startsWith('#') ? order.id : '#' + order.id.replace(/^M-/,'');
   const cap       = capture || defaultCapture(name);
   const capLabel  = cap === 'villfanget' ? 'Villfanget' : cap === 'oppdrett' ? 'Oppdrett' : '';
+  const faoLine   = cap === 'oppdrett' ? 'Oppdrett – Norge' : faoArea(name);
 
   const addrLine  = order.address ? `<div class="lbl-order-addr">${order.address}</div>` : '';
   const phoneLine = order.phone   ? `<div class="lbl-order-addr">${order.phone}</div>`   : '';
@@ -432,7 +480,8 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
   <div class="lbl-hr"></div>
 
   <div class="lbl-product">${cleanName}</div>
-  <div class="lbl-capture">${capLabel}</div>
+  ${capLabel ? `<div class="lbl-capture">${capLabel}</div>` : ''}
+  <div class="lbl-fao">${faoLine}</div>
 
   <div class="lbl-hr"></div>
 
@@ -467,7 +516,21 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
 
   <div class="lbl-hr"></div>
 
-  <div class="lbl-footer">Havøyet AS, Nesttunvegen 96, 5221 Nesttun</div>
+  <div class="lbl-nutr">
+    <div class="lbl-nutr-title">NÆRINGSINNHOLD PER 100 g</div>
+    <table class="lbl-nutr-tbl">
+      <tr><td>Energi</td><td>${n.kj} kJ / ${n.kcal} kcal</td></tr>
+      <tr><td>Fett</td><td>${fmtN(n.fett)} g</td></tr>
+      <tr><td class="n-indent">– hvorav mettede</td><td>${fmtN(n.mf)} g</td></tr>
+      <tr><td>Karbohydrater</td><td>${fmtN(n.ko)} g</td></tr>
+      <tr><td>Protein</td><td>${fmtN(n.prot)} g</td></tr>
+      <tr><td>Salt</td><td>${fmtN(n.salt)} g</td></tr>
+    </table>
+  </div>
+
+  <div class="lbl-packed">Pakket: ${todayFmt()}</div>
+
+  <div class="lbl-footer">Havøyet AS, Nesttunvegen 96, 5221 Nesttun · havoyet.no</div>
 
 </div>`;
 }
@@ -512,17 +575,13 @@ function collectLabels(rawOrder) {
   };
   (rawOrder.items || []).forEach((item, i) => {
     const st = s[i] || {};
-    // Kasse: bygg én etikett for kassen med sum-vekt og tidligste holdbarhet
-    // basert på komponentene som er bekreftet "ok".
+    // Kasse: alltid én etikett per kasse — summer det vi har av komponent-data
     if (st.isKasse && Array.isArray(st.components)) {
-      const okComps = st.components.filter(c => c.avail === 'ok' && c.weight && c.expiry);
-      if (!okComps.length) return;
-      // Sum vekt: konverter alle stk til "stk-strenger", g/kg slås sammen
       let grams = 0, stk = 0;
       let earliestExpiry = null;
-      okComps.forEach(c => {
+      (st.components || []).forEach(c => {
         const u = (c.weightUnit || 'g').toLowerCase();
-        const v = parseFloat(String(c.weight).replace(',', '.')) || 0;
+        const v = parseFloat(String(c.weight || '').replace(',', '.')) || 0;
         if (u === 'kg') grams += v * 1000;
         else if (u === 'g' || u === 'gram') grams += v;
         else if (u === 'stk') stk += v;
@@ -535,14 +594,19 @@ function collectLabels(rawOrder) {
         order,
         name: item.name || '',
         weight: parts.join(' + '),
-        weightUnit: '', // allerede formatert
+        weightUnit: '',
         expiry: earliestExpiry,
       });
       return;
     }
-    if (st.avail === 'ok' && st.weight && st.expiry) {
-      labels.push({ order, name: item.name || '', weight: st.weight, expiry: st.expiry, weightUnit: st.weightUnit || item.unit || 'g' });
-    }
+    // Vanlige varer: alltid én etikett per linje, tomme felter blir "–" i buildLabel
+    labels.push({
+      order,
+      name: item.name || '',
+      weight: st.weight || '',
+      expiry: st.expiry || null,
+      weightUnit: st.weightUnit || item.unit || 'g'
+    });
   });
 }
 
@@ -575,8 +639,8 @@ function setCapture(idx, val) {
 function renderCards() {
   if (!labels.length) {
     area.innerHTML = `<div style="padding:40px 0;color:var(--muted);font-size:14px">
-      Ingen bekreftede varer funnet.<br>
-      <span style="font-size:13px">Merk varer som <em>Tilgjengelig</em> med vekt og holdbarhetsdato i pakkevisningen.</span>
+      Ingen bestillinger funnet.<br>
+      <span style="font-size:13px">Hent bestillinger fra havoyet.no i pakkevisningen først.</span>
     </div>`;
     return;
   }
