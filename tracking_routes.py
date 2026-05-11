@@ -117,19 +117,71 @@ def _admin_only():
     return user, None
 
 
+def _drivers_file() -> Path:
+    return (_state["state_dir"] or Path("/tmp")) / "drivers.json"
+
+
+def _load_drivers() -> list[dict]:
+    """Returnerer alle registrerte sjåfører. Tom liste hvis ingen er lagret."""
+    path = _drivers_file()
+    if not path.exists():
+        return []
+    try:
+        import json
+        data = json.loads(path.read_text())
+        if isinstance(data, dict) and isinstance(data.get("drivers"), list):
+            return data["drivers"]
+        if isinstance(data, list):
+            return data
+    except (ValueError, OSError):
+        pass
+    return []
+
+
+def _save_drivers(drivers: list[dict]) -> None:
+    import json
+    path = _drivers_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"drivers": drivers}, indent=2, ensure_ascii=False))
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError as e:
+        print(f"[DRIVERS] save feilet: {e}")
+
+
+def _match_driver_by_pin(pin: str) -> dict | None:
+    """Returnerer driver-dict hvis PINen matcher en lagret sjåfør, eller None."""
+    if not pin:
+        return None
+    drivers = _load_drivers()
+    for d in drivers:
+        stored = str(d.get("pin") or "").strip()
+        if stored and secrets.compare_digest(stored, pin):
+            return d
+    # Bakoverkompatibilitet: hvis ingen drivers.json finnes, prøv env-var DRIVER_PIN
+    if not drivers:
+        env_pin = os.environ.get("DRIVER_PIN", "").strip()
+        if env_pin and secrets.compare_digest(env_pin, pin):
+            return {"id": "env", "name": "Sjåfør", "pin": env_pin}
+    return None
+
+
 def _driver_only():
     """Sjåfør-auth: PIN via X-Driver-PIN-header eller ?pin=-query.
 
-    PIN-en settes via env-var DRIVER_PIN. Konstant-tid sammenligning så
-    timing-angrep ikke kan brute-force PINen.
+    PIN-en sjekkes mot drivers.json (multi-sjåfør). Faller tilbake til env-var
+    DRIVER_PIN hvis ingen sjåfører er lagret enda (gradvis migrering).
     """
-    expected = os.environ.get("DRIVER_PIN", "").strip()
-    if not expected:
-        return None, (jsonify({"error": "driver_pin_not_configured"}), 503)
     provided = (request.headers.get("X-Driver-PIN") or request.args.get("pin") or "").strip()
-    if not provided or not secrets.compare_digest(expected, provided):
+    if not provided:
         return None, (jsonify({"error": "unauthorized"}), 401)
-    return {"role": "driver"}, None
+    driver = _match_driver_by_pin(provided)
+    if not driver:
+        return None, (jsonify({"error": "unauthorized"}), 401)
+    return {"role": "driver", "name": driver.get("name"), "id": driver.get("id")}, None
 
 
 def _find_order(order_id: str) -> dict | None:
@@ -766,6 +818,45 @@ def _stop_payload(order: dict) -> dict:
     }
 
 
+def _route_state_file() -> Path:
+    return (_state["state_dir"] or Path("/tmp")) / "route_state.json"
+
+
+def _load_route_state() -> dict:
+    """Returnerer alt admin-rediget rute-data (per dato)."""
+    import json
+    path = _route_state_file()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text()) or {}
+    except (ValueError, OSError):
+        return {}
+
+
+def _save_route_state(state: dict) -> None:
+    import json
+    path = _route_state_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+    except OSError as e:
+        print(f"[ROUTE-STATE] save feilet: {e}")
+
+
+def _get_day_state(date_iso: str) -> dict:
+    return (_load_route_state() or {}).get(date_iso, {}) or {}
+
+
+def _set_day_state(date_iso: str, updates: dict) -> dict:
+    state = _load_route_state()
+    day = state.get(date_iso) or {}
+    day.update(updates)
+    state[date_iso] = day
+    _save_route_state(state)
+    return day
+
+
 def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
     """Bygger dagens rute. Felles for /today og /live.
 
@@ -803,6 +894,57 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "unresolved": unresolved,
         }
 
+    # Admin kan ha lagret en custom rekkefølge ELLER godkjent OSRM-rekkefølgen.
+    # Hvis vi har en lagret stop_order, bruker vi den og hopper over OSRM-trip.
+    day_state = _get_day_state(date_iso)
+    custom_order = day_state.get("stop_order") if isinstance(day_state.get("stop_order"), list) else None
+    if custom_order:
+        order_map = {s["order_id"]: s for s in stops}
+        ordered_stops = []
+        cum_min = 0.0
+        prev = depot
+        for sid in custom_order:
+            s = order_map.get(str(sid))
+            if not s:
+                continue
+            seg = compute_eta(prev[0], prev[1], s["lat"], s["lon"])
+            cum_min += seg["duration_min"]
+            ordered_stops.append({
+                **s,
+                "stop_index": len(ordered_stops) + 1,
+                "leg_min": seg["duration_min"],
+                "leg_km": seg["distance_km"],
+                "cum_min_from_depot": round(cum_min, 1),
+            })
+            prev = (s["lat"], s["lon"])
+        # Inkluder eventuelle nye stopp som ikke er i den lagrede rekkefølgen ennå
+        included_ids = set(custom_order)
+        for s in stops:
+            if s["order_id"] in included_ids:
+                continue
+            seg = compute_eta(prev[0], prev[1], s["lat"], s["lon"])
+            cum_min += seg["duration_min"]
+            ordered_stops.append({
+                **s,
+                "stop_index": len(ordered_stops) + 1,
+                "leg_min": seg["duration_min"],
+                "leg_km": seg["distance_km"],
+                "cum_min_from_depot": round(cum_min, 1),
+            })
+            prev = (s["lat"], s["lon"])
+        return {
+            "date": date_iso,
+            "depot": {"lat": depot[0], "lon": depot[1]},
+            "stops": ordered_stops,
+            "geometry": None,
+            "total_distance_km": round(sum(s["leg_km"] for s in ordered_stops), 2),
+            "total_duration_min": round(cum_min, 1),
+            "optimizer": "custom",
+            "approved": bool(day_state.get("approved")),
+            "approved_at": day_state.get("approved_at"),
+            "unresolved": unresolved,
+        }
+
     coords = [depot] + [(s["lat"], s["lon"]) for s in stops]
     trip = osrm_trip(coords, source_first=True, roundtrip=False) if optimize else None
 
@@ -832,6 +974,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "total_distance_km": trip.get("total_distance_km"),
             "total_duration_min": trip.get("total_duration_min"),
             "optimizer": "osrm",
+            "approved": bool(day_state.get("approved")),
+            "approved_at": day_state.get("approved_at"),
             "unresolved": unresolved,
         }
 
@@ -858,6 +1002,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
         "total_distance_km": round(sum(s["leg_km"] for s in fallback_stops), 2),
         "total_duration_min": round(cum_min, 1),
         "optimizer": "fallback",
+        "approved": bool(day_state.get("approved")),
+        "approved_at": day_state.get("approved_at"),
         "unresolved": unresolved,
     }
 
@@ -875,6 +1021,61 @@ def _current_vehicle_position() -> Optional[dict]:
         return None
 
 
+@bp.post("/api/admin/tracking/route/reorder")
+def admin_route_reorder():
+    """Admin lagrer en custom stopp-rekkefølge for gitt dato.
+
+    Body: {date: "YYYY-MM-DD", stop_order: ["123", "456", ...]}
+    Lagring nullstiller "approved"-flagget — må godkjennes på nytt.
+    """
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    stop_order = data.get("stop_order")
+    if not isinstance(stop_order, list):
+        return jsonify({"error": "stop_order must be a list of order_ids"}), 400
+    _set_day_state(date_iso, {
+        "stop_order": [str(s) for s in stop_order],
+        "approved": False,
+        "approved_at": None,
+        "reordered_at": int(time.time()),
+    })
+    return jsonify({"ok": True, "date": date_iso})
+
+
+@bp.post("/api/admin/tracking/route/approve")
+def admin_route_approve():
+    """Admin godkjenner dagens rute. Sjåfør får da rute-data; uten godkjenning
+    holder /api/driver/route/today tilbake stopp-listen."""
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    _set_day_state(date_iso, {
+        "approved": True,
+        "approved_at": int(time.time()),
+    })
+    return jsonify({"ok": True, "date": date_iso, "approved_at": int(time.time())})
+
+
+@bp.post("/api/admin/tracking/route/reset")
+def admin_route_reset():
+    """Sletter custom-rekkefølge og godkjenning for dato → OSRM-optimaliseringen tar over igjen."""
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    state = _load_route_state()
+    if date_iso in state:
+        del state[date_iso]
+        _save_route_state(state)
+    return jsonify({"ok": True, "date": date_iso})
+
+
 @bp.get("/api/admin/tracking/route/today")
 def admin_route_today():
     """Bygger dagens optimaliserte leveringsrute fra depot."""
@@ -889,13 +1090,22 @@ def admin_route_today():
 
 @bp.get("/api/driver/route/today")
 def driver_route_today():
-    """Sjåfør-versjon av /api/admin/tracking/route/today. PIN-beskyttet."""
+    """Sjåfør-versjon av /api/admin/tracking/route/today. PIN-beskyttet.
+
+    Returnerer ruten KUN hvis admin har godkjent den. Hvis ikke, returnerer
+    et tomt sett av stopp + 'awaiting_approval'-flagg så app-en kan vise
+    en venter-skjerm istedenfor å gjette rekkefølgen.
+    """
     _, err = _driver_only()
     if err:
         return err
     date_iso = (request.args.get("date") or _today_iso()).strip()
     route = _build_route(date_iso, optimize=True)
     route["vehicle"] = _current_vehicle_position()
+    if not route.get("approved"):
+        route["awaiting_approval"] = True
+        route["stops"] = []  # hold tilbake til admin har godkjent
+        route["geometry"] = None
     return jsonify(route)
 
 
@@ -910,16 +1120,84 @@ def driver_route_live():
 
 @bp.post("/api/driver/auth")
 def driver_auth_check():
-    """Sjåfør sender PIN, vi bekrefter eller avslår. Returnerer kun ok-flagg —
-    selve PIN-en må sendes på hver request (vi har ikke session for sjåføren)."""
-    expected = os.environ.get("DRIVER_PIN", "").strip()
-    if not expected:
-        return jsonify({"ok": False, "error": "driver_pin_not_configured"}), 503
+    """Sjåfør sender PIN — vi bekrefter, og returnerer sjåførens navn så appen
+    kan vise 'Hei, <navn>'. Selve PINen må sendes på alle påfølgende requests."""
     data = request.get_json(silent=True) or {}
     provided = str(data.get("pin") or "").strip()
-    ok = bool(provided) and secrets.compare_digest(expected, provided)
-    if not ok:
+    driver = _match_driver_by_pin(provided)
+    if not driver:
         return jsonify({"ok": False, "error": "wrong_pin"}), 401
+    return jsonify({"ok": True, "name": driver.get("name"), "id": driver.get("id")})
+
+
+# ── Sjåfør-CRUD (admin) ──────────────────────────────────────────────────
+
+@bp.get("/api/admin/drivers")
+def admin_list_drivers():
+    _, err = _admin_only()
+    if err:
+        return err
+    return jsonify({"drivers": _load_drivers()})
+
+
+@bp.post("/api/admin/drivers")
+def admin_create_driver():
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "").strip()
+    pin = str(data.get("pin") or "").strip()
+    if not name or len(pin) < 4:
+        return jsonify({"error": "name and pin (min 4 chars) required"}), 400
+    drivers = _load_drivers()
+    if any(str(d.get("pin")) == pin for d in drivers):
+        return jsonify({"error": "PIN allerede i bruk av en annen sjåfør"}), 409
+    driver = {
+        "id": secrets.token_urlsafe(8),
+        "name": name,
+        "pin": pin,
+        "created": int(time.time()),
+    }
+    drivers.append(driver)
+    _save_drivers(drivers)
+    return jsonify({"ok": True, "driver": driver})
+
+
+@bp.patch("/api/admin/drivers/<driver_id>")
+def admin_update_driver(driver_id: str):
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    drivers = _load_drivers()
+    for d in drivers:
+        if str(d.get("id")) == str(driver_id):
+            if "name" in data:
+                d["name"] = str(data["name"]).strip() or d.get("name", "")
+            if "pin" in data:
+                new_pin = str(data["pin"]).strip()
+                if len(new_pin) < 4:
+                    return jsonify({"error": "PIN må være minst 4 tegn"}), 400
+                if any(str(o.get("pin")) == new_pin and str(o.get("id")) != driver_id
+                       for o in drivers):
+                    return jsonify({"error": "PIN allerede i bruk"}), 409
+                d["pin"] = new_pin
+            _save_drivers(drivers)
+            return jsonify({"ok": True, "driver": d})
+    return jsonify({"error": "ikke funnet"}), 404
+
+
+@bp.delete("/api/admin/drivers/<driver_id>")
+def admin_delete_driver(driver_id: str):
+    _, err = _admin_only()
+    if err:
+        return err
+    drivers = _load_drivers()
+    filtered = [d for d in drivers if str(d.get("id")) != str(driver_id)]
+    if len(filtered) == len(drivers):
+        return jsonify({"error": "ikke funnet"}), 404
+    _save_drivers(filtered)
     return jsonify({"ok": True})
 
 
