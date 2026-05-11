@@ -1319,7 +1319,12 @@ def _send_contact_mail(from_email, from_name, subject, body):
 ADMIN_EVENTS = ("new_order", "order_updated", "order_delivered", "new_message")
 ADMIN_NOTIFY_LOG = os.path.join(os.path.dirname(_BASE_DIR), "admin_notifications.jsonl")
 
-# Twilio (valgfritt — sett env-vars for å aktivere SMS)
+# Sveve (primær SMS-leverandør — norsk, gratis sender-ID-godkjenning)
+SVEVE_USER   = os.environ.get("SVEVE_USER", "").strip()
+SVEVE_PASS   = os.environ.get("SVEVE_PASS", "").strip()
+SVEVE_SENDER = os.environ.get("SVEVE_SENDER", "Havøyet").strip()
+
+# Twilio (fallback — beholdt for evt. retur til denne leverandøren)
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN  = os.environ.get("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM        = os.environ.get("TWILIO_FROM", "")  # f.eks. "+4790000000"
@@ -1491,25 +1496,77 @@ def _sanitize_sender_id(s):
     return cleaned[:11]  # Twilio cap
 
 
-def _send_admin_sms(to_phone, body):
-    """Send SMS via Twilio. Trimmer til 1 SMS-segment (160 tegn) for å holde
-    kostnaden lav. Returnerer (ok, detail)."""
-    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM):
-        return False, "twilio-not-configured"
-    msg = body if len(body) <= 160 else body[:157] + "…"
-    sender = _sanitize_sender_id(TWILIO_FROM)
+def _send_via_sveve(to_phone, msg, sender):
+    """Send SMS via Sveve (sveve.no). Returnerer (ok, detail)."""
+    if not (SVEVE_USER and SVEVE_PASS):
+        return False, "sveve-not-configured"
+    # Sveve aksepterer både +47-prefix og uten plusstegn. Strip + for sikkerhets skyld.
+    to_clean = to_phone.lstrip("+")
     try:
-        r = requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
-            data={"From": sender, "To": to_phone, "Body": msg},
-            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+        r = requests.get(
+            "https://sveve.no/SMS/SendMessage",
+            params={
+                "user": SVEVE_USER,
+                "passwd": SVEVE_PASS,
+                "to": to_clean,
+                "msg": msg,
+                "from": sender,
+                "f": "json",  # be om JSON-respons
+            },
             timeout=15,
         )
-        if r.status_code in (200, 201):
-            return True, "sent-via-twilio"
-        return False, f"twilio-{r.status_code}: {r.text[:200]}"
+        if r.status_code != 200:
+            return False, f"sveve-{r.status_code}: {r.text[:200]}"
+        # Sveve returnerer JSON med {response: {msgOkCount, stdSMSCount, ...}} ved suksess
+        # eller {response: {errors: [...]}} ved feil.
+        try:
+            data = r.json()
+        except Exception:
+            return False, f"sveve-bad-response: {r.text[:200]}"
+        resp = data.get("response") or {}
+        ok_count = int(resp.get("msgOkCount") or 0)
+        if ok_count > 0:
+            return True, "sent-via-sveve"
+        errors = resp.get("errors") or []
+        err_text = "; ".join(str(e.get("message", e)) for e in errors) if errors else r.text[:200]
+        return False, f"sveve-error: {err_text}"
     except Exception as e:
-        return False, f"twilio-exception: {e}"
+        return False, f"sveve-exception: {e}"
+
+
+def _send_admin_sms(to_phone, body):
+    """Send SMS — prøver Sveve først (primær), så Twilio (fallback).
+    Trimmer til 1 SMS-segment (160 tegn) for å holde kostnaden lav."""
+    msg = body if len(body) <= 160 else body[:157] + "…"
+
+    # 1) Sveve (primær)
+    if SVEVE_USER and SVEVE_PASS:
+        sender = SVEVE_SENDER or "Havoyet"
+        ok, detail = _send_via_sveve(to_phone, msg, sender)
+        if ok:
+            return True, detail
+        # Hvis Sveve er konfigurert men feilet, returner den feilen (ikke fall tilbake silent)
+        # — med mindre Twilio også er tilgjengelig som backup
+        if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM):
+            return False, detail
+
+    # 2) Twilio (fallback)
+    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM:
+        sender = _sanitize_sender_id(TWILIO_FROM)
+        try:
+            r = requests.post(
+                f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
+                data={"From": sender, "To": to_phone, "Body": msg},
+                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                timeout=15,
+            )
+            if r.status_code in (200, 201):
+                return True, "sent-via-twilio"
+            return False, f"twilio-{r.status_code}: {r.text[:200]}"
+        except Exception as e:
+            return False, f"twilio-exception: {e}"
+
+    return False, "sms-not-configured"
 
 
 def _short_sms_for(event, subject, body):
