@@ -713,6 +713,12 @@ _subscribers = []
 #              beskrivelse, kun_nyhetsbrev (bool), aktiv (bool),
 #              kilde_newsletter_id (str|null), created_at, updated_at}
 _discounts = []
+# ── FORLATTE KASSER (snapshots fra /kasse-flyt før ordren er fullført) ────────
+# Hver entry: {id (session-id fra frontend), ts_created, ts_updated, status,
+#              kunde {navn, epost, tlf, adresse, postnr, sted, ...}, varer[],
+#              total, fee, sum, rabattBelop, source}
+# status: 'open' | 'contacted' | 'converted'
+_abandoned_carts = []
 # Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
 # selv logger ut. Fjern token manuelt via /api/auth/logout for å invalidere det.
 AUTH_SESSION_TTL = None
@@ -796,6 +802,7 @@ def _save_sync_state():
             "auth_sessions":       _auth_sessions,
             "subscribers":         _subscribers,
             "discounts":           _discounts,
+            "abandoned_carts":     _abandoned_carts,
         }
         tmp = SYNC_STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -866,7 +873,7 @@ def _restore_vipps_baseline():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts, _abandoned_carts
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         _restore_vipps_baseline()
@@ -913,6 +920,7 @@ def _load_sync_state():
         _seed_auth_users()
         _subscribers       = d.get("subscribers", []) or []
         _discounts         = d.get("discounts", []) or []
+        _abandoned_carts   = d.get("abandoned_carts", []) or []
         print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder, {len(_auth_users)} auth-brukere, {len(_auth_sessions)} aktive sesjoner, {len(_subscribers)} nyhetsbrev-abonnenter")
     except Exception as e:
         print(f"[ADVARSEL] Kunne ikke laste sync-state: {e}")
@@ -991,6 +999,118 @@ def api_prisliste():
 def api_prisliste_sync():
     fetch_domstein_prisliste()
     return jsonify(_prisliste)
+
+
+# ── FORLATTE KASSER (snapshots fra /kasse-flyt før ordren er fullført) ────────
+def _normalize_email(e):
+    return (e or "").strip().lower()
+
+def _normalize_phone(t):
+    return "".join(ch for ch in (t or "") if ch.isdigit())
+
+def _mark_carts_converted_for_order(order):
+    """Når en ordre lagres i _manual_orders, finn snapshots med samme e-post/tlf
+    og marker dem som 'converted'. Kalles fra /api/orders/new."""
+    global _abandoned_carts
+    if not _abandoned_carts:
+        return
+    kunde = (order or {}).get("kunde") or {}
+    email = _normalize_email(kunde.get("epost"))
+    phone = _normalize_phone(kunde.get("tlf"))
+    ordrenr = str(order.get("ordrenr") or order.get("id") or "")
+    changed = False
+    for c in _abandoned_carts:
+        if c.get("status") == "converted":
+            continue
+        c_email = _normalize_email((c.get("kunde") or {}).get("epost"))
+        c_phone = _normalize_phone((c.get("kunde") or {}).get("tlf"))
+        if (email and c_email and email == c_email) or (phone and c_phone and phone == c_phone):
+            c["status"] = "converted"
+            c["converted_at"] = int(time.time())
+            c["converted_ordrenr"] = ordrenr
+            changed = True
+    if changed:
+        _save_sync_state()
+
+@app.route("/api/checkout/snapshot", methods=["POST"])
+def api_checkout_snapshot():
+    """Upsert et kasse-snapshot. Frontend sender dette debounced når kunden har
+    fylt inn e-post eller telefon i /kasse-flyt og har varer i kurven.
+    Krever sessionId + minst én av e-post/telefon."""
+    global _abandoned_carts
+    data = request.get_json(force=True, silent=True) or {}
+    sid = (data.get("sessionId") or "").strip()
+    kunde = data.get("kunde") or {}
+    varer = data.get("varer") or []
+    if not sid:
+        return jsonify({"ok": False, "error": "Mangler sessionId"}), 400
+    email = (kunde.get("epost") or "").strip()
+    tlf   = (kunde.get("tlf") or "").strip()
+    if not email and not tlf:
+        return jsonify({"ok": False, "error": "Trenger e-post eller telefon"}), 400
+    if not isinstance(varer, list) or not varer:
+        return jsonify({"ok": False, "error": "Tom handlekurv"}), 400
+
+    now = int(time.time())
+    # Finn eksisterende snapshot med samme session-id
+    existing = next((c for c in _abandoned_carts if c.get("id") == sid), None)
+    # Hvis e-posten allerede har en fullført ordre, hopp over (unngå støy)
+    if existing and existing.get("status") == "converted":
+        return jsonify({"ok": True, "skipped": "converted"})
+
+    entry = existing or {
+        "id":         sid,
+        "ts_created": now,
+        "status":     "open",
+        "source":     "kasse-flyt",
+    }
+    entry["ts_updated"] = now
+    entry["kunde"]      = kunde
+    entry["varer"]      = varer
+    entry["total"]      = float(data.get("total") or 0)
+    entry["fee"]        = float(data.get("fee") or 0)
+    entry["sum"]        = float(data.get("sum") or 0)
+    entry["rabattBelop"]= float(data.get("rabattBelop") or 0)
+    if not existing:
+        _abandoned_carts.append(entry)
+    _save_sync_state()
+    return jsonify({"ok": True, "id": sid})
+
+@app.route("/api/abandoned-carts", methods=["GET"])
+def api_abandoned_carts():
+    """Liste forlatte kasser. Default returnerer alt unntatt 'converted'.
+    Bruk ?status=all for alle, ?status=open for kun aktive."""
+    status_filter = (request.args.get("status") or "").strip().lower()
+    items = list(_abandoned_carts or [])
+    if status_filter == "all":
+        out = items
+    elif status_filter in ("open", "contacted", "converted"):
+        out = [c for c in items if c.get("status") == status_filter]
+    else:
+        out = [c for c in items if c.get("status") != "converted"]
+    # Nyeste først
+    out = sorted(out, key=lambda c: int(c.get("ts_updated") or 0), reverse=True)
+    return jsonify({"ok": True, "carts": out, "count": len(out)})
+
+@app.route("/api/abandoned-carts/<cart_id>", methods=["PATCH", "DELETE"])
+def api_abandoned_cart_item(cart_id):
+    """PATCH: oppdater status (open|contacted). DELETE: fjern snapshot."""
+    global _abandoned_carts
+    idx = next((i for i, c in enumerate(_abandoned_carts) if c.get("id") == cart_id), None)
+    if idx is None:
+        return jsonify({"ok": False, "error": "Fant ikke kassen"}), 404
+    if request.method == "DELETE":
+        removed = _abandoned_carts.pop(idx)
+        _save_sync_state()
+        return jsonify({"ok": True, "removed": removed.get("id")})
+    patch = request.get_json(force=True, silent=True) or {}
+    new_status = (patch.get("status") or "").strip().lower()
+    if new_status not in ("open", "contacted"):
+        return jsonify({"ok": False, "error": "Ugyldig status (open|contacted)"}), 400
+    _abandoned_carts[idx]["status"] = new_status
+    _abandoned_carts[idx]["status_changed_at"] = int(time.time())
+    _save_sync_state()
+    return jsonify({"ok": True, "cart": _abandoned_carts[idx]})
 
 
 @app.route("/api/notes", methods=["GET", "POST"])
@@ -2527,11 +2647,13 @@ def api_orders_new():
         # en status-oppdatering, ikke en ny bestilling.
         _manual_orders[existing_idx] = merged
         _save_sync_state()
+        _mark_carts_converted_for_order(merged)
         return jsonify({"ok": True, "ordrenr": target_id, "updated": True})
 
     # Ny ordre — legg til i state
     _manual_orders.append(data)
     _save_sync_state()
+    _mark_carts_converted_for_order(data)
 
     # Bygg ordreoppsummering
     lines = []
