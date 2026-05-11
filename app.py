@@ -4512,7 +4512,28 @@ def api_auth_users():
     }
     _auth_users.append(new_user)
     _save_sync_state()
-    return jsonify({"ok": True, "user": _public_user(new_user)})
+    # Generer reset-token + send invitasjons-mail til ny bruker
+    mail_status = "skipped"
+    try:
+        for tok in list(_pwd_reset_tokens.keys()):
+            if _pwd_reset_tokens[tok].get("email") == email:
+                _pwd_reset_tokens.pop(tok, None)
+        invite_token = secrets.token_urlsafe(32)
+        _pwd_reset_tokens[invite_token] = {
+            "email": email,
+            "expires_at": int(time.time()) + PWD_RESET_TTL,
+        }
+        origin = (data.get("origin") or request.headers.get("Origin") or "").rstrip("/")
+        if not origin:
+            origin = "https://admin.havoyet.no"
+        link = f"{origin}/reset-passord?token={invite_token}"
+        ok, detail = _send_user_invite_mail(email, link, role)
+        mail_status = "sent" if ok else f"failed:{detail}"
+        _log_admin_mail(actor.get("email", ""), email, "Velkommen til Havøyet admin", link, ok, detail)
+    except Exception as e:
+        mail_status = f"exception:{e}"
+        print(f"[USER-INVITE] Kunne ikke sende mail: {e}")
+    return jsonify({"ok": True, "user": _public_user(new_user), "mail_status": mail_status})
 
 @app.route("/api/auth/users/<email>", methods=["DELETE", "PATCH"])
 def api_auth_user_one(email):
@@ -4542,14 +4563,180 @@ def api_auth_user_one(email):
         if target["email"].lower() == actor["email"].lower() and data["role"] != "admin":
             return jsonify({"ok": False, "error": "Du kan ikke fjerne din egen admin-rolle"}), 400
         target["role"] = data["role"]
+    mail_status = None
     if data.get("resetPassword"):
         target["password_hash"] = None
         target["must_set_password"] = True
         for tok in list(_auth_sessions.keys()):
             if _auth_sessions[tok].get("email", "").lower() == target["email"].lower():
                 _auth_sessions.pop(tok, None)
+        # Generer reset-token + send mail
+        try:
+            for tok in list(_pwd_reset_tokens.keys()):
+                if _pwd_reset_tokens[tok].get("email") == target["email"].lower():
+                    _pwd_reset_tokens.pop(tok, None)
+            reset_token = secrets.token_urlsafe(32)
+            _pwd_reset_tokens[reset_token] = {
+                "email": target["email"].lower(),
+                "expires_at": int(time.time()) + PWD_RESET_TTL,
+            }
+            origin = (data.get("origin") or request.headers.get("Origin") or "").rstrip("/")
+            if not origin:
+                origin = "https://admin.havoyet.no"
+            link = f"{origin}/reset-passord?token={reset_token}"
+            ok, detail = _send_user_password_reset_mail(target["email"], link)
+            mail_status = "sent" if ok else f"failed:{detail}"
+            _log_admin_mail(actor.get("email", ""), target["email"], "Tilbakestill passord", link, ok, detail)
+        except Exception as e:
+            mail_status = f"exception:{e}"
+            print(f"[USER-RESET] Kunne ikke sende mail: {e}")
     _save_sync_state()
-    return jsonify({"ok": True, "user": _public_user(target)})
+    resp = {"ok": True, "user": _public_user(target)}
+    if mail_status is not None:
+        resp["mail_status"] = mail_status
+    return jsonify(resp)
+
+
+# ── ADMIN → KUNDE/BRUKER MAIL ─────────────────────────────────────────────────
+# Lar admin sende ad-hoc e-post fra Kunde-/Bruker-kort i admin-UI, samt
+# masseutsending til alle kunder (utenom MailerLite-nyhetsbrev).
+ADMIN_MAIL_LOG = os.path.join(os.path.dirname(_BASE_DIR), "admin_outgoing_mail.jsonl")
+
+
+def _log_admin_mail(actor_email, to_email, subject, body, ok, detail):
+    try:
+        with open(ADMIN_MAIL_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "at": datetime.now().isoformat(),
+                "from_actor": actor_email,
+                "to": to_email,
+                "subject": subject,
+                "body_preview": (body or "")[:300],
+                "ok": ok,
+                "detail": detail,
+            }, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"[ADMIN-MAIL] Kunne ikke logge: {e}")
+
+
+def _admin_collect_customer_emails(only_with_orders=False):
+    """Returnerer unike e-postadresser fra kunder + ordre."""
+    seen = set()
+    out = []
+    if not only_with_orders:
+        for c in _customers:
+            e = (c.get("epost") or "").strip().lower()
+            if e and "@" in e and e not in seen:
+                seen.add(e)
+                out.append(e)
+    for o in _manual_orders:
+        e = (o.get("epost") or "").strip().lower()
+        if not e:
+            cust = o.get("customer") or {}
+            e = (cust.get("email") or "").strip().lower()
+        if e and "@" in e and e not in seen:
+            seen.add(e)
+            out.append(e)
+    return out
+
+
+@app.route("/api/admin/send-mail", methods=["POST"])
+def api_admin_send_mail():
+    """Send én e-post til én adresse. Krever innlogget admin/user.
+
+    Body: { to_email, subject, body }
+    """
+    actor, _ = _user_from_request()
+    if not actor:
+        return jsonify({"ok": False, "error": "Ikke innlogget"}), 401
+    data = request.get_json(force=True) or {}
+    to_email = (data.get("to_email") or data.get("to") or "").strip().lower()
+    subject = (data.get("subject") or "").strip()
+    body = data.get("body") or ""
+    if not to_email or "@" not in to_email:
+        return jsonify({"ok": False, "error": "Ugyldig e-postadresse"}), 400
+    if not subject:
+        return jsonify({"ok": False, "error": "Mangler emne"}), 400
+    if not body.strip():
+        return jsonify({"ok": False, "error": "Mangler innhold"}), 400
+    ok, detail = _send_admin_mail(to_email, subject, body)
+    _log_admin_mail(actor.get("email", ""), to_email, subject, body, ok, detail)
+    if not ok:
+        return jsonify({"ok": False, "error": f"Kunne ikke sende: {detail}"}), 502
+    return jsonify({"ok": True, "detail": detail})
+
+
+@app.route("/api/admin/send-mail/bulk-customers", methods=["POST"])
+def api_admin_send_mail_bulk_customers():
+    """Send samme e-post til alle (eller utvalgte) kunder.
+
+    Body: { subject, body, only_with_orders?: bool, dry_run?: bool }
+    """
+    actor, _ = _user_from_request()
+    if not actor:
+        return jsonify({"ok": False, "error": "Ikke innlogget"}), 401
+    if actor.get("role") != "admin":
+        return jsonify({"ok": False, "error": "Bare admin kan masseutsende"}), 403
+    data = request.get_json(force=True) or {}
+    subject = (data.get("subject") or "").strip()
+    body = data.get("body") or ""
+    only_with_orders = bool(data.get("only_with_orders"))
+    dry_run = bool(data.get("dry_run"))
+    if not subject:
+        return jsonify({"ok": False, "error": "Mangler emne"}), 400
+    if not body.strip():
+        return jsonify({"ok": False, "error": "Mangler innhold"}), 400
+    recipients = _admin_collect_customer_emails(only_with_orders=only_with_orders)
+    if dry_run:
+        return jsonify({"ok": True, "dry_run": True, "count": len(recipients), "recipients": recipients})
+    sent, failed, failures = 0, 0, []
+    for rcpt in recipients:
+        try:
+            ok, detail = _send_admin_mail(rcpt, subject, body)
+        except Exception as e:
+            ok, detail = False, f"exception: {e}"
+        _log_admin_mail(actor.get("email", ""), rcpt, subject, body, ok, detail)
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+            failures.append({"to": rcpt, "detail": detail})
+    return jsonify({
+        "ok": True,
+        "sent": sent,
+        "failed": failed,
+        "total": len(recipients),
+        "failures": failures[:20],  # cap så respons ikke vokser
+    })
+
+
+def _send_user_invite_mail(email, link, role):
+    """Send invitasjons-/passord-link til ny admin-bruker."""
+    role_label = "administrator" if role == "admin" else "bruker"
+    body = (
+        f"Hei,\n\n"
+        f"Du er invitert som {role_label} i Havøyet admin-panelet.\n\n"
+        f"Klikk lenken under for å velge passord og logge inn. Lenken er "
+        f"gyldig i 1 time:\n\n{link}\n\n"
+        f"Hvis du ikke forventet denne invitasjonen, kan du trygt ignorere "
+        f"denne e-posten.\n\n"
+        f"Hilsen Havøyet"
+    )
+    return _send_admin_mail(email, "Velkommen til Havøyet admin", body)
+
+
+def _send_user_password_reset_mail(email, link):
+    """Send passord-reset-link til eksisterende admin-bruker."""
+    body = (
+        f"Hei,\n\n"
+        f"En administrator har tilbakestilt passordet for kontoen din "
+        f"({email}).\n\n"
+        f"Klikk lenken under for å velge nytt passord. Lenken er gyldig i "
+        f"1 time:\n\n{link}\n\n"
+        f"Hvis du ikke forventet dette, kontakt erik@havoyet.no.\n\n"
+        f"Hilsen Havøyet"
+    )
+    return _send_admin_mail(email, "Tilbakestill passord — Havøyet admin", body)
 
 
 # ── ANALYTICS (kundebevegelse-tracking) ───────────────────────────────────────
