@@ -369,9 +369,14 @@ def _build_product_cost_map():
 
 
 def _order_cost_kr(order, cost_map):
-    """Beregn innkjøpskostnad for én ordre ved å bruke proporsjonal metode:
-    linje_kost = linje.pris × (produkt.cost / produkt.price). Returnerer 0
-    hvis produktet mangler kost-data."""
+    """Beregn innkjøpskostnad for én ordre. Prioritetsrekkefølge per linje:
+
+    1) `item.lineCost` — eksakt linje-kost lagret ved ordretidspunkt (best,
+       overlever produkt-rename og prisendringer i etterkant).
+    2) `item.cost` × qty — snapshot av enhets-kost lagret ved opprettelse,
+       men kun hvis ingen lineCost finnes.
+    3) Proporsjonal fallback (line.pris × cost_map[name].ratio) for gamle
+       ordrer fra før vi begynte å snapshote kost på linja."""
     if not isinstance(order, dict):
         return 0.0
     items = order.get("varer") or order.get("prods") or order.get("items") or []
@@ -381,11 +386,32 @@ def _order_cost_kr(order, cost_map):
     for it in items:
         if not isinstance(it, dict):
             continue
+        # 1) Lagret linje-kost — eksakt, beste kilde
+        try:
+            stored_line = it.get("lineCost")
+            if stored_line is not None:
+                v = float(stored_line)
+                if v > 0:
+                    total += v
+                    continue
+        except (TypeError, ValueError):
+            pass
+        # 2) Enhets-kost × qty (når lineCost mangler men cost er snapshotet)
+        try:
+            unit_cost = it.get("cost")
+            if unit_cost is not None:
+                uc = float(unit_cost)
+                if uc > 0:
+                    qty = float(it.get("qty") or it.get("quantity") or 1)
+                    total += uc * qty
+                    continue
+        except (TypeError, ValueError):
+            pass
+        # 3) Proporsjonal fallback (gamle ordrer uten cost-snapshot)
         name = (it.get("name") or it.get("navn") or it.get("title") or "").strip().lower()
         info = cost_map.get(name)
         if not info:
             continue
-        # Linje-pris: foretrekk lagret 'pris', ellers qty * price
         line_price = it.get("pris")
         if line_price is None:
             try:
