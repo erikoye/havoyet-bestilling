@@ -997,7 +997,7 @@ def _send_via_resend(from_email, from_name, subject, body, to_email=None, reply_
     """Send via Resend API (enklest — bare API-nøkkel trengs)."""
     try:
         payload = {
-            "from": f"Havøyet nettside <{RESEND_FROM}>",
+            "from": f"Havøyet <{RESEND_FROM}>",
             "to": [to_email or CONTACT_TO],
             "subject": subject,
             "text": body,
