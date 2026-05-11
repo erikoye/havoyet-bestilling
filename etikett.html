@@ -536,17 +536,38 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
 }
 
 // ─── DATA ────────────────────────────────────
-function getAllOrders() {
-  const list = [];
-  try { list.push(...JSON.parse(localStorage.getItem('havøyet_orders') || '[]')); } catch(e){}
+const FLASK_BASE = window.location.origin;
+
+function _mergeManualAndHidden(list) {
   try {
     const m = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
-    m.forEach(o => { if (!list.find(x => x.id === o.id)) list.push(o); });
+    m.forEach(o => { if (!list.find(x => String(x.id) === String(o.id))) list.push(o); });
   } catch(e){}
   try {
     const hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
     return list.filter(o => !hidden.includes(o.id));
   } catch(e) { return list; }
+}
+
+function getLocalOrders() {
+  const list = [];
+  try { list.push(...JSON.parse(localStorage.getItem('havøyet_orders') || '[]')); } catch(e){}
+  return _mergeManualAndHidden(list);
+}
+
+// Henter ALLE ordre direkte fra Flask (inkl. ubetalte) slik at etikett-siden
+// alltid speiler "Kommende ordre" i admin — uavhengig av filtre i pakke.html.
+async function fetchAllOrders() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/orders?include_unpaid=1`, { signal: AbortSignal.timeout(5000) });
+    if (r.ok) {
+      const data = await r.json();
+      if (Array.isArray(data.orders)) {
+        return _mergeManualAndHidden([...data.orders]);
+      }
+    }
+  } catch(e) { /* Flask offline → fallback til localStorage */ }
+  return getLocalOrders();
 }
 
 function getState() {
@@ -561,9 +582,9 @@ document.getElementById('backBtn').href = ordreId
   ? `pakke.html?ordre=${encodeURIComponent(ordreId)}`
   : 'pakke.html';
 
-const allOrders = getAllOrders();
-const STATE     = getState();
-const labels    = [];
+let allOrders = [];
+const STATE   = getState();
+const labels  = [];
 
 function collectLabels(rawOrder) {
   const s = STATE[rawOrder.id] || [];
@@ -610,19 +631,25 @@ function collectLabels(rawOrder) {
   });
 }
 
-if (ordreId) {
-  const raw = allOrders.find(o => String(o.id) === ordreId);
-  if (raw) collectLabels(raw);
-} else {
-  allOrders.forEach(collectLabels);
-}
-
 const area = document.getElementById('labelsArea');
-document.getElementById('pageTitle').textContent = ordreId && labels[0]
-  ? `Etiketter — ${labels[0].order.customer}`
-  : 'Alle etiketter';
-document.getElementById('labelCount').textContent =
-  `${labels.length} etikett${labels.length !== 1 ? 'er' : ''} klar for utskrift`;
+
+async function init() {
+  // Hent fra Flask først (inkl. ubetalte) — fallback til localStorage
+  allOrders = await fetchAllOrders();
+  labels.length = 0;
+  if (ordreId) {
+    const raw = allOrders.find(o => String(o.id) === ordreId);
+    if (raw) collectLabels(raw);
+  } else {
+    allOrders.forEach(collectLabels);
+  }
+  document.getElementById('pageTitle').textContent = ordreId && labels[0]
+    ? `Etiketter — ${labels[0].order.customer}`
+    : 'Alle etiketter';
+  document.getElementById('labelCount').textContent =
+    `${labels.length} etikett${labels.length !== 1 ? 'er' : ''} klar for utskrift`;
+  renderCards();
+}
 
 const captureState = {};
 
@@ -661,7 +688,7 @@ function renderCards() {
   }).join('');
 }
 
-renderCards();
+init();
 </script>
 </body>
 </html>
