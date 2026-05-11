@@ -1061,6 +1061,10 @@ Nettside: www.havoyet.no
 Fersk fisk og skalldyr levert hjem i Bergen
 """
 
+# Kortform til SMS-utgang. Twilio-segmentet er 160 tegn, så vi holder
+# signaturen så liten som mulig (under 20 tegn inkl. linjeskift).
+_SMS_SIGNATURE = "\n\nMvh,\nErik\nHavøyet"
+
 _SIGNATURE_HTML = """
 <table cellpadding="0" cellspacing="0" border="0" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1a1a1a;font-size:14px;line-height:1.55;margin-top:28px;border-top:1px solid #e6e1d6;padding-top:18px;">
   <tr><td>
@@ -1493,13 +1497,18 @@ def _notify_customer_order_update(order, event, change_summary=""):
             digits = "".join(ch for ch in clean_phone if ch.isdigit())
             if len(digits) == 8:
                 clean_phone = "+47" + digits
-        if event == "order_delivered":
-            sms_text = f"Havøyet: bestilling #{nr} er levert. Tusen takk! Følg på {konto}"
+        # Bruk body-malen fra Kunde-varsler-konfigen + kort SMS-signatur.
+        # [IMG:url]-placeholders strippes (SMS støtter ikke bilder).
+        sms_body = _strip_image_placeholders(body or "").strip()
+        if sms_body:
+            sms_text = sms_body + _SMS_SIGNATURE
         else:
-            sms_text = f"Havøyet: bestilling #{nr} oppdatert"
-            if status:
-                sms_text += f" — status {status.lower()}"
-            sms_text += f". Se {konto}"
+            # Fallback hvis admin har slettet body-malen — hold noe minimalt
+            # nyttig sammen med signaturen.
+            if event == "order_delivered":
+                sms_text = f"Havøyet: bestilling #{nr} er levert. {konto}{_SMS_SIGNATURE}"
+            else:
+                sms_text = f"Havøyet: bestilling #{nr} oppdatert. {konto}{_SMS_SIGNATURE}"
         # _send_admin_sms gjenbrukes — den trimmer til 160 tegn og sender via Twilio.
         sms_ok, sms_detail = _send_admin_sms(clean_phone, sms_text)
         print(f"[CUSTOMER-SMS] {clean_phone}: {sms_detail}")
