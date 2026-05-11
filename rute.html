@@ -96,6 +96,25 @@ const $ = id => document.getElementById(id);
 const fmtMin = m => m == null ? "—" : `${Math.round(m)}<small> min</small>`;
 const today = () => new Date().toISOString().slice(0,10);
 
+// Når denne siden lastes som iframe i admin.havoyet.no, sender parent
+// admin sin Bearer-token via postMessage. Vi lagrer den i variabelen og
+// bruker den i alle fetch-kall så API-en kjenner oss igjen som admin.
+let _adminToken = "";
+window.addEventListener("message", (ev) => {
+  if (!ev.data || ev.data.type !== "havoyet-admin-token") return;
+  _adminToken = String(ev.data.token || "");
+  // Last data på nytt nå som vi er autentisert
+  if (typeof loadRoute === "function") loadRoute();
+});
+
+function _authedFetch(url, opts) {
+  opts = opts || {};
+  opts.credentials = "include";
+  opts.headers = Object.assign({}, opts.headers || {});
+  if (_adminToken) opts.headers["Authorization"] = "Bearer " + _adminToken;
+  return fetch(url, opts);
+}
+
 let map, depotMarker, vehicleMarker, routeLine;
 const stopLayer = L.layerGroup();
 const stopMarkers = {};   // order_id -> marker
@@ -163,7 +182,7 @@ async function loadRoute(){
 
   let data;
   try {
-    const r = await fetch(`/api/admin/tracking/route/today?date=${date}`, {credentials:"include"});
+    const r = await _authedFetch(`/api/admin/tracking/route/today?date=${date}`);
     if (r.status === 401 || r.status === 403) {
       $("summary").innerHTML = `<span class="pill err">Ikke pålogget som admin</span>`;
       return;
@@ -183,11 +202,11 @@ async function loadRoute(){
     return;
   }
 
-  // Depot
+  // Depot (Nesttunvegen 96)
   if (data.depot) {
     if (depotMarker) map.removeLayer(depotMarker);
     depotMarker = L.marker([data.depot.lat, data.depot.lon], {icon: makeDepotIcon()})
-      .addTo(map).bindPopup("<b>Depot</b><br>Startpunkt for ruten");
+      .addTo(map).bindPopup("<b>Havøyet</b><br>Nesttunvegen 96<br>Startpunkt for ruten");
   }
 
   // Geometry
@@ -299,7 +318,7 @@ async function pollLive(){
   if (!currentRoute) return;
   const date = $("date").value || today();
   try {
-    const r = await fetch(`/api/admin/tracking/route/live?date=${date}`, {credentials:"include"});
+    const r = await _authedFetch(`/api/admin/tracking/route/live?date=${date}`);
     if (!r.ok) return;
     const data = await r.json();
     updateVehicle(data.vehicle);
