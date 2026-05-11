@@ -993,14 +993,57 @@ SMTP_PASS        = os.environ.get("SMTP_PASS", "")
 CONTACT_LOG_FILE = os.path.join(os.path.dirname(_BASE_DIR), "contact_messages.jsonl")
 
 
+# ── E-POST-SIGNATUR ────────────────────────────────────────────────────────
+# Brukes som footer på alle utgående e-poster. Endres her — propageres til alle
+# avsendere (kontaktskjema, ordrebekreftelser, admin-varsler, statusoppdateringer).
+_SIGNATURE_TEXT = """
+
+--
+Med vennlig hilsen,
+
+Erik Øye
+Daglig leder | Havøyet
+Mobil: +47 416 39 788
+Nettside: www.havoyet.no
+
+Fersk fisk og skalldyr levert hjem i Bergen
+"""
+
+_SIGNATURE_HTML = """
+<table cellpadding="0" cellspacing="0" border="0" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1a1a1a;font-size:14px;line-height:1.55;margin-top:28px;border-top:1px solid #e6e1d6;padding-top:18px;">
+  <tr><td>
+    <p style="margin:0 0 12px 0;font-style:italic;">Med vennlig hilsen,</p>
+    <p style="margin:0;">
+      <strong style="color:#1d6fc9;font-size:16px;">Erik Øye</strong><br/>
+      Daglig leder | Havøyet<br/>
+      Mobil: <a href="tel:+4741639788" style="color:#1d6fc9;text-decoration:none;">+47 416 39 788</a><br/>
+      Nettside: <a href="https://www.havoyet.no" style="color:#1d6fc9;text-decoration:none;">www.havoyet.no</a>
+    </p>
+    <p style="margin:14px 0 16px 0;font-style:italic;">Fersk fisk og skalldyr levert hjem i Bergen</p>
+    <a href="https://www.havoyet.no" style="text-decoration:none;display:inline-block;"><img src="https://havoyet.no/assets/logo-brand.png" alt="Havøyet" width="220" style="display:block;max-width:220px;height:auto;border:0;" /></a>
+  </td></tr>
+</table>
+"""
+
+def _body_to_html(body):
+    """Konverterer plain-text-body til enkel HTML — escape + linebreaks."""
+    import html as _html
+    escaped = _html.escape(body or "")
+    return f'<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;color:#1a1a1a;font-size:14px;line-height:1.55;white-space:pre-wrap;">{escaped}</div>'
+
+
 def _send_via_resend(from_email, from_name, subject, body, to_email=None, reply_to=None):
-    """Send via Resend API (enklest — bare API-nøkkel trengs)."""
+    """Send via Resend API (enklest — bare API-nøkkel trengs).
+    Legger automatisk ved signatur (text + html) på alle utgående e-poster."""
     try:
+        text_body = (body or "") + _SIGNATURE_TEXT
+        html_body = _body_to_html(body) + _SIGNATURE_HTML
         payload = {
             "from": f"Havøyet <{RESEND_FROM}>",
             "to": [to_email or CONTACT_TO],
             "subject": subject,
-            "text": body,
+            "text": text_body,
+            "html": html_body,
         }
         if reply_to or from_email:
             payload["reply_to"] = reply_to or from_email
@@ -1021,15 +1064,19 @@ def _send_via_resend(from_email, from_name, subject, body, to_email=None, reply_
 
 
 def _send_via_smtp(from_email, from_name, subject, body, to_email=None, reply_to=None):
-    """Send via SMTP (Gmail / annen SMTP-server)."""
+    """Send via SMTP (Gmail / annen SMTP-server).
+    Sender multipart/alternative med både text- og HTML-versjon med signatur."""
     recipient = to_email or CONTACT_TO
-    msg = _MIMEMultipart()
+    text_body = (body or "") + _SIGNATURE_TEXT
+    html_body = _body_to_html(body) + _SIGNATURE_HTML
+    msg = _MIMEMultipart("alternative")
     msg["From"]     = _formataddr((f"Havøyet – {from_name}", SMTP_USER))
     if reply_to or from_email:
         msg["Reply-To"] = reply_to or from_email
     msg["To"]       = recipient
     msg["Subject"]  = subject
-    msg.attach(_MIMEText(body, "plain", "utf-8"))
+    msg.attach(_MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(_MIMEText(html_body, "html",  "utf-8"))
     try:
         with _smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
             s.starttls()
