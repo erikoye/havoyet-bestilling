@@ -343,6 +343,7 @@ _PRETTY_PAGES = {
     "ptouch":           "ptouch.html",
     "nesttun-admin":    "nesttun-admin.html",
     "tracking-admin":   "tracking-admin.html",
+    "rute":             "rute.html",
 }
 
 @app.route("/<page>")

@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dagens leveringsrute — Havøyet</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="">
+  <style>
+    :root{--blue:#1A3A5C;--gold:#C8A45C;--bg:#F4F1EA;--ink:#1B1B1B;--soft:#666;
+          --line:#E4DDD0;--ok:#2F7A4F;--warn:#C8A45C;--err:#B33A3A}
+    *{box-sizing:border-box}
+    html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,
+              "Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+    .layout{display:grid;grid-template-columns:380px 1fr;height:100vh}
+    @media (max-width: 780px){
+      .layout{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+      #map{height:60vh}
+    }
+    aside{background:#fff;border-right:1px solid var(--line);overflow-y:auto;
+          padding:18px 16px 24px}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    h1{color:var(--blue);font-size:20px;margin:0}
+    .back{font-size:13px;color:var(--soft);text-decoration:none}
+    .meta{font-size:13px;color:var(--soft);margin-bottom:14px;line-height:1.5}
+    .meta strong{color:var(--blue)}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;
+          font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+    .pill.ok{background:rgba(47,122,79,.15);color:var(--ok)}
+    .pill.warn{background:rgba(200,164,92,.2);color:#8a6e3a}
+    .pill.err{background:rgba(179,58,58,.15);color:var(--err)}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+    input[type=date]{padding:6px 8px;border:1px solid var(--line);border-radius:6px;
+                     font-size:13px;font-family:inherit}
+    button{font-family:inherit;font-size:13px;border:none;cursor:pointer;
+           border-radius:6px;padding:7px 12px;font-weight:600;
+           background:var(--blue);color:#fff}
+    button.secondary{background:#fff;color:var(--blue);border:1.5px solid var(--blue)}
+    button:hover{filter:brightness(.92)}
+    .stop{border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+          margin-bottom:8px;cursor:pointer;transition:all .15s}
+    .stop:hover{background:var(--bg)}
+    .stop.active{border-color:var(--blue);box-shadow:0 0 0 2px rgba(26,58,92,.15)}
+    .stop-head{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
+    .stop-num{background:var(--blue);color:#fff;width:24px;height:24px;
+              border-radius:50%;display:inline-flex;align-items:center;
+              justify-content:center;font-size:12px;font-weight:700;flex:0 0 24px}
+    .stop-eta{color:var(--blue);font-weight:700;font-variant-numeric:tabular-nums}
+    .stop-eta small{color:var(--soft);font-weight:500;font-size:11px;margin-left:2px}
+    .stop-body{margin-left:30px;font-size:13px;color:var(--ink);line-height:1.45}
+    .stop-body .addr{color:var(--soft);font-size:12px}
+    .stop-body .slot{display:inline-block;background:var(--bg);padding:1px 6px;
+                     border-radius:4px;font-size:11px;color:var(--soft);margin-top:2px}
+    .unresolved{background:rgba(179,58,58,.06);border:1px dashed rgba(179,58,58,.3);
+                border-radius:8px;padding:10px;font-size:12px;color:var(--err);
+                margin-top:14px}
+    .empty{text-align:center;color:var(--soft);padding:36px 12px;font-size:14px}
+    #map{height:100vh;width:100%}
+    .vehicle-popup{font-size:12px;line-height:1.4}
+    .leaflet-popup-content{margin:8px 12px;font-size:13px}
+    .leaflet-popup-content b{color:var(--blue)}
+    .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+           background:var(--blue);color:#fff;padding:10px 18px;border-radius:8px;
+           box-shadow:0 6px 16px rgba(0,0,0,.2);font-size:14px;z-index:1000}
+  </style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <header>
+      <h1>Leveringsrute</h1>
+      <a class="back" href="/tracking-admin.html">← Oppsett</a>
+    </header>
+
+    <div class="controls">
+      <input type="date" id="date">
+      <button id="reload">Bygg rute</button>
+      <button class="secondary" id="recenter">Sentrér kart</button>
+    </div>
+
+    <div class="meta" id="summary">Laster …</div>
+
+    <div id="stops"></div>
+    <div id="unresolved-box"></div>
+  </aside>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+<script>
+const $ = id => document.getElementById(id);
+const fmtMin = m => m == null ? "—" : `${Math.round(m)}<small> min</small>`;
+const today = () => new Date().toISOString().slice(0,10);
+
+let map, depotMarker, vehicleMarker, routeLine;
+const stopLayer = L.layerGroup();
+const stopMarkers = {};   // order_id -> marker
+let currentRoute = null;
+let livePollTimer = null;
+
+function initMap(){
+  map = L.map("map", {zoomControl:true}).setView([60.39, 5.32], 11);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution:"&copy; OpenStreetMap",
+    maxZoom: 19,
+  }).addTo(map);
+  stopLayer.addTo(map);
+}
+
+function makeStopIcon(num, status){
+  const color = status && status.toLowerCase().includes("lever") ? "#2F7A4F" : "#1A3A5C";
+  return L.divIcon({
+    className: "",
+    html: `<div style="background:${color};color:#fff;width:30px;height:30px;
+              border-radius:50%;display:flex;align-items:center;justify-content:center;
+              font-weight:700;font-size:13px;border:3px solid #fff;
+              box-shadow:0 2px 6px rgba(0,0,0,.3)">${num}</div>`,
+    iconSize:[30,30], iconAnchor:[15,15],
+  });
+}
+function makeVehicleIcon(){
+  return L.divIcon({
+    className: "",
+    html: `<div style="background:#C8A45C;border:3px solid #fff;
+              width:24px;height:24px;border-radius:50%;
+              box-shadow:0 0 0 4px rgba(200,164,92,.3);
+              animation:pulse 1.6s ease-in-out infinite"></div>
+           <style>@keyframes pulse{50%{box-shadow:0 0 0 12px rgba(200,164,92,0)}}</style>`,
+    iconSize:[24,24], iconAnchor:[12,12],
+  });
+}
+function makeDepotIcon(){
+  return L.divIcon({
+    className: "",
+    html: `<div style="background:#1B1B1B;color:#C8A45C;width:34px;height:34px;
+              border-radius:6px;display:flex;align-items:center;justify-content:center;
+              font-weight:700;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3)">⌂</div>`,
+    iconSize:[34,34], iconAnchor:[17,17],
+  });
+}
+
+async function loadRoute(){
+  const date = $("date").value || today();
+  $("summary").textContent = "Laster …";
+  $("stops").innerHTML = "";
+  $("unresolved-box").innerHTML = "";
+  stopLayer.clearLayers();
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+
+  let data;
+  try {
+    const r = await fetch(`/api/admin/tracking/route/today?date=${date}`, {credentials:"include"});
+    if (r.status === 401 || r.status === 403) {
+      $("summary").innerHTML = `<span class="pill err">Ikke pålogget som admin</span>`;
+      return;
+    }
+    data = await r.json();
+  } catch(e) {
+    $("summary").textContent = "Kunne ikke laste rute.";
+    return;
+  }
+
+  currentRoute = data;
+
+  if (data.error === "no_depot") {
+    $("summary").innerHTML = `
+      <span class="pill err">Depot ikke konfigurert</span><br>
+      Sett env-var <code>HAVOYET_DEPOT_COORDS</code> til "lat,lon" og restart.`;
+    return;
+  }
+
+  // Depot
+  if (data.depot) {
+    if (depotMarker) map.removeLayer(depotMarker);
+    depotMarker = L.marker([data.depot.lat, data.depot.lon], {icon: makeDepotIcon()})
+      .addTo(map).bindPopup("<b>Depot</b><br>Startpunkt for ruten");
+  }
+
+  // Geometry
+  if (data.geometry && data.geometry.coordinates) {
+    const latlngs = data.geometry.coordinates.map(([lon,lat]) => [lat,lon]);
+    routeLine = L.polyline(latlngs, {color:"#1A3A5C", weight:4, opacity:.65}).addTo(map);
+  }
+
+  // Stops
+  const stops = data.stops || [];
+  if (!stops.length) {
+    $("summary").innerHTML = `<span class="pill warn">Ingen leveringer denne dagen</span>`;
+    $("stops").innerHTML = `<div class="empty">Ingen ordrer med leveringsdato ${date}.</div>`;
+    renderUnresolved(data.unresolved);
+    return;
+  }
+
+  const opt = data.optimizer === "osrm" ? "OSRM-optimalisert" : "Uoptimalisert (OSRM utilgjengelig)";
+  $("summary").innerHTML = `
+    <strong>${stops.length}</strong> stopp ·
+    <strong>${data.total_distance_km?.toFixed(1) ?? "?"}</strong> km ·
+    <strong>${Math.round(data.total_duration_min ?? 0)}</strong> min total<br>
+    <span class="pill ok">${opt}</span>
+    ${data.vehicle ? '<span class="pill ok">Bil online</span>' : '<span class="pill warn">Bil offline</span>'}`;
+
+  for (const s of stops) {
+    const m = L.marker([s.lat, s.lon], {icon: makeStopIcon(s.stop_index, s.status)})
+      .bindPopup(`
+        <div class="vehicle-popup">
+          <b>#${s.order_id}</b> · ${s.navn || ""}<br>
+          ${s.adresse || ""}<br>
+          ${s.leveringstid ? `<i>${s.leveringstid}</i><br>` : ""}
+          ETA fra bil: <b id="popup-eta-${s.order_id}">—</b>
+        </div>`)
+      .addTo(stopLayer);
+    stopMarkers[s.order_id] = m;
+  }
+
+  // Sidebar list
+  $("stops").innerHTML = stops.map(s => `
+    <div class="stop" data-id="${s.order_id}">
+      <div class="stop-head">
+        <span class="stop-num">${s.stop_index}</span>
+        <span class="stop-eta" data-eta="${s.order_id}">${fmtMin(null)}</span>
+      </div>
+      <div class="stop-body">
+        <strong>#${s.order_id}</strong> ${s.navn || ""}<br>
+        <span class="addr">${[s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ")}</span>
+        ${s.leveringstid ? `<span class="slot">${s.leveringstid}</span>` : ""}
+      </div>
+    </div>
+  `).join("");
+
+  document.querySelectorAll(".stop").forEach(el => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll(".stop").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+      const m = stopMarkers[el.dataset.id];
+      if (m) { map.setView(m.getLatLng(), 14); m.openPopup(); }
+    });
+  });
+
+  renderUnresolved(data.unresolved);
+
+  // Fit map til alt
+  const all = [
+    [data.depot.lat, data.depot.lon],
+    ...stops.map(s => [s.lat, s.lon]),
+  ];
+  map.fitBounds(L.latLngBounds(all), {padding:[40,40]});
+
+  // Bil-marker første gang
+  updateVehicle(data.vehicle);
+
+  // Start live-polling
+  if (livePollTimer) clearInterval(livePollTimer);
+  livePollTimer = setInterval(pollLive, 30000);
+  pollLive(); // én umiddelbar update
+}
+
+function renderUnresolved(items){
+  if (!items || !items.length) { $("unresolved-box").innerHTML = ""; return; }
+  $("unresolved-box").innerHTML = `
+    <div class="unresolved">
+      <strong>${items.length} ordre uten geokoding:</strong><br>
+      ${items.map(u => `#${u.order_id} ${u.navn || ""} — ${u.adresse || "(mangler adresse)"}`).join("<br>")}
+    </div>`;
+}
+
+function updateVehicle(v){
+  if (!v) {
+    if (vehicleMarker) { map.removeLayer(vehicleMarker); vehicleMarker = null; }
+    return;
+  }
+  const latlng = [v.lat, v.lon];
+  if (!vehicleMarker) {
+    vehicleMarker = L.marker(latlng, {icon: makeVehicleIcon(), zIndexOffset: 1000})
+      .addTo(map);
+  } else {
+    vehicleMarker.setLatLng(latlng);
+  }
+  const ts = v.timestamp ? new Date(v.timestamp).toLocaleTimeString("nb-NO") : "—";
+  vehicleMarker.bindPopup(
+    `<b>Leveringsbil</b><br>Hastighet: ${v.speed_kmh ?? "—"} km/t<br>Sist oppdatert: ${ts}`
+  );
+}
+
+async function pollLive(){
+  if (!currentRoute) return;
+  const date = $("date").value || today();
+  try {
+    const r = await fetch(`/api/admin/tracking/route/live?date=${date}`, {credentials:"include"});
+    if (!r.ok) return;
+    const data = await r.json();
+    updateVehicle(data.vehicle);
+    // Oppdater ETA-tall i sidebaren + popup
+    for (const [orderId, eta] of Object.entries(data.eta_by_order || {})) {
+      const el = document.querySelector(`[data-eta="${orderId}"]`);
+      if (el) el.innerHTML = fmtMin(eta.duration_min);
+      const popupEl = document.getElementById(`popup-eta-${orderId}`);
+      if (popupEl) popupEl.innerHTML = fmtMin(eta.duration_min);
+    }
+  } catch(e) { /* stille */ }
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  initMap();
+  $("date").value = today();
+  $("reload").addEventListener("click", loadRoute);
+  $("recenter").addEventListener("click", () => {
+    if (!currentRoute || !currentRoute.stops?.length) return;
+    const all = [
+      [currentRoute.depot.lat, currentRoute.depot.lon],
+      ...currentRoute.stops.map(s => [s.lat, s.lon]),
+    ];
+    map.fitBounds(L.latLngBounds(all), {padding:[40,40]});
+  });
+  loadRoute();
+});
+</script>
+</body>
+</html>

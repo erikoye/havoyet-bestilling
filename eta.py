@@ -14,6 +14,8 @@ import requests
 _USER_AGENT = "HavoyetBestilling/1.0 (kontakt: erik@havoyet.no)"
 _NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 _OSRM_URL = "https://router.project-osrm.org/route/v1/driving"
+_OSRM_TRIP_URL = "https://router.project-osrm.org/trip/v1/driving"
+_OSRM_TABLE_URL = "https://router.project-osrm.org/table/v1/driving"
 
 # Cache: address_string -> (timestamp, (lat, lon))
 _GEOCODE_CACHE: dict[str, tuple[float, tuple[float, float] | None]] = {}
@@ -153,3 +155,103 @@ def order_destination(order: dict) -> Optional[Tuple[float, float]]:
 
     return geocode(str(addr), str(postnr) if postnr else None,
                    str(poststed) if poststed else None)
+
+
+def osrm_trip(coords: list[tuple[float, float]], *, source_first: bool = True,
+              roundtrip: bool = False) -> Optional[dict]:
+    """TSP-optimalisering via OSRM /trip. coords = [(lat, lon), ...].
+
+    Returnerer:
+      {
+        "order": [0, 2, 1, 3],          # nye indekser inn i input-listen
+        "legs": [{distance_km, duration_min}, ...],
+        "total_distance_km": float,
+        "total_duration_min": float,
+        "geometry": GeoJSON (LineString),
+        "source": "osrm"
+      }
+    eller None ved feil. Krever minst 2 koordinater.
+    """
+    if not coords or len(coords) < 2:
+        return None
+    coord_str = ";".join(f"{lon},{lat}" for lat, lon in coords)
+    params = {
+        "source": "first" if source_first else "any",
+        "destination": "any",
+        "roundtrip": "true" if roundtrip else "false",
+        "geometries": "geojson",
+        "overview": "full",
+        "steps": "false",
+    }
+    try:
+        resp = requests.get(f"{_OSRM_TRIP_URL}/{coord_str}", params=params, timeout=15)
+        if not resp.ok:
+            return None
+        data = resp.json()
+        if data.get("code") != "Ok" or not data.get("trips") or not data.get("waypoints"):
+            return None
+        trip = data["trips"][0]
+        waypoints = data["waypoints"]
+        # waypoint_index forteller hvor input-coord nr i havnet i optimalisert rute.
+        # Vi snur det til ordnet liste av input-indekser.
+        order_pairs = [(wp.get("waypoint_index"), i) for i, wp in enumerate(waypoints)
+                       if wp.get("waypoint_index") is not None]
+        order_pairs.sort(key=lambda x: x[0])
+        order = [orig_idx for _, orig_idx in order_pairs]
+        legs = [
+            {
+                "distance_km": round(l.get("distance", 0) / 1000.0, 2),
+                "duration_min": round(l.get("duration", 0) / 60.0, 1),
+            }
+            for l in trip.get("legs", [])
+        ]
+        return {
+            "order": order,
+            "legs": legs,
+            "total_distance_km": round(trip.get("distance", 0) / 1000.0, 2),
+            "total_duration_min": round(trip.get("duration", 0) / 60.0, 1),
+            "geometry": trip.get("geometry"),
+            "source": "osrm",
+        }
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        return None
+
+
+def osrm_table_one_to_many(source: tuple[float, float],
+                           destinations: list[tuple[float, float]]) -> Optional[list[dict]]:
+    """Hent kjøretid + distanse fra ÉN source til mange destinasjoner i én request.
+
+    Returnerer liste {distance_km, duration_min, source} i samme rekkefølge som
+    destinasjons-listen, eller None ved feil.
+    """
+    if not destinations:
+        return []
+    coords = [source] + destinations
+    coord_str = ";".join(f"{lon},{lat}" for lat, lon in coords)
+    dest_indexes = ";".join(str(i) for i in range(1, len(coords)))
+    params = {
+        "sources": "0",
+        "destinations": dest_indexes,
+        "annotations": "duration,distance",
+    }
+    try:
+        resp = requests.get(f"{_OSRM_TABLE_URL}/{coord_str}", params=params, timeout=10)
+        if not resp.ok:
+            return None
+        data = resp.json()
+        if data.get("code") != "Ok":
+            return None
+        durations = (data.get("durations") or [[]])[0]  # sec
+        distances = (data.get("distances") or [[]])[0]  # m
+        out = []
+        for i in range(len(destinations)):
+            d_sec = durations[i] if i < len(durations) else None
+            d_m = distances[i] if i < len(distances) else None
+            out.append({
+                "distance_km": round((d_m or 0) / 1000.0, 2) if d_m is not None else None,
+                "duration_min": round((d_sec or 0) / 60.0, 1) if d_sec is not None else None,
+                "source": "osrm",
+            })
+        return out
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        return None

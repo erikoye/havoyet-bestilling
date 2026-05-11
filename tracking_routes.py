@@ -19,7 +19,14 @@ from typing import Callable, Optional
 from flask import Blueprint, jsonify, request, redirect, render_template_string, abort
 
 from abax import AbaxClient, AbaxError, AbaxNotConnected
-from eta import compute_eta, geocode, order_destination
+from eta import (
+    compute_eta,
+    fallback_eta,
+    geocode,
+    order_destination,
+    osrm_table_one_to_many,
+    osrm_trip,
+)
 
 bp = Blueprint("tracking", __name__)
 
@@ -533,6 +540,241 @@ def public_order_eta(order_id: str):
 def _is_delivered(order: dict) -> bool:
     s = str(order.get("status") or "").lower()
     return "lever" in s or s in ("done", "completed", "fullført")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RUTE-PLANLEGGING (admin-side, kart)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _delivery_date(order: dict) -> str:
+    """Returnerer ISO-leveringsdato eller tom streng."""
+    kunde = order.get("kunde") or {}
+    raw = kunde.get("leveringsdag") or order.get("delivery") or ""
+    return str(raw).strip()
+
+
+def _today_iso() -> str:
+    return time.strftime("%Y-%m-%d", time.localtime())
+
+
+def _orders_for_date(date_iso: str) -> list[dict]:
+    """Filtrer ut ordrer som skal leveres på gitt dato og ikke er ferdige."""
+    out = []
+    for o in (_state["orders_ref"]() or []):
+        if not isinstance(o, dict):
+            continue
+        if _is_delivered(o):
+            continue
+        if _delivery_date(o) != date_iso:
+            continue
+        out.append(o)
+    return out
+
+
+def _stop_payload(order: dict) -> dict:
+    kunde = order.get("kunde") or {}
+    levering = order.get("levering") or {}
+    return {
+        "order_id": str(order.get("ordrenr") or order.get("id") or ""),
+        "navn": kunde.get("navn") or kunde.get("name") or "",
+        "tlf": _get_customer_phone(order),
+        "adresse": (
+            levering.get("adresse")
+            or order.get("leveringsadresse")
+            or kunde.get("adresse")
+            or ""
+        ),
+        "postnr": (
+            levering.get("postnr")
+            or order.get("leveringspostnr")
+            or kunde.get("postnr")
+            or ""
+        ),
+        "poststed": (
+            levering.get("poststed")
+            or order.get("leveringspoststed")
+            or kunde.get("poststed")
+            or ""
+        ),
+        "leveringstid": kunde.get("leveringstid") or order.get("slot") or "",
+        "status": order.get("status") or "",
+        "track_token": bool(order.get("track_token")),
+    }
+
+
+def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
+    """Bygger dagens rute. Felles for /today og /live.
+
+    Returnerer:
+      {
+        date, depot, stops[], geometry, total_distance_km, total_duration_min,
+        unresolved (ordrer uten geokod-treff)
+      }
+    """
+    depot = _state.get("depot")
+    if not depot:
+        return {"error": "no_depot", "stops": [], "unresolved": []}
+
+    raw_orders = _orders_for_date(date_iso)
+    stops = []
+    unresolved = []
+    for o in raw_orders:
+        dest = order_destination(o)
+        item = _stop_payload(o)
+        if not dest:
+            unresolved.append(item)
+            continue
+        item["lat"] = dest[0]
+        item["lon"] = dest[1]
+        stops.append(item)
+
+    if not stops:
+        return {
+            "date": date_iso,
+            "depot": {"lat": depot[0], "lon": depot[1]},
+            "stops": [],
+            "geometry": None,
+            "total_distance_km": 0,
+            "total_duration_min": 0,
+            "unresolved": unresolved,
+        }
+
+    coords = [depot] + [(s["lat"], s["lon"]) for s in stops]
+    trip = osrm_trip(coords, source_first=True, roundtrip=False) if optimize else None
+
+    if trip and trip.get("order"):
+        order = trip["order"]
+        # order[0] == 0 (depot). Resten peker inn i coords-listen (1..N → stop-index 0..N-1).
+        ordered_stops = []
+        cum_min = 0.0
+        legs = trip.get("legs") or []
+        for leg_idx, coord_idx in enumerate(order[1:], start=1):
+            stop = stops[coord_idx - 1]
+            leg = legs[leg_idx - 1] if leg_idx - 1 < len(legs) else {}
+            cum_min += leg.get("duration_min", 0)
+            stop = {
+                **stop,
+                "stop_index": leg_idx,
+                "leg_min": leg.get("duration_min"),
+                "leg_km": leg.get("distance_km"),
+                "cum_min_from_depot": round(cum_min, 1),
+            }
+            ordered_stops.append(stop)
+        return {
+            "date": date_iso,
+            "depot": {"lat": depot[0], "lon": depot[1]},
+            "stops": ordered_stops,
+            "geometry": trip.get("geometry"),
+            "total_distance_km": trip.get("total_distance_km"),
+            "total_duration_min": trip.get("total_duration_min"),
+            "optimizer": "osrm",
+            "unresolved": unresolved,
+        }
+
+    # Fallback: bevar opprinnelig rekkefølge, ikke optimalisert
+    fallback_stops = []
+    cum_min = 0.0
+    prev = depot
+    for i, s in enumerate(stops, start=1):
+        seg = compute_eta(prev[0], prev[1], s["lat"], s["lon"])
+        cum_min += seg["duration_min"]
+        fallback_stops.append({
+            **s,
+            "stop_index": i,
+            "leg_min": seg["duration_min"],
+            "leg_km": seg["distance_km"],
+            "cum_min_from_depot": round(cum_min, 1),
+        })
+        prev = (s["lat"], s["lon"])
+    return {
+        "date": date_iso,
+        "depot": {"lat": depot[0], "lon": depot[1]},
+        "stops": fallback_stops,
+        "geometry": None,
+        "total_distance_km": round(sum(s["leg_km"] for s in fallback_stops), 2),
+        "total_duration_min": round(cum_min, 1),
+        "optimizer": "fallback",
+        "unresolved": unresolved,
+    }
+
+
+def _current_vehicle_position() -> Optional[dict]:
+    vehicle_id = _state.get("active_vehicle_id")
+    if not vehicle_id:
+        return None
+    client = _state.get("client")
+    if not client or not client.is_connected():
+        return None
+    try:
+        return client.get_position(vehicle_id)
+    except (AbaxError, AbaxNotConnected):
+        return None
+
+
+@bp.get("/api/admin/tracking/route/today")
+def admin_route_today():
+    """Bygger dagens optimaliserte leveringsrute fra depot."""
+    _, err = _admin_only()
+    if err:
+        return err
+    date_iso = (request.args.get("date") or _today_iso()).strip()
+    route = _build_route(date_iso, optimize=True)
+    route["vehicle"] = _current_vehicle_position()
+    return jsonify(route)
+
+
+@bp.get("/api/admin/tracking/route/live")
+def admin_route_live():
+    """Live oppdatering: kun bil-posisjon + per-stopp-ETA fra bilens NÅ-posisjon.
+
+    Frontend poller dette hvert 30s for å oppdatere bilmarkør og ETA-tall
+    uten å re-optimalisere ruten.
+    """
+    _, err = _admin_only()
+    if err:
+        return err
+    date_iso = (request.args.get("date") or _today_iso()).strip()
+
+    # Hent dagens stopp i opprinnelig (eller cachet) rekkefølge — vi vil ikke
+    # re-optimalisere her, bare oppdatere ETAs basert på bilens nåværende pos.
+    # /today gjør optimaliseringen; frontend holder rekkefølgen mellom polls.
+    raw_orders = _orders_for_date(date_iso)
+    stops = []
+    for o in raw_orders:
+        dest = order_destination(o)
+        if not dest:
+            continue
+        item = _stop_payload(o)
+        item["lat"] = dest[0]
+        item["lon"] = dest[1]
+        stops.append(item)
+
+    vehicle = _current_vehicle_position()
+    etas_to_stops: list[dict] = []
+    if vehicle and stops:
+        dests = [(s["lat"], s["lon"]) for s in stops]
+        table = osrm_table_one_to_many((vehicle["lat"], vehicle["lon"]), dests)
+        if table:
+            etas_to_stops = table
+        else:
+            etas_to_stops = [
+                fallback_eta(vehicle["lat"], vehicle["lon"], s["lat"], s["lon"])
+                for s in stops
+            ]
+    # Map order_id → ETA fra bilens posisjon (frontend matcher)
+    eta_by_order: dict[str, dict] = {}
+    for s, eta in zip(stops, etas_to_stops):
+        eta_by_order[s["order_id"]] = {
+            "duration_min": eta.get("duration_min"),
+            "distance_km": eta.get("distance_km"),
+            "minutes": int(round(eta.get("duration_min") or 0)),
+        }
+
+    return jsonify({
+        "date": date_iso,
+        "vehicle": vehicle,
+        "eta_by_order": eta_by_order,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════
