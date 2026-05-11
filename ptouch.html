@@ -592,9 +592,11 @@ function confPctOrder(o) {
 }
 function confClsOrder(o){ const p=confPctOrder(o); return p===100?'green':p>=33?'orange':'red'; }
 
-// Aktive ordre = ikke ferdig/avbrutt/levert/oppfylt og ikke historiske Shopify-imports.
-// Brukes til å skjule ferdige/historiske ordrer fra ptouch-listen så bare det som
-// faktisk skal pakkes/etiketteres vises.
+// Aktive ordre = ikke ferdig/avbrutt/levert/oppfylt, og leveringsdato i dag
+// eller fremover. Vi filtrerer IKKE lenger på `source` — Shopify-importerte
+// ordre med fremtidig leveringsdato skal også pakkes og etiketteres.
+// Historiske Shopify-imports (gamle ordre fra før vi byttet system) blokkeres
+// likevel siden de har leveringsdato i fortid.
 function _isActiveOrder(o) {
   const status = String(o.status || '').toUpperCase().trim();
   const INACTIVE = new Set([
@@ -602,10 +604,13 @@ function _isActiveOrder(o) {
     'FULFILLED', 'CANCELLED', 'CANCELED', 'AVBRUTT', 'REFUNDED', 'ARCHIVED',
   ]);
   if (INACTIVE.has(status)) return false;
-  // Historiske Shopify-imports (S1001–S1106 osv.) regnes som ferdige selv om
-  // status-feltet er tomt — de har source = shopify/import.
-  const src = String(o.source || '').toLowerCase();
-  if (src === 'shopify' || src === 'import' || src === 'shopify-import') return false;
+  // Skjul ordre med leveringsdato i fortid (typisk historiske Shopify-imports).
+  // Ordre uten leveringsdato vises slik at staff kan plotte den selv.
+  const delivery = String(o.delivery || '').slice(0, 10);
+  if (delivery) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (delivery < today) return false;
+  }
   return true;
 }
 
