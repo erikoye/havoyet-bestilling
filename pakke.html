@@ -569,6 +569,14 @@
       font-size: 10px; font-weight: 600; opacity: 0.85;
       padding: 1px 6px; border-radius: 8px; background: rgba(255,255,255,0.55);
     }
+    .chip-revert {
+      background: rgba(255,255,255,0.65); border: 1px solid rgba(0,0,0,0.08);
+      cursor: pointer; color: inherit; font-size: 10.5px; font-weight: 600;
+      padding: 2px 8px; line-height: 1.2; border-radius: 999px;
+      font-family: 'DM Sans', sans-serif; transition: background 0.15s, border-color 0.15s;
+      margin-left: 2px;
+    }
+    .chip-revert:hover { background: #fff; border-color: rgba(0,0,0,0.2); }
     .repl-price {
       font-size: 11px; font-weight: 500; opacity: 0.75;
     }
@@ -2114,6 +2122,7 @@ function renderComponentCard(c, i, ci) {
       ${escHtml(repl.name)}${priceStr}
       ${stateLabel ? `<span class="chip-state">${escHtml(stateLabel)}</span>` : ''}
       ${(!isConfirmed && !isSuggested) ? `<button class="chip-confirm" onclick="suggestComponentReplacement('${currentOrderId}',${i},${ci},'${escHtml(key)}')">Foreslå</button>` : ''}
+      ${isConfirmed ? `<button class="chip-revert" title="Fjern erstatning og gå tilbake til ${escHtml(c.name)}" onclick="revertComponentReplacement('${currentOrderId}',${i},${ci})">↶ Tilbake til original</button>` : ''}
       ${!isConfirmed ? `<button class="chip-remove" onclick="removeComponentReplacement('${currentOrderId}',${i},${ci},'${escHtml(key)}')">✕</button>` : ''}
     </span>`;
   }).join('');
@@ -2346,6 +2355,19 @@ function removeComponentReplacement(orderId, i, ci, key) {
   saveState();
 }
 
+// Nullstill bekreftet/foreslått erstatning så originalen vises igjen.
+// Brukes når admin angrer et bytte fra pakke-siden (↶ Tilbake til original).
+function revertComponentReplacement(orderId, i, ci) {
+  const entry = STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components[ci];
+  if (!c) return;
+  c.confirmedReplacement = null;
+  c.suggestedReplacement = null;
+  updateComponentChips(orderId, i, ci);
+  saveState();
+}
+
 // Pakke foreslår en erstatning til admin. Admin må deretter bekrefte (eller avslå)
 // fra ordre-drawer på admin.havoyet.no — først da blir det confirmedReplacement og
 // pris-justering legges til ordren.
@@ -2383,6 +2405,7 @@ function updateComponentChips(orderId, i, ci) {
       ${escHtml(repl.name)}${priceStr}
       ${stateLabel ? `<span class="chip-state">${escHtml(stateLabel)}</span>` : ''}
       ${(!isConfirmed && !isSuggested) ? `<button class="chip-confirm" onclick="suggestComponentReplacement('${orderId}',${i},${ci},'${escHtml(key)}')">Foreslå</button>` : ''}
+      ${isConfirmed ? `<button class="chip-revert" title="Fjern erstatning og gå tilbake til ${escHtml(c.name)}" onclick="revertComponentReplacement('${orderId}',${i},${ci})">↶ Tilbake til original</button>` : ''}
       ${!isConfirmed ? `<button class="chip-remove" onclick="removeComponentReplacement('${orderId}',${i},${ci},'${escHtml(key)}')">✕</button>` : ''}
     </span>`;
   }).join('');
@@ -2497,6 +2520,7 @@ function updateChips(orderId, i) {
       ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
       ${f.name}
       ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmReplacement('${orderId}',${i},'${fid}')">Bekreft</button>` : ''}
+      ${isConfirmed ? `<button class="chip-revert" title="Fjern erstatning og gå tilbake til original" onclick="confirmReplacement('${orderId}',${i},'${fid}')">↶ Tilbake til original</button>` : ''}
       <button class="chip-remove" onclick="removeReplacement('${orderId}',${i},'${fid}')">✕</button>
     </span>`;
   }).join('');
