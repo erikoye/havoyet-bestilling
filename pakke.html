@@ -63,6 +63,14 @@
     .divider { width: 1px; height: 20px; background: #334155; }
 
     .clock { font-family: 'DM Mono', monospace; font-size: 12px; color: #94a3b8; }
+    .api-dot {
+      display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+      background: #64748b; margin-right: 10px; vertical-align: middle;
+      box-shadow: 0 0 0 0 rgba(0,0,0,0);
+      transition: background 0.25s ease, box-shadow 0.25s ease;
+    }
+    .api-dot.ok  { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.55); }
+    .api-dot.err { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.55); }
 
     /* ── LAYOUT ── */
     main { flex: 1; max-width: 900px; margin: 0 auto; width: 100%; padding: 28px 24px 100px; }
@@ -779,6 +787,7 @@
     <span style="color:#475569;font-size:13px;font-family:'DM Mono',monospace;font-weight:400">/ pakke &amp; merk</span>
   </div>
   <div class="header-right">
+    <span class="api-dot" id="apiDot" title="API-status"></span>
     <span class="clock" id="clock">--:--:--</span>
   </div>
 </header>
@@ -1000,6 +1009,10 @@ const STATE = {};
 // Brukes til å splitte kasse-bestillinger i pakke-flyten så hver komponent kan
 // markeres tilgjengelig/usikker/ikke mulig og veies separat. Etiketten skrives
 // fortsatt ut for hele kassen (én etikett per kasse).
+//
+// Default-oppskrifter brukes som fallback hvis admin ikke har lagt inn
+// kasseInnhold for slugen. Når /api/products/overrides svarer med kasseInnhold
+// pr produkt, brukes det i stedet (se loadKasseRecipesFromOverrides nedenfor).
 const KASSE_RECIPES = {
   klassisk: {
     displayName: 'Klassisk Skalldyrkasse',
@@ -1010,11 +1023,43 @@ const KASSE_RECIPES = {
       { name: 'Krabbeklør', perPersonGrams: 250, unit: 'g'   },
     ],
   },
-  // Custom skalldyrkasse: komponenter er valgt av kunden.
-  // Foreløpig vises melding "Komponenter ikke registrert" inntil vi piper
-  // dem gjennom checkout-payloaden.
+  eksklusiv: { displayName: 'Eksklusive Skalldyrkasse', components: [] },
+  premium:   { displayName: 'Premium Skalldyrkasse',    components: [] },
+  // Custom skalldyrkasse: komponenter er valgt av kunden via boxSelection.
   custom: { displayName: 'Din Skalldyrkasse', components: [] },
 };
+
+// Slug → kasse-type. Brukes når vi mapper admin-overrides til riktig recipe.
+const KASSE_SLUG_TO_TYPE = {
+  'klassisk-skalldyrkasse':  'klassisk',
+  'eksklusiv-skalldyrkasse': 'eksklusiv',
+  'premium-skalldyrkasse':   'premium',
+  'din-skalldyrkasse':       'custom',
+};
+
+// Hent admin-definerte kasseInnhold fra Flask og overstyr KASSE_RECIPES.
+// Tåler at endepunktet ikke svarer — da beholdes default-oppskriftene.
+async function loadKasseRecipesFromOverrides() {
+  try {
+    const r = await fetch(`${FLASK_BASE}/api/products/overrides`, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return;
+    const overrides = await r.json();
+    if (!overrides || typeof overrides !== 'object') return;
+    Object.entries(KASSE_SLUG_TO_TYPE).forEach(([slug, type]) => {
+      const ov = overrides[slug];
+      if (!ov || !Array.isArray(ov.kasseInnhold) || !ov.kasseInnhold.length) return;
+      const components = ov.kasseInnhold.map(it => {
+        const unit = (it.unit === 'stk') ? 'stk' : 'g';
+        const per  = Number(it.perPerson) || 0;
+        const c = { name: String(it.name || '').trim(), unit };
+        if (unit === 'stk') c.perPersonStk = per; else c.perPersonGrams = per;
+        return c;
+      }).filter(c => c.name);
+      if (components.length) KASSE_RECIPES[type].components = components;
+      if (ov.name) KASSE_RECIPES[type].displayName = String(ov.name);
+    });
+  } catch (e) { /* offline / overrides ikke tilgjengelig */ }
+}
 
 // Parser kasse-info ut fra item.name (slik den kommer fra ordre).
 // "Klassisk Skalldyrkasse (549kr pr pers) - 2 / Med is / Med tilbehør"
@@ -1024,8 +1069,10 @@ function parseKasseInfo(name) {
   if (!name) return null;
   const lower = name.toLowerCase();
   let type = null;
-  if (lower.includes('klassisk') && lower.includes('skalldyr')) type = 'klassisk';
-  else if (lower.includes('din skalldyrkasse') || lower.includes('din-skalldyrkasse')) type = 'custom';
+  if      (lower.includes('din skalldyrkasse') || lower.includes('din-skalldyrkasse'))      type = 'custom';
+  else if (lower.includes('eksklusiv') && lower.includes('skalldyr'))                       type = 'eksklusiv';
+  else if (lower.includes('premium')   && lower.includes('skalldyr'))                       type = 'premium';
+  else if (lower.includes('klassisk')  && lower.includes('skalldyr'))                       type = 'klassisk';
   if (!type) return null;
   // Finn antall personer: enten "- 2 /" eller "(2 pers)" eller bare "- 2"
   let persons = 2;
@@ -1037,7 +1084,24 @@ function parseKasseInfo(name) {
 }
 
 // Lager state for hver komponent i en kasse.
-function initKasseComponents(kasseInfo) {
+// For 'custom' bygger vi komponenter fra item.boxSelection (kundens valg).
+// For klassisk/eksklusiv/premium leser vi fra KASSE_RECIPES (kommer fra
+// admin-overrides eller default).
+function initKasseComponents(kasseInfo, item) {
+  if (kasseInfo.type === 'custom' && item && Array.isArray(item.boxSelection) && item.boxSelection.length) {
+    return item.boxSelection.map(s => {
+      const navn = String(s.navn || s.name || '').trim();
+      const qty  = Number(s.qty || s.quantity || 1) || 1;
+      const unit = (s.unit === 'stk' || s.unit === 'kg' || s.unit === 'g') ? s.unit : 'stk';
+      return {
+        name: navn,
+        weight: '', expiry: '',
+        weightUnit: unit === 'kg' ? 'g' : unit,
+        avail: null, replacements: [], confirmedReplacement: null,
+        expected: qty > 1 ? `${qty} ${unit}` : (unit === 'stk' ? '1 stk' : ''),
+      };
+    });
+  }
   const recipe = KASSE_RECIPES[kasseInfo.type];
   if (!recipe || !recipe.components.length) return [];
   return recipe.components.map(c => {
@@ -1047,7 +1111,7 @@ function initKasseComponents(kasseInfo) {
       name: c.name,
       weight: '', expiry: '',
       weightUnit: c.unit || 'g',
-      avail: null, replacements: [], confirmedReplacement: null, itemComment: '',
+      avail: null, replacements: [], confirmedReplacement: null,
       expected: expectedGrams ? `${expectedGrams} g` : (expectedStk ? `${expectedStk} stk` : ''),
     };
   });
@@ -1060,7 +1124,7 @@ function initState(orders) {
       STATE[o.id] = (o.items || []).map(item => {
         const k = parseKasseInfo(item.name);
         if (k) {
-          return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k), itemComment: '' };
+          return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k, item), itemComment: '' };
         }
         return { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
       });
@@ -1072,7 +1136,7 @@ function initState(orders) {
         const entry = STATE[o.id][i];
         const k = parseKasseInfo(item.name);
         if (k && (!entry || !entry.isKasse)) {
-          STATE[o.id][i] = { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k), itemComment: entry?.itemComment || '' };
+          STATE[o.id][i] = { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k, item), itemComment: entry?.itemComment || '' };
         } else if (!entry) {
           STATE[o.id][i] = { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
         }
@@ -1402,11 +1466,24 @@ function _cancelFlaskRetry() {
   _flaskRetryTimer = null;
 }
 
+function setApiDot(state) {
+  const dot = document.getElementById('apiDot');
+  if (!dot) return;
+  dot.classList.remove('ok', 'err');
+  if (state === 'ok') { dot.classList.add('ok'); dot.title = 'Tilkoblet havoyet.no'; }
+  else if (state === 'err') { dot.classList.add('err'); dot.title = 'Ingen kontakt med havoyet.no'; }
+  else { dot.title = 'API-status: ukjent'; }
+}
+
 async function loadFromFlask() {
   try {
+    // Last admin-definerte kasseInnhold før vi bygger STATE — gjør at initKasseComponents
+    // ser riktige komponenter for klassisk/eksklusiv/premium.
+    await loadKasseRecipesFromOverrides();
     const r = await fetch(`${FLASK_BASE}/api/orders`, { signal: AbortSignal.timeout(4000) });
     if (!r.ok) throw new Error();
     const data = await r.json();
+    setApiDot('ok');
     if (data.orders && data.orders.length > 0) {
       await syncFromServer();
       ORDERS = data.orders.map(normalizeOrder);
@@ -1430,8 +1507,9 @@ async function loadFromFlask() {
       renderList();
       return;
     }
-  } catch(e) { /* backend ikke oppe */ }
+  } catch(e) { setApiDot('err'); /* backend ikke oppe */ }
   // Backend ikke oppe → planlegg retry hvert 30 sek til den kommer tilbake
+  setApiDot('err');
   _scheduleFlaskRetry();
 
   // Fallback: prøv server-sync for delte data, bruk sist kjente bestillinger fra localStorage
@@ -1940,7 +2018,7 @@ function renderItemCard(item, i, s) {
     <div class="replacement-section ${replVisible}" id="repl-${i}">
       <div class="replacement-header">
         <span class="replacement-title">
-          ${s.avail==='no'?'🔴 Ikke tilgjengelig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
+          ${s.avail==='no'?'🔴 Ikke mulig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
         </span>
       </div>
       <div class="search-row">
@@ -2000,15 +2078,28 @@ function renderComponentCard(c, i, ci) {
   const weightOk    = c.weight && String(c.weight).trim() !== '';
   const expiryOk    = c.expiry && String(c.expiry).trim() !== '';
   const fieldsVisible = c.avail === 'ok' ? 'visible' : '';
+  const replVisible   = (c.avail === 'unsure' || c.avail === 'no') ? 'visible' : '';
+  const replacements  = Array.isArray(c.replacements) ? c.replacements : [];
   const chipClass = val => {
     if (c.avail !== val) return 'avail-btn';
     return `avail-btn active-${val === 'ok' ? 'ok' : val === 'unsure' ? 'unsure' : 'no'}`;
   };
   const expectedHint = c.expected ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(forv. ${escHtml(c.expected)})</span>` : '';
+  const selectedChips = replacements.map(fid => {
+    const f = FISH_DB.find(x => x.id === fid);
+    if (!f) return '';
+    const isConfirmed = c.confirmedReplacement === fid;
+    return `<span class="replacement-chip ${isConfirmed ? 'confirmed' : ''}">
+      ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+      ${escHtml(f.name)}
+      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmComponentReplacement('${currentOrderId}',${i},${ci},'${fid}')">Bekreft</button>` : ''}
+      <button class="chip-remove" onclick="removeComponentReplacement('${currentOrderId}',${i},${ci},'${fid}')">✕</button>
+    </span>`;
+  }).join('');
   return `
   <div class="item-card ${statusClass}" id="card-${i}-${ci}">
     <div class="item-top">
-      <div class="item-name">${escHtml(c.name)}${expectedHint}</div>
+      <div class="item-name" id="comp-name-${i}-${ci}">${escHtml(c.name)}${expectedHint}</div>
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'ok')">Tilgjengelig</button>
         <button class="${chipClass('unsure')}" onclick="setComponentAvail('${currentOrderId}',${i},${ci},'unsure')">Usikkert</button>
@@ -2030,6 +2121,20 @@ function renderComponentCard(c, i, ci) {
         <input class="field-input${expiryOk?' filled':''}" type="date"
           value="${escHtml(c.expiry)}" oninput="onComponentField('${currentOrderId}',${i},${ci},'expiry',this.value)"/>
       </div>
+    </div>
+    <div class="replacement-section ${replVisible}" id="comp-repl-${i}-${ci}">
+      <div class="replacement-header">
+        <span class="replacement-title">
+          ${c.avail==='no'?'🔴 Ikke mulig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
+        </span>
+      </div>
+      <div class="search-row">
+        <input class="search-input" id="comp-search-${i}-${ci}" type="text"
+          placeholder="Søk på fisk eller skalldyr…"
+          oninput="onComponentSearch('${currentOrderId}',${i},${ci},this.value)" autocomplete="off"/>
+      </div>
+      <div class="search-results" id="comp-results-${i}-${ci}"></div>
+      <div class="selected-replacements" id="comp-chips-${i}-${ci}">${selectedChips}</div>
     </div>
   </div>`;
 }
@@ -2064,7 +2169,7 @@ function restoreState() {
           if (k) {
             // Hvis lagret state ikke har kasse-format, oppgrader nå
             if (!entry || !entry.isKasse || !Array.isArray(entry.components)) {
-              return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k), itemComment: (entry && entry.itemComment) || '' };
+              return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k, item), itemComment: (entry && entry.itemComment) || '' };
             }
             return entry;
           }
@@ -2114,11 +2219,109 @@ function setComponentAvail(orderId, i, ci, val) {
     c.avail = null; c.weight = ''; c.expiry = '';
   } else {
     c.avail = val;
-    if (val !== 'ok') { c.weight = ''; c.expiry = ''; }
+    if (val === 'ok') { c.replacements = []; c.confirmedReplacement = null; }
+    else              { c.weight = ''; c.expiry = ''; }
   }
   saveState();
   renderDetail();
   updateToolbar();
+  if (val !== 'ok' && val !== null) {
+    setTimeout(() => { const el = document.getElementById('comp-search-' + i + '-' + ci); if (el) el.focus(); }, 50);
+  }
+}
+
+function onComponentSearch(orderId, i, ci, query) {
+  const entry = STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components[ci];
+  if (!c) return;
+  const q = String(query || '').toLowerCase().trim();
+  const resultsEl = document.getElementById('comp-results-' + i + '-' + ci);
+  if (!resultsEl) return;
+  if (!q) { resultsEl.innerHTML = ''; resultsEl.classList.remove('visible'); return; }
+  const matches = FISH_DB.filter(f => f.name.toLowerCase().includes(q) || f.category.toLowerCase().includes(q));
+  if (!matches.length) {
+    resultsEl.innerHTML = `<div style="padding:12px 14px;font-size:13px;color:var(--muted)">Ingen treff på «${escHtml(query)}»</div>`;
+    resultsEl.classList.add('visible');
+    return;
+  }
+  const selected = Array.isArray(c.replacements) ? c.replacements : [];
+  resultsEl.innerHTML = matches.map(f => {
+    const isSel = selected.includes(f.id);
+    return `<div class="result-item ${isSel?'selected':''}" onclick="toggleComponentReplacement('${orderId}',${i},${ci},'${f.id}')">
+      <div class="result-check">${isSel?'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':''}</div>
+      <span class="result-name">${escHtml(f.name)}</span>
+      <span class="result-detail">${escHtml(f.category)} · ${escHtml(f.unit)}</span>
+    </div>`;
+  }).join('');
+  resultsEl.classList.add('visible');
+}
+
+function toggleComponentReplacement(orderId, i, ci, fishId) {
+  const entry = STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components[ci];
+  if (!c) return;
+  if (!Array.isArray(c.replacements)) c.replacements = [];
+  c.replacements = c.replacements.includes(fishId)
+    ? c.replacements.filter(id => id !== fishId)
+    : [...c.replacements, fishId];
+  const q = document.getElementById('comp-search-' + i + '-' + ci)?.value || '';
+  onComponentSearch(orderId, i, ci, q);
+  updateComponentChips(orderId, i, ci);
+  saveState();
+}
+
+function removeComponentReplacement(orderId, i, ci, fishId) {
+  const entry = STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components[ci];
+  if (!c) return;
+  c.replacements = (c.replacements || []).filter(id => id !== fishId);
+  if (c.confirmedReplacement === fishId) c.confirmedReplacement = null;
+  updateComponentChips(orderId, i, ci);
+  saveState();
+}
+
+function confirmComponentReplacement(orderId, i, ci, fishId) {
+  const entry = STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components[ci];
+  if (!c) return;
+  c.confirmedReplacement = c.confirmedReplacement === fishId ? null : fishId;
+  updateComponentChips(orderId, i, ci);
+  saveState();
+}
+
+function updateComponentChips(orderId, i, ci) {
+  const entry = STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components[ci];
+  if (!c) return;
+  const chipsEl = document.getElementById('comp-chips-' + i + '-' + ci);
+  if (!chipsEl) return;
+  chipsEl.innerHTML = (c.replacements || []).map(fid => {
+    const f = FISH_DB.find(x => x.id === fid);
+    if (!f) return '';
+    const isConfirmed = c.confirmedReplacement === fid;
+    return `<span class="replacement-chip ${isConfirmed ? 'confirmed' : ''}">
+      ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+      ${escHtml(f.name)}
+      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmComponentReplacement('${orderId}',${i},${ci},'${fid}')">Bekreft</button>` : ''}
+      <button class="chip-remove" onclick="removeComponentReplacement('${orderId}',${i},${ci},'${fid}')">✕</button>
+    </span>`;
+  }).join('');
+  // Oppdater komponent-navnet med erstatning
+  const nameEl = document.getElementById('comp-name-' + i + '-' + ci);
+  if (nameEl) {
+    const confirmed = c.confirmedReplacement ? FISH_DB.find(x => x.id === c.confirmedReplacement) : null;
+    const expectedHint = c.expected ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(forv. ${escHtml(c.expected)})</span>` : '';
+    if (confirmed) {
+      nameEl.innerHTML = `<span class="item-name replaced">${escHtml(c.name)}</span> <span class="item-name-replacement">${escHtml(confirmed.name)}</span>${expectedHint}`;
+    } else {
+      nameEl.innerHTML = escHtml(c.name) + expectedHint;
+    }
+  }
 }
 
 function onComponentField(orderId, i, ci, field, val) {
@@ -2297,7 +2500,8 @@ let _lastSyncHash = '';
 async function pollPackingState() {
   try {
     const r = await fetch(`${FLASK_BASE}/api/packing-state`, { signal: AbortSignal.timeout(3000) });
-    if (!r.ok) return;
+    if (!r.ok) { setApiDot('err'); return; }
+    setApiDot('ok');
     const serverState = await r.json();
     if (!serverState || !Object.keys(serverState).length) return;
 
@@ -2323,7 +2527,7 @@ async function pollPackingState() {
       // Vis en kort melding om at data er synkronisert
       showToast('Synkronisert fra annen enhet');
     }
-  } catch(e) { /* server ikke nådd */ }
+  } catch(e) { setApiDot('err'); /* server ikke nådd */ }
 }
 
 setInterval(pollPackingState, 15000); // poll hvert 15. sekund
