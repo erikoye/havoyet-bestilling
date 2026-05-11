@@ -26,7 +26,7 @@
                 padding:24px;z-index:9999}
     .pin-screen .brand{font-weight:700;font-size:22px;margin-bottom:6px;color:var(--gold)}
     .pin-screen p{color:rgba(255,255,255,.75);margin:0 0 28px;font-size:14px}
-    .pin-input{font-size:32px;letter-spacing:14px;width:200px;padding:14px 0;
+    .pin-input{font-size:32px;letter-spacing:18px;width:180px;padding:14px 0 14px 18px;
                text-align:center;background:rgba(255,255,255,.1);color:#fff;
                border:2px solid rgba(255,255,255,.25);border-radius:12px;
                font-family:-apple-system,sans-serif;font-weight:600;
@@ -106,8 +106,8 @@
 <div class="pin-screen" id="pinScreen" style="display:none">
   <div class="brand">Havøyet</div>
   <p>Skriv inn sjåfør-PIN for å starte</p>
-  <input type="tel" inputmode="numeric" class="pin-input" id="pin"
-         maxlength="8" autocomplete="off" autofocus>
+  <input type="tel" inputmode="numeric" pattern="[0-9]*" class="pin-input" id="pin"
+         maxlength="4" autocomplete="one-time-code" autofocus>
   <button class="pin-btn" id="pinBtn">Logg inn</button>
   <div class="pin-err" id="pinErr"></div>
 </div>
@@ -348,6 +348,12 @@ async function handleLogin(){
 window.addEventListener("DOMContentLoaded", async () => {
   $("pinBtn").addEventListener("click", handleLogin);
   $("pin").addEventListener("keydown", e => { if (e.key === "Enter") handleLogin(); });
+  // Hindre alt som ikke er siffer + auto-submit ved 4 siffer
+  $("pin").addEventListener("input", e => {
+    const cleaned = e.target.value.replace(/\D/g, "").slice(0, 4);
+    if (cleaned !== e.target.value) e.target.value = cleaned;
+    if (cleaned.length === 4) handleLogin();
+  });
   $("refreshBtn").addEventListener("click", () => loadRoute());
   $("logoutBtn").addEventListener("click", () => {
     if (!confirm("Logge ut?")) return;

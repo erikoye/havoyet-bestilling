@@ -1140,6 +1140,13 @@ def admin_list_drivers():
     return jsonify({"drivers": _load_drivers()})
 
 
+_PIN_LEN = 4
+
+
+def _is_valid_pin(pin: str) -> bool:
+    return bool(pin) and len(pin) == _PIN_LEN and pin.isdigit()
+
+
 @bp.post("/api/admin/drivers")
 def admin_create_driver():
     _, err = _admin_only()
@@ -1148,8 +1155,10 @@ def admin_create_driver():
     data = request.get_json(silent=True) or {}
     name = str(data.get("name") or "").strip()
     pin = str(data.get("pin") or "").strip()
-    if not name or len(pin) < 4:
-        return jsonify({"error": "name and pin (min 4 chars) required"}), 400
+    if not name:
+        return jsonify({"error": "Navn er påkrevd"}), 400
+    if not _is_valid_pin(pin):
+        return jsonify({"error": f"PIN må være nøyaktig {_PIN_LEN} siffer"}), 400
     drivers = _load_drivers()
     if any(str(d.get("pin")) == pin for d in drivers):
         return jsonify({"error": "PIN allerede i bruk av en annen sjåfør"}), 409
@@ -1177,8 +1186,8 @@ def admin_update_driver(driver_id: str):
                 d["name"] = str(data["name"]).strip() or d.get("name", "")
             if "pin" in data:
                 new_pin = str(data["pin"]).strip()
-                if len(new_pin) < 4:
-                    return jsonify({"error": "PIN må være minst 4 tegn"}), 400
+                if not _is_valid_pin(new_pin):
+                    return jsonify({"error": f"PIN må være nøyaktig {_PIN_LEN} siffer"}), 400
                 if any(str(o.get("pin")) == new_pin and str(o.get("id")) != driver_id
                        for o in drivers):
                     return jsonify({"error": "PIN allerede i bruk"}), 409
