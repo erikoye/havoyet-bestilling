@@ -811,8 +811,6 @@
   </div>
 </header>
 
-<div id="flaskBanner" style="display:none;padding:10px 20px;font-size:13px;font-family:'DM Sans',sans-serif;align-items:center;gap:10px"></div>
-
 <main>
 
   <!-- ── VIEW 1: ORDRELISTE + INNKJØPSLISTE ── -->
@@ -1244,12 +1242,8 @@ function _isOrderClosedPakke(o){
 }
 
 function setBanner(ok, msg) {
-  const b = document.getElementById('flaskBanner');
-  b.style.display = 'flex';
-  b.style.background = ok ? '#dcfce7' : '#fef3c7';
-  b.style.borderBottom = ok ? '1px solid #86efac' : '1px solid #fcd34d';
-  b.style.color = ok ? '#166534' : '#92400e';
-  b.innerHTML = `<span style="font-size:16px">${ok ? '🟢' : '🟡'}</span> ${msg}`;
+  // Status vises kun via .api-dot oppe ved klokken (grønn = tilkoblet, rød = frakoblet).
+  setApiDot(ok ? 'ok' : 'err');
 }
 
 // ─── SERVER-SYNC (cross-device) ───────────────
@@ -1515,9 +1509,7 @@ async function loadFromFlask() {
       restoreState(); restoreNotes();
       localStorage.setItem('havøyet_orders', JSON.stringify(data.orders));
       _cancelFlaskRetry();
-      setBanner(true, `Koblet til havoyet.no – ${ORDERS.length} bestilling${ORDERS.length !== 1 ? 'er' : ''} hentet`);
-      // Skjul success-banneret etter 4 sekunder så det ikke ligger og distraherer
-      setTimeout(() => { const b = document.getElementById('flaskBanner'); if (b) b.style.display = 'none'; }, 4000);
+      setBanner(true);
 
       const params = new URLSearchParams(location.search);
       const targetId = params.get('ordre');
