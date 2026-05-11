@@ -71,9 +71,9 @@ def register_tracking(
     ).rstrip("/")
     _state["state_dir"] = Path(state_dir)
     try:
-        _state["notify_threshold_min"] = int(os.environ.get("TRACKING_NOTIFY_MIN", "5"))
+        _state["notify_threshold_min"] = int(os.environ.get("TRACKING_NOTIFY_MIN", "10"))
     except ValueError:
-        _state["notify_threshold_min"] = 5
+        _state["notify_threshold_min"] = 10
     app.register_blueprint(bp)
     _start_proximity_watcher()
 
@@ -487,7 +487,10 @@ def _sms_opt_in(order: dict) -> bool:
     return bool(pref.get("sms", True)) and not pref.get("opted_out", False)
 
 
-def _send_track_link_sms(order: dict, track_url: str) -> tuple[bool, str]:
+def _send_track_link_sms(order: dict, track_url: str,
+                          eta_clock: str | None = None) -> tuple[bool, str]:
+    """Send track-lenken til kunden. Hvis eta_clock er gitt ("HH:MM") inkluderer
+    vi anslått ankomst i meldingen."""
     sender = _state["sms_sender"]
     if not sender:
         return False, "no-sms-sender"
@@ -497,10 +500,16 @@ def _send_track_link_sms(order: dict, track_url: str) -> tuple[bool, str]:
     if not _sms_opt_in(order):
         return False, "opted-out"
     nr = order.get("ordrenr") or order.get("id") or "?"
-    body = (
-        f"Havøyet: Bestilling #{nr} er på vei. "
-        f"Følg leveringen live: {track_url}"
-    )
+    if eta_clock:
+        body = (
+            f"Havøyet: Bestilling #{nr} kommer ca. kl {eta_clock}. "
+            f"Følg leveringen live: {track_url}"
+        )
+    else:
+        body = (
+            f"Havøyet: Bestilling #{nr} er på vei. "
+            f"Følg leveringen live: {track_url}"
+        )
     try:
         ok, detail = sender(phone, body)
         return bool(ok), str(detail)
@@ -1045,20 +1054,123 @@ def admin_route_reorder():
     return jsonify({"ok": True, "date": date_iso})
 
 
+def _parse_start_time(value: str | None, fallback_stops: list[dict]) -> tuple[int, int]:
+    """Returnerer (hour, minute) for ruteens start.
+
+    1) Bruker eksplisitt "HH:MM" hvis gitt.
+    2) Ellers prøver første stopps leveringstid (f.eks. "13:00-15:00" → 13:00).
+    3) Faller tilbake til 14:00.
+    """
+    if value:
+        import re
+        m = re.match(r"^\s*(\d{1,2})[:.](\d{2})\s*$", str(value))
+        if m:
+            h, mn = int(m.group(1)), int(m.group(2))
+            if 0 <= h <= 23 and 0 <= mn <= 59:
+                return h, mn
+    for s in fallback_stops or []:
+        slot = (s.get("leveringstid") or "").strip()
+        if slot:
+            import re
+            m = re.match(r"^\s*(\d{1,2})[:.](\d{2})", slot)
+            if m:
+                h, mn = int(m.group(1)), int(m.group(2))
+                if 0 <= h <= 23 and 0 <= mn <= 59:
+                    return h, mn
+    return 14, 0
+
+
+def _eta_clock_for_stop(start_hh: int, start_mm: int, cum_min: float) -> str:
+    """Returnerer "HH:MM" for stoppet basert på start-tid + kumulativ kjøretid.
+
+    Runder til nærmeste 5-min for å virke menneskelig ("ca kl 14:35", ikke "14:33").
+    """
+    total = start_hh * 60 + start_mm + int(round(cum_min or 0))
+    # Rund til nærmeste 5 minutter
+    total = int(round(total / 5)) * 5
+    h = (total // 60) % 24
+    m = total % 60
+    return f"{h:02d}:{m:02d}"
+
+
 @bp.post("/api/admin/tracking/route/approve")
 def admin_route_approve():
-    """Admin godkjenner dagens rute. Sjåfør får da rute-data; uten godkjenning
-    holder /api/driver/route/today tilbake stopp-listen."""
+    """Godkjenn dagens rute + send kundene SMS med estimert klokkeslett og
+    tracking-lenke. Sjåfør får ruten umiddelbart etter godkjenning.
+
+    Body (alt valgfritt):
+      - date: "YYYY-MM-DD" (default: i dag)
+      - start_time: "HH:MM" (default: parse fra første stopps leveringstid)
+      - notify: bool (default true — send SMS til alle kunder)
+    """
     _, err = _admin_only()
     if err:
         return err
     data = request.get_json(silent=True) or {}
     date_iso = (data.get("date") or _today_iso()).strip()
+    notify = data.get("notify", True)
+    start_time_arg = (data.get("start_time") or "").strip()
+
+    # Lagre godkjenningen først
+    now = int(time.time())
     _set_day_state(date_iso, {
         "approved": True,
-        "approved_at": int(time.time()),
+        "approved_at": now,
     })
-    return jsonify({"ok": True, "date": date_iso, "approved_at": int(time.time())})
+
+    notify_summary = {"sent": 0, "skipped": 0, "failed": 0, "details": []}
+    if not notify:
+        return jsonify({"ok": True, "date": date_iso, "approved_at": now,
+                        "notify": notify_summary})
+
+    # Bygg ruten på nytt for å få cum_min per stopp etter eventuell admin-omrokering
+    route = _build_route(date_iso, optimize=True)
+    stops = route.get("stops") or []
+    if not stops:
+        return jsonify({"ok": True, "date": date_iso, "approved_at": now,
+                        "notify": notify_summary})
+
+    start_hh, start_mm = _parse_start_time(start_time_arg, stops)
+    base = (_state["tracking_base_url"] or "").rstrip("/")
+
+    for stop in stops:
+        order_id = str(stop.get("order_id") or "")
+        order = _find_order(order_id)
+        if not order:
+            notify_summary["skipped"] += 1
+            notify_summary["details"].append({"order_id": order_id, "result": "order_not_found"})
+            continue
+        # Auto-generer track_token hvis ikke allerede
+        if not order.get("track_token"):
+            order["track_token"] = secrets.token_urlsafe(20)
+            order["track_token_created"] = now
+        order.pop("proximity_notified_at", None)
+        _clear_proximity_lock(order_id)
+
+        eta_clock = _eta_clock_for_stop(start_hh, start_mm, stop.get("cum_min_from_depot") or 0)
+        order["estimated_eta_clock"] = eta_clock
+
+        track_url = f"{base}/track/{order_id}?token={order['track_token']}"
+        ok, detail = _send_track_link_sms(order, track_url, eta_clock=eta_clock)
+        if ok:
+            notify_summary["sent"] += 1
+        elif detail in ("no-phone", "opted-out"):
+            notify_summary["skipped"] += 1
+        else:
+            notify_summary["failed"] += 1
+        notify_summary["details"].append({
+            "order_id": order_id, "eta_clock": eta_clock,
+            "result": "ok" if ok else detail,
+        })
+
+    try:
+        _state["save_state"]()
+    except Exception as e:
+        print(f"[APPROVE] save_state feilet: {e}")
+
+    return jsonify({"ok": True, "date": date_iso, "approved_at": now,
+                    "start_time": f"{start_hh:02d}:{start_mm:02d}",
+                    "notify": notify_summary})
 
 
 @bp.post("/api/admin/tracking/route/reset")
