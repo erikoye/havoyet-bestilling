@@ -135,6 +135,26 @@
 </div>
 
 <main>
+  <!-- SALGSKALENDER — innkjøpsbehov pr. leveringsdag -->
+  <section id="salesCal" style="margin:18px 14px 26px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow-sm);">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+      <div>
+        <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:15px;color:var(--ink);">Salgskalender · Innkjøpsbehov</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Hvor mye av hvert produkt som trengs på hvilken leveringsdag.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <label style="font-size:12px;color:var(--muted);">Vindu:</label>
+        <select id="salesCalDays" style="border:1px solid var(--border);border-radius:8px;padding:5px 9px;font-size:12.5px;background:var(--surface);">
+          <option value="7">7 dager</option>
+          <option value="14" selected>14 dager</option>
+          <option value="30">30 dager</option>
+        </select>
+        <button id="salesCalRefresh" style="border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:5px 10px;font-size:12.5px;color:var(--muted);">↻</button>
+      </div>
+    </div>
+    <div id="salesCalBody"><div class="loading" style="padding:14px 0;color:var(--muted);font-size:13px;">Beregner innkjøpsbehov…</div></div>
+  </section>
+
   <div id="productsList"><div class="loading">Henter produkter fra havoyet.no…</div></div>
 </main>
 
@@ -389,11 +409,188 @@ document.getElementById('statusChips').addEventListener('click', e => {
   renderProducts();
 });
 
+// ── SALGSKALENDER (innkjøpsbehov per leveringsdag) ─────
+// Aggregerer alle aktive ordrer per (leveringsdag × produkt). Skalldyrkasser
+// ekspanderes til komponentene sine slik at admin ser hvor mye reker /
+// blåskjell / østers etc. som faktisk må kjøpes inn.
+const KASSE_RECIPES = {
+  klassisk: [
+    { name: 'Reker',      perPersonGrams: 250, unit: 'g' },
+    { name: 'Blåskjell',  perPersonGrams: 200, unit: 'g' },
+    { name: 'Østers',     perPersonStk:   2,   unit: 'stk' },
+    { name: 'Krabbeklør', perPersonGrams: 250, unit: 'g' },
+  ],
+  premium: [
+    { name: 'Reker',          perPersonGrams: 250, unit: 'g' },
+    { name: 'Blåskjell',      perPersonGrams: 200, unit: 'g' },
+    { name: 'Østers',         perPersonStk:   3,   unit: 'stk' },
+    { name: 'Krabbeklør',     perPersonGrams: 300, unit: 'g' },
+    { name: 'Sjøkreps',       perPersonGrams: 150, unit: 'g' },
+  ],
+  eksklusiv: [
+    { name: 'Hummer',         perPersonGrams: 250, unit: 'g' },
+    { name: 'Kongekrabbe',    perPersonGrams: 200, unit: 'g' },
+    { name: 'Reker',          perPersonGrams: 200, unit: 'g' },
+    { name: 'Blåskjell',      perPersonGrams: 150, unit: 'g' },
+    { name: 'Østers',         perPersonStk:   3,   unit: 'stk' },
+    { name: 'Sjøkreps',       perPersonGrams: 200, unit: 'g' },
+    { name: 'Krabbeklør',     perPersonGrams: 200, unit: 'g' },
+  ],
+};
+function _detectKasse(name) {
+  const lower = String(name || '').toLowerCase();
+  if (!lower.includes('skalldyr')) return null;
+  let recipe = null;
+  if (lower.includes('eksklusiv'))      recipe = 'eksklusiv';
+  else if (lower.includes('premium'))   recipe = 'premium';
+  else if (lower.includes('klassisk'))  recipe = 'klassisk';
+  else if (lower.includes('din'))       recipe = 'custom';
+  if (!recipe) return null;
+  // Antall personer: "- 2 / ..." eller "(2 pers)"
+  let persons = 2;
+  const m1 = name.match(/[-–]\s*(\d+)\s*\//);
+  const m2 = name.match(/\((\d+)\s*pers/i);
+  if (m1) persons = parseInt(m1[1], 10) || 2;
+  else if (m2) persons = parseInt(m2[1], 10) || 2;
+  return { recipe, persons };
+}
+// Trekker ut antall gram fra en variant-streng eller item-felt.
+// "500 g", "1 kg", "ca. 250 g" → tilsvarende antall gram.
+function _parseGrams(s) {
+  if (s == null) return null;
+  const m = String(s).match(/(\d+(?:[.,]\d+)?)\s*(g|kg)\b/i);
+  if (!m) return null;
+  const v = parseFloat(m[1].replace(',', '.'));
+  return m[2].toLowerCase() === 'kg' ? v * 1000 : v;
+}
+// Returnerer array av {productName, grams?, stk?} for én ordrelinje.
+// Ekspanderer skalldyrkasser via KASSE_RECIPES.
+function _itemToComponents(item) {
+  const name = item.productName || item.name || '';
+  const qty  = Number(item.qty || item.quantity || 1);
+  const kasse = _detectKasse(name);
+  if (kasse) {
+    if (kasse.recipe === 'custom') {
+      const sel = item.boxSelection || (item._raw && item._raw.boxSelection) || [];
+      return (Array.isArray(sel) ? sel : [])
+        .map(b => ({ productName: b.navn || b.name || '', grams: _parseGrams(b.weight) || _parseGrams(b.grams), stk: b.stk || null }))
+        .filter(c => c.productName);
+    }
+    const components = KASSE_RECIPES[kasse.recipe] || [];
+    return components.map(c => {
+      if (c.perPersonGrams != null) return { productName: c.name, grams: c.perPersonGrams * kasse.persons * qty };
+      if (c.perPersonStk   != null) return { productName: c.name, stk:   c.perPersonStk   * kasse.persons * qty };
+      return { productName: c.name };
+    });
+  }
+  // Vanlig fiskelinje: estimer gram fra variantStr / grams-felt / unit
+  const fromVariant = _parseGrams(item.variantStr) || _parseGrams(item.variantLabel);
+  if (Number.isFinite(item.grams) && item.grams > 0) {
+    return [{ productName: name, grams: Number(item.grams) * qty }];
+  }
+  if (fromVariant) {
+    return [{ productName: name, grams: fromVariant * qty }];
+  }
+  // Per-kg-pris-produkt uten eksplisitt vekt: bruk qty (kg) hvis unit antyder det
+  const unit = String(item.unit || '').toLowerCase();
+  if (unit === 'kg') return [{ productName: name, grams: qty * 1000 }];
+  if (unit === 'g')  return [{ productName: name, grams: qty }];
+  if (unit === 'stk' || item.kind === 'unit') return [{ productName: name, stk: qty }];
+  // Default: 250 g antagelse for fisk (samme som PDP-default)
+  return [{ productName: name, grams: 250 * qty }];
+}
+function _fmtGrams(g) {
+  if (g >= 1000) return (g / 1000).toLocaleString('nb', { maximumFractionDigits: 2 }) + ' kg';
+  return Math.round(g) + ' g';
+}
+function _isoToNoDate(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  const ukedag = ['søndag','mandag','tirsdag','onsdag','torsdag','fredag','lørdag'][d.getDay()];
+  const mnd = ['januar','februar','mars','april','mai','juni','juli','august','september','oktober','november','desember'][d.getMonth()];
+  return `${ukedag} ${d.getDate()}. ${mnd}`;
+}
+async function _renderSalesCalendar() {
+  const body = document.getElementById('salesCalBody');
+  if (!body) return;
+  body.innerHTML = '<div class="loading" style="padding:14px 0;color:var(--muted);font-size:13px;">Henter ordrer…</div>';
+  const daysSel = document.getElementById('salesCalDays');
+  const days = daysSel ? parseInt(daysSel.value, 10) || 14 : 14;
+  let orders = [];
+  try {
+    const r = await fetch(`${API_BASE}/api/orders`, { cache: 'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      orders = j.orders || [];
+    }
+  } catch (e) { /* faller gjennom */ }
+  const today = new Date(); today.setHours(0,0,0,0);
+  const maxDate = new Date(today.getTime() + days * 86400000);
+  const byDate = new Map();
+  for (const o of orders) {
+    const iso = String(o.delivery || '').slice(0,10);
+    if (!iso) continue;
+    const d = new Date(iso + 'T00:00:00');
+    if (d < today || d > maxDate) continue;
+    // Skip ferdige
+    const st = String(o.status || '').toUpperCase();
+    if (['DONE','COMPLETED','DELIVERED','LEVERT','FULFILLED','CANCELLED','REFUNDED'].includes(st)) continue;
+    if (!byDate.has(iso)) byDate.set(iso, { products: new Map(), orderCount: 0 });
+    const dayMap = byDate.get(iso);
+    dayMap.orderCount++;
+    for (const item of (o.items || [])) {
+      const components = _itemToComponents(item);
+      for (const c of components) {
+        const key = c.productName;
+        if (!key) continue;
+        const cur = dayMap.products.get(key) || { grams: 0, stk: 0, orderRefs: new Set() };
+        if (Number.isFinite(c.grams)) cur.grams += c.grams;
+        if (Number.isFinite(c.stk))   cur.stk   += c.stk;
+        cur.orderRefs.add(o.id);
+        dayMap.products.set(key, cur);
+      }
+    }
+  }
+  if (!byDate.size) {
+    body.innerHTML = `<div style="padding:14px 4px;font-size:13px;color:var(--muted);">Ingen aktive ordrer med leveringsdato de neste ${days} dagene.</div>`;
+    return;
+  }
+  const sortedDates = Array.from(byDate.keys()).sort();
+  body.innerHTML = sortedDates.map(iso => {
+    const day = byDate.get(iso);
+    const products = Array.from(day.products.entries()).sort(([a],[b]) => a.localeCompare(b, 'nb'));
+    const rows = products.map(([name, q]) => {
+      const parts = [];
+      if (q.grams > 0) parts.push(_fmtGrams(q.grams));
+      if (q.stk   > 0) parts.push(q.stk + ' stk');
+      const qtyStr = parts.join(' + ') || '–';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">
+        <span style="color:var(--ink);">${name.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</span>
+        <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--primary);">${qtyStr}</span>
+      </div>`;
+    }).join('');
+    const dShort = new Date(iso + 'T00:00:00').toLocaleDateString('nb-NO', { day: '2-digit', month: '2-digit' });
+    return `<div style="margin-bottom:18px;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;padding-bottom:5px;border-bottom:2px solid var(--primary);">
+        <div style="font-family:'Montserrat',sans-serif;font-weight:700;font-size:13.5px;color:var(--ink);text-transform:capitalize;">${_isoToNoDate(iso)}</div>
+        <div style="font-size:11.5px;color:var(--muted);font-family:'DM Mono',monospace;">${dShort} · ${day.orderCount} ordre${day.orderCount===1?'':'r'}</div>
+      </div>
+      ${rows || '<div style="padding:6px 0;font-size:12.5px;color:var(--muted);">Ingen varer</div>'}
+    </div>`;
+  }).join('');
+}
+
 // ── BOOT + POLL ────────────────────────────────────────
 (async () => {
   const ok = await fetchProducts();
   if (ok) renderProducts();
   else document.getElementById('productsList').innerHTML = `<div class="empty">Klarte ikke hente produkter. Sjekk at backend er oppe og prøv igjen.</div>`;
+
+  // Bygg salgskalenderen
+  _renderSalesCalendar();
+  const daysSel = document.getElementById('salesCalDays');
+  if (daysSel) daysSel.addEventListener('change', _renderSalesCalendar);
+  const refreshBtn = document.getElementById('salesCalRefresh');
+  if (refreshBtn) refreshBtn.addEventListener('click', _renderSalesCalendar);
 
   // Poll for endringer fra admin/nettside; hopp over hvis vi har en pågående lagring
   setInterval(async () => {
@@ -401,6 +598,7 @@ document.getElementById('statusChips').addEventListener('click', e => {
     if (document.hidden) return;
     const ok = await fetchProducts({ silent: true });
     if (ok) renderProducts();
+    _renderSalesCalendar();
   }, POLL_MS);
 
   // Når fanen blir synlig igjen → frisk-hent umiddelbart
@@ -409,6 +607,7 @@ document.getElementById('statusChips').addEventListener('click', e => {
     if (Date.now() - _lastFetchAt < 5000) return;
     const ok = await fetchProducts({ silent: true });
     if (ok) renderProducts();
+    _renderSalesCalendar();
   });
 })();
 </script>
