@@ -699,30 +699,50 @@ def _verify_stateless_token(token):
         return None
 
 def _save_sync_state():
-    """Persist cross-device sync state to disk."""
+    """Persist cross-device sync state to disk — atomisk skriving.
+
+    Tidligere åpnet vi SYNC_STATE_FILE direkte i "w"-modus, noe som trunkerte
+    fila før json.dump ble fullført. Hvis serialiseringen kastet (eller
+    prosessen ble drept midt i), endte vi opp med en tom/korrupt fil →
+    _auth_users gikk tapt ved neste oppstart → admin ble låst ute.
+
+    Skriv først til en .tmp-fil og bytt så atomisk med os.replace, samme
+    mønster som SUBSCRIPTIONS_FILE/ANALYTICS_FILE/CHAT_SESSIONS_FILE bruker.
+    """
     try:
-        with open(SYNC_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump({
-                "manual_orders":     _manual_orders,
-                "hidden_orders":     _hidden_orders,
-                "overrides":         _overrides,
-                "packing_state":     _packing_state,
-                "order_notes":       _order_notes,
-                "product_overrides":   _product_overrides,
-                "reviews":             _reviews,
-                "customer_favorites":  _customer_favorites,
-                "admin_notifiers":     _admin_notifiers,
-                "customer_notify_config": _customer_notify_config,
-                "customers":           _customers,
-                "vipps_imported_payments": _vipps_imported_payments,
-                "card_payments_imported":  _card_payments_imported,
-                "auth_users":          _auth_users,
-                "auth_sessions":       _auth_sessions,
-                "subscribers":         _subscribers,
-                "discounts":           _discounts,
-            }, f, ensure_ascii=False)
-    except Exception:
-        pass
+        payload = {
+            "manual_orders":     _manual_orders,
+            "hidden_orders":     _hidden_orders,
+            "overrides":         _overrides,
+            "packing_state":     _packing_state,
+            "order_notes":       _order_notes,
+            "product_overrides":   _product_overrides,
+            "reviews":             _reviews,
+            "customer_favorites":  _customer_favorites,
+            "admin_notifiers":     _admin_notifiers,
+            "customer_notify_config": _customer_notify_config,
+            "customers":           _customers,
+            "vipps_imported_payments": _vipps_imported_payments,
+            "card_payments_imported":  _card_payments_imported,
+            "auth_users":          _auth_users,
+            "auth_sessions":       _auth_sessions,
+            "subscribers":         _subscribers,
+            "discounts":           _discounts,
+        }
+        tmp = SYNC_STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, SYNC_STATE_FILE)
+    except Exception as e:
+        # Ikke svelg feilen i stillhet — logg så vi ser om noe i payloaden
+        # ikke er JSON-serialiserbart i fremtidige patcher.
+        print(f"[SYNC-SAVE] FEIL ved persistens: {e}")
+        try:
+            tmp = SYNC_STATE_FILE + ".tmp"
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
 
 def _restore_baseline_if_empty(name, current, file_basename):
     """Generic auto-restore fra committed baseline-snapshot. Returnerer
