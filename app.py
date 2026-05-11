@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, date
 
 app = Flask(__name__)
 CORS(app)  # Tillat kall fra HTML-filer åpnet lokalt
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 2 MB body — rom for 512KB-fil + JSON-overhead
+app.config["MAX_CONTENT_LENGTH"] = 6 * 1024 * 1024  # 6 MB body — rom for inline e-post-bilder (opptil ~5 MB)
 
 # ── KONFIG ────────────────────────────────────────────────────────────────────
 # Les fra .env-fil om den finnes
@@ -467,6 +467,41 @@ _product_overrides = {}
 _reviews = []  # [{id, slug, name, rating, text, date}]
 _customer_favorites = {}  # email → [slug, slug, ...]
 _admin_notifiers = []  # [{id, name, email, events:[...], created_at}]
+# Kunde-varsler-konfig: styres fra admin.html "Kunde-varsler"-seksjonen.
+# Hver nøkkel: {enabled, channel:'email'|'sms'|'both', subject, body, hours_before?}
+_CUSTOMER_NOTIFY_DEFAULTS = {
+    "order_confirmation": {
+        "enabled": True, "channel": "email",
+        "subject": "Bekreftelse på bestilling #{ordrenr} — Havøyet",
+        "body": ("Hei {navn},\n\nTusen takk for bestillingen din! Vi har "
+                 "registrert ordre #{ordrenr}.\n\nLevering: {leveringsdag} kl. "
+                 "{leveringstid}\n\nDu kan følge status og live ETA på «Min "
+                 "side»: {kontolenke}\n\nSpørsmål? Svar på denne e-posten "
+                 "eller send til erik@havoyet.no.\n\n— Havøyet"),
+    },
+    "delivery_notice": {
+        "enabled": True, "channel": "both",
+        "subject": "Bestillingen din #{ordrenr} er levert — Havøyet",
+        "body": ("Hei {navn},\n\nBestillingen din #{ordrenr} er nå merket som "
+                 "levert. Tusen takk for at du handlet hos Havøyet!\n\n"
+                 "{kontolenke}\n\n— Havøyet"),
+    },
+    "status_update": {
+        "enabled": True, "channel": "email",
+        "subject": "Oppdatering på bestillingen din #{ordrenr} — Havøyet",
+        "body": ("Hei {navn},\n\nBestillingen din #{ordrenr} har blitt "
+                 "oppdatert.\n\nStatus: {status}\nLevering: {leveringsdag} "
+                 "kl. {leveringstid}\n\nFølg bestillingen på {kontolenke}\n\n"
+                 "— Havøyet"),
+    },
+    "delivery_reminder": {
+        "enabled": False, "channel": "sms", "hours_before": 2,
+        "subject": "Vi leverer bestillingen din i dag — Havøyet",
+        "body": ("Hei {navn}! Vi er på vei med bestilling #{ordrenr} om "
+                 "ca. {kontolenke}"),
+    },
+}
+_customer_notify_config = {k: dict(v) for k, v in _CUSTOMER_NOTIFY_DEFAULTS.items()}
 _customers = []  # [{id, navn, tlf, epost, adresse, kommentar, created_at}]
 # Vipps-betalinger importert fra Vipps Bedrift CSV. Keyed by Vipps transaction ID
 # slik at re-import av overlappende CSV ikke duplikerer rader.
@@ -545,6 +580,7 @@ def _save_sync_state():
                 "reviews":             _reviews,
                 "customer_favorites":  _customer_favorites,
                 "admin_notifiers":     _admin_notifiers,
+                "customer_notify_config": _customer_notify_config,
                 "customers":           _customers,
                 "vipps_imported_payments": _vipps_imported_payments,
                 "card_payments_imported":  _card_payments_imported,
@@ -608,7 +644,7 @@ def _restore_vipps_baseline():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         _restore_vipps_baseline()
@@ -625,6 +661,14 @@ def _load_sync_state():
         _reviews            = d.get("reviews", [])
         _customer_favorites = d.get("customer_favorites", {})
         _admin_notifiers    = d.get("admin_notifiers", [])
+        # Slå sammen lagret kunde-varsler-konfig over defaults (per-felt fallback
+        # så nye nøkler får fornuftige verdier ved oppgraderinger).
+        saved_kvc = d.get("customer_notify_config") or {}
+        merged_kvc = {k: dict(v) for k, v in _CUSTOMER_NOTIFY_DEFAULTS.items()}
+        for k, v in saved_kvc.items():
+            if k in merged_kvc and isinstance(v, dict):
+                merged_kvc[k].update(v)
+        _customer_notify_config = merged_kvc
         _customers          = d.get("customers", [])
         _vipps_imported_payments = d.get("vipps_imported_payments", {}) or {}
         _card_payments_imported  = d.get("card_payments_imported", {}) or {}
@@ -1025,18 +1069,51 @@ _SIGNATURE_HTML = """
 </table>
 """
 
+import re as _re_mod
+_IMG_PLACEHOLDER_RE = _re_mod.compile(r"\[IMG:(https?://[^\s\]]+)\]")
+
+
+def _strip_image_placeholders(body):
+    """Fjern [IMG:url]-placeholders fra tekstversjon av e-post / SMS."""
+    if not body:
+        return body
+    return _IMG_PLACEHOLDER_RE.sub("", body)
+
+
 def _body_to_html(body):
-    """Konverterer plain-text-body til enkel HTML — escape + linebreaks."""
+    """Konverterer plain-text-body til enkel HTML — escape + linebreaks.
+    Ekspanderer [IMG:https://...]-placeholders til <img>-tags slik at admin
+    kan bygge inn produkt-/kvitterings-/bilder i kunde-mails fra
+    Kunde-varsler-seksjonen."""
     import html as _html
-    escaped = _html.escape(body or "")
-    return f'<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;color:#1a1a1a;font-size:14px;line-height:1.55;white-space:pre-wrap;">{escaped}</div>'
+    body = body or ""
+    # Beskytt bilde-placeholders før HTML-escape, og bytt dem ut etterpå
+    stash = []
+    def _grab(match):
+        stash.append(match.group(1))
+        return f"\x00IMG{len(stash)-1}\x00"
+    safe = _IMG_PLACEHOLDER_RE.sub(_grab, body)
+    escaped = _html.escape(safe)
+    def _expand(m):
+        url = _html.escape(stash[int(m.group(1))], quote=True)
+        return (
+            f'</div><img src="{url}" alt="" '
+            f'style="display:block;max-width:100%;height:auto;'
+            f'border-radius:8px;margin:14px 0;border:0;" />'
+            f'<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;color:#1a1a1a;font-size:14px;line-height:1.55;white-space:pre-wrap;">'
+        )
+    expanded = _re_mod.sub(r"\x00IMG(\d+)\x00", _expand, escaped)
+    return (
+        '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;'
+        f'color:#1a1a1a;font-size:14px;line-height:1.55;white-space:pre-wrap;">{expanded}</div>'
+    )
 
 
 def _send_via_resend(from_email, from_name, subject, body, to_email=None, reply_to=None):
     """Send via Resend API (enklest — bare API-nøkkel trengs).
     Legger automatisk ved signatur (text + html) på alle utgående e-poster."""
     try:
-        text_body = (body or "") + _SIGNATURE_TEXT
+        text_body = _strip_image_placeholders(body or "") + _SIGNATURE_TEXT
         html_body = _body_to_html(body) + _SIGNATURE_HTML
         payload = {
             "from": f"Havøyet <{RESEND_FROM}>",
@@ -1067,7 +1144,7 @@ def _send_via_smtp(from_email, from_name, subject, body, to_email=None, reply_to
     """Send via SMTP (Gmail / annen SMTP-server).
     Sender multipart/alternative med både text- og HTML-versjon med signatur."""
     recipient = to_email or CONTACT_TO
-    text_body = (body or "") + _SIGNATURE_TEXT
+    text_body = _strip_image_placeholders(body or "") + _SIGNATURE_TEXT
     html_body = _body_to_html(body) + _SIGNATURE_HTML
     msg = _MIMEMultipart("alternative")
     msg["From"]     = _formataddr((f"Havøyet – {from_name}", SMTP_USER))
@@ -1345,46 +1422,40 @@ def _notify_customer_order_update(order, event, change_summary=""):
     levtid = kunde.get("leveringstid") or order.get("slot") or ""
     konto  = f"{PUBLIC_SITE_URL}/konto"
 
-    if event == "order_delivered":
-        subject = f"Bestillingen din #{nr} er levert — Havøyet"
-        intro = (
-            f"Hei {navn or 'kunde'},\n\n"
-            f"Bestillingen din #{nr} er nå merket som levert. Tusen takk for at "
-            f"du handlet hos Havøyet!"
-        )
-    else:
-        subject = f"Oppdatering på bestillingen din #{nr} — Havøyet"
-        intro = (
-            f"Hei {navn or 'kunde'},\n\n"
-            f"Bestillingen din #{nr} har blitt oppdatert."
-        )
+    # Sjekk Kunde-varsler-konfig — admin kan slå av enkelte event-typer eller
+    # styre hvilken kanal (e-post / SMS / begge) som brukes.
+    cfg_key = "delivery_notice" if event == "order_delivered" else "status_update"
+    cfg = (_customer_notify_config or {}).get(cfg_key) or {}
+    if not cfg.get("enabled", True):
+        return False, f"disabled-by-config({cfg_key})"
+    channel = cfg.get("channel", "both")
+    allow_email = channel in ("email", "both")
+    allow_sms   = channel in ("sms", "both")
 
-    detail_lines = []
-    if change_summary:
-        detail_lines.append(change_summary.strip())
-    if status:
-        detail_lines.append(f"Status: {status}")
-    if levdag:
-        levering = f"Levering: {levdag}"
-        if levtid:
-            levering += f" kl. {levtid}"
-        detail_lines.append(levering)
-
-    body = (
-        intro + "\n\n"
-        + ("\n".join(detail_lines) + "\n\n" if detail_lines else "")
-        + f"Du kan til enhver tid følge bestillingen din på «Min side»:\n{konto}\n\n"
-        + "Logg inn med samme e-post som du brukte i kassen — der ser du status, "
-        + "leveringsdag, leveringstid og live ETA fra varebilen når den er på vei.\n\n"
-        + "Spørsmål? Svar på denne e-posten, eller send til erik@havoyet.no.\n\n"
-        + "— Havøyet"
+    tmpl_vars = {
+        "navn": navn or "kunde",
+        "ordrenr": nr,
+        "status": status,
+        "leveringsdag": levdag,
+        "leveringstid": levtid,
+        "kontolenke": konto,
+    }
+    subject = _kv_render(cfg.get("subject"), **tmpl_vars) or (
+        f"Bestillingen din #{nr} er levert — Havøyet" if event == "order_delivered"
+        else f"Oppdatering på bestillingen din #{nr} — Havøyet"
     )
+    body_template = cfg.get("body") or (
+        "Hei {navn},\n\nBestillingen din #{ordrenr} er oppdatert.\n\n{kontolenke}\n\n— Havøyet"
+    )
+    body = _kv_render(body_template, **tmpl_vars)
+    if change_summary:
+        body += f"\n\n— Endringer: {change_summary.strip()}"
 
     # Send via Resend → SMTP fallback. Skipper helt hvis kunden mangler e-post
     # eller mail-tjeneste ikke er konfigurert — SMS-delen kan fortsatt fyre.
     mail_ok = False
-    mail_detail = "skipped" if not (epost and has_mail_service) else "no-mail-service"
-    if epost and has_mail_service:
+    mail_detail = "skipped" if not (epost and has_mail_service and allow_email) else "no-mail-service"
+    if epost and has_mail_service and allow_email:
         if RESEND_API_KEY:
             mail_ok, mail_detail = _send_via_resend(
                 CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
@@ -1406,7 +1477,7 @@ def _notify_customer_order_update(order, event, change_summary=""):
     tlf = (kunde.get("tlf") or kunde.get("phone") or order.get("phone") or "").strip()
     notify_pref = (kunde.get("notify") or order.get("notify") or {})
     sms_opt_in = notify_pref.get("sms", True) and not notify_pref.get("opted_out", False)
-    if tlf and sms_opt_in and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM:
+    if tlf and sms_opt_in and allow_sms and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM:
         # Normaliser telefon til E.164-likt format (Twilio krever +CC...).
         clean_phone = tlf.replace(" ", "").replace("-", "")
         if clean_phone and not clean_phone.startswith("+"):
@@ -1879,6 +1950,128 @@ def api_admin_notifier_status():
             "available": bool(TELEGRAM_BOT_TOKEN),
         },
     })
+
+
+_KV_VALID_CHANNELS = ("email", "sms", "both")
+
+# E-post-bilder lastet opp fra Kunde-varsler-editoren. Lagres på persistent disk
+# og serveres som offentlige URL-er fra Flask-instansen — dvs. URL-er som
+# e-postklienter (Gmail/Outlook) kan hente og embedde.
+EMAIL_IMAGE_DIR = os.path.join(STATE_DIR, "email-images")
+try:
+    os.makedirs(EMAIL_IMAGE_DIR, exist_ok=True)
+except Exception:
+    pass
+
+_ALLOWED_IMAGE_EXTS = {
+    "image/jpeg": "jpg", "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
+
+
+@app.route("/email-images/<path:filename>")
+def serve_email_image(filename):
+    """Server opplastede e-post-bilder fra persistent disk."""
+    # Forhindre directory-traversal — Flask normaliserer "/path", men ekstra
+    # forsvarslag her skader ikke.
+    if "/" in filename or filename.startswith(".."):
+        return jsonify({"error": "Ugyldig filnavn"}), 400
+    return send_from_directory(EMAIL_IMAGE_DIR, filename)
+
+
+@app.route("/api/admin/upload-email-image", methods=["POST"])
+def api_admin_upload_email_image():
+    """Last opp et bilde som kan brukes i kunde-mail-maler.
+
+    Aksepterer multipart/form-data med felt `file`. Returnerer en offentlig
+    URL som admin-UI setter inn som `[IMG:url]`-placeholder i mal-body-en.
+    """
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "Mangler fil (felt 'file')"}), 400
+    mime = (f.mimetype or "").lower()
+    ext = _ALLOWED_IMAGE_EXTS.get(mime)
+    if not ext:
+        return jsonify({
+            "error": f"Ugyldig filtype ({mime}). Tillatt: JPG, PNG, WebP, GIF."
+        }), 400
+    # Generer et tilfeldig, kollisjonsfritt filnavn
+    fname = f"{secrets.token_urlsafe(12).replace('-','_')}.{ext}"
+    target = os.path.join(EMAIL_IMAGE_DIR, fname)
+    try:
+        f.save(target)
+    except Exception as e:
+        return jsonify({"error": f"Lagring feilet: {e}"}), 500
+    # Bygg offentlig URL — bruk request.host_url så det fungerer både lokalt
+    # og bak Cloudflare/Render. Strip trailing slash.
+    base = (request.host_url or "").rstrip("/")
+    public_url = f"{base}/email-images/{fname}"
+    return jsonify({
+        "ok": True,
+        "filename": fname,
+        "url": public_url,
+        "placeholder": f"[IMG:{public_url}]",
+    })
+
+
+@app.route("/api/admin/customer-notify-config", methods=["GET", "PUT"])
+def api_admin_customer_notify_config():
+    """Hent og oppdater Kunde-varsler-konfigurasjonen.
+
+    Lagres som del av sync-state slik at den overlever Render-restarter (gitt
+    persistent disk på /var/data). Defaults i `_CUSTOMER_NOTIFY_DEFAULTS`
+    brukes for ukjente felt — så nye nøkler får fornuftige verdier ved
+    oppgraderinger.
+    """
+    global _customer_notify_config
+    if request.method == "GET":
+        return jsonify(_customer_notify_config)
+
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Forventer JSON-objekt"}), 400
+
+    merged = {k: dict(v) for k, v in _CUSTOMER_NOTIFY_DEFAULTS.items()}
+    for key, defaults in _CUSTOMER_NOTIFY_DEFAULTS.items():
+        incoming = data.get(key)
+        if not isinstance(incoming, dict):
+            # Ingen oppdatering — behold lagret verdi (fall tilbake til default)
+            merged[key].update(_customer_notify_config.get(key, {}))
+            continue
+        # Behold tidligere lagrede felt som ikke ble sendt inn på nytt
+        merged[key].update(_customer_notify_config.get(key, {}))
+        # Valider og overskriv per felt
+        if "enabled" in incoming:
+            merged[key]["enabled"] = bool(incoming["enabled"])
+        if "channel" in incoming and incoming["channel"] in _KV_VALID_CHANNELS:
+            merged[key]["channel"] = incoming["channel"]
+        if "subject" in incoming and isinstance(incoming["subject"], str):
+            merged[key]["subject"] = incoming["subject"][:300].strip()
+        if "body" in incoming and isinstance(incoming["body"], str):
+            merged[key]["body"] = incoming["body"][:4000]
+        if "hours_before" in incoming and "hours_before" in defaults:
+            try:
+                hb = float(incoming["hours_before"])
+                if 0 < hb <= 168:  # max 1 uke
+                    merged[key]["hours_before"] = hb
+            except (TypeError, ValueError):
+                pass
+
+    _customer_notify_config = merged
+    _save_sync_state()
+    return jsonify({"ok": True, "config": _customer_notify_config})
+
+
+def _kv_render(template, **vars):
+    """Sikker .format-erstatning som ikke krasjer på ukjente {placeholders}."""
+    if not template:
+        return ""
+    out = template
+    for k, v in vars.items():
+        out = out.replace("{" + k + "}", str(v) if v is not None else "")
+    return out
 
 
 @app.route("/api/admin/telegram/setup", methods=["GET"])
