@@ -23,9 +23,9 @@ from eta import (
     compute_eta,
     fallback_eta,
     geocode,
+    matrix_one_to_many,
     order_destination,
-    osrm_table_one_to_many,
-    osrm_trip,
+    trip_optimize,
 )
 
 bp = Blueprint("tracking", __name__)
@@ -955,7 +955,7 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
         }
 
     coords = [depot] + [(s["lat"], s["lon"]) for s in stops]
-    trip = osrm_trip(coords, source_first=True, roundtrip=False) if optimize else None
+    trip = trip_optimize(coords, roundtrip=False) if optimize else None
 
     if trip and trip.get("order"):
         order = trip["order"]
@@ -982,7 +982,7 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "geometry": trip.get("geometry"),
             "total_distance_km": trip.get("total_distance_km"),
             "total_duration_min": trip.get("total_duration_min"),
-            "optimizer": "osrm",
+            "optimizer": trip.get("source") or "osrm",
             "approved": bool(day_state.get("approved")),
             "approved_at": day_state.get("approved_at"),
             "unresolved": unresolved,
@@ -1344,7 +1344,7 @@ def _route_live_payload(date_iso: str):
     etas_to_stops: list[dict] = []
     if vehicle and stops:
         dests = [(s["lat"], s["lon"]) for s in stops]
-        table = osrm_table_one_to_many((vehicle["lat"], vehicle["lon"]), dests)
+        table = matrix_one_to_many((vehicle["lat"], vehicle["lon"]), dests)
         if table:
             etas_to_stops = table
         else:

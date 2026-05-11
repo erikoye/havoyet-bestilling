@@ -1,11 +1,15 @@
 """ETA-beregning: kunde-adresse → koordinater → minutter til levering.
 
-- Geocoding via Nominatim (gratis OSM, in-memory cache)
-- Ruteberegning via OSRM (gratis demo-server)
-- Begge har fallback til haversine + 50 km/t hvis nett feiler
+Hybrid-strategi:
+  1) Google Maps API (hvis GOOGLE_MAPS_API_KEY er satt) — bruker faktisk
+     trafikkdata for realistiske ETAs, særlig viktig i Bergen rushtid.
+  2) Nominatim + OSRM (gratis fallback) — brukes hvis Google-key ikke er
+     satt eller Google returnerer feil.
+  3) Haversine + 50 km/t (siste fallback) — bare hvis alt nett feiler.
 """
 from __future__ import annotations
 
+import os
 import time
 from typing import Optional, Tuple
 import math
@@ -16,6 +20,16 @@ _NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 _OSRM_URL = "https://router.project-osrm.org/route/v1/driving"
 _OSRM_TRIP_URL = "https://router.project-osrm.org/trip/v1/driving"
 _OSRM_TABLE_URL = "https://router.project-osrm.org/table/v1/driving"
+
+# Google Maps Platform endpoints (alle krever ?key=API_KEY)
+_GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+_GOOGLE_DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
+_GOOGLE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
+
+
+def _google_key() -> str:
+    """Leser API-key på kall-tid så Render kan oppdatere uten restart."""
+    return (os.environ.get("GOOGLE_MAPS_API_KEY") or "").strip()
 
 # Cache: address_string -> (timestamp, (lat, lon))
 _GEOCODE_CACHE: dict[str, tuple[float, tuple[float, float] | None]] = {}
@@ -32,8 +46,53 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * R * math.asin(math.sqrt(a))
 
 
+def google_geocode(query: str) -> Optional[Tuple[float, float]]:
+    """Geokoding via Google. Returnerer None ved feil/ikke-funnet."""
+    key = _google_key()
+    if not key:
+        return None
+    try:
+        resp = requests.get(
+            _GOOGLE_GEOCODE_URL,
+            params={"address": query, "region": "no", "language": "no", "key": key},
+            timeout=5,
+        )
+        if not resp.ok:
+            return None
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("results"):
+            return None
+        loc = data["results"][0]["geometry"]["location"]
+        return float(loc["lat"]), float(loc["lng"])
+    except (requests.RequestException, ValueError, KeyError):
+        return None
+
+
+def nominatim_geocode(query: str) -> Optional[Tuple[float, float]]:
+    """Geokoding via Nominatim (fallback)."""
+    try:
+        resp = requests.get(
+            _NOMINATIM_URL,
+            params={
+                "q": query, "format": "json", "limit": 1,
+                "countrycodes": "no", "accept-language": "no",
+            },
+            headers={"User-Agent": _USER_AGENT},
+            timeout=5,
+        )
+        if not resp.ok:
+            return None
+        results = resp.json()
+        if not results:
+            return None
+        first = results[0]
+        return (float(first["lat"]), float(first["lon"]))
+    except (requests.RequestException, ValueError, KeyError):
+        return None
+
+
 def geocode(address: str, postnr: str | None = None, poststed: str | None = None) -> Optional[Tuple[float, float]]:
-    """Slå opp adresse → (lat, lon). Returnerer None ved feil. Cachet."""
+    """Slå opp adresse → (lat, lon). Google først, Nominatim som fallback. Cachet."""
     if not address:
         return None
     parts = [p for p in (address.strip(), postnr, poststed) if p]
@@ -45,30 +104,45 @@ def geocode(address: str, postnr: str | None = None, poststed: str | None = None
     if cached and now - cached[0] < _GEOCODE_TTL:
         return cached[1]
 
+    coords = google_geocode(query) or nominatim_geocode(query)
+    _GEOCODE_CACHE[query] = (now, coords)
+    return coords
+
+
+def google_directions_eta(from_lat: float, from_lon: float, to_lat: float, to_lon: float
+                          ) -> Optional[dict]:
+    """ETA fra A → B via Google Directions (med trafikkdata når mulig)."""
+    key = _google_key()
+    if not key:
+        return None
     try:
         resp = requests.get(
-            _NOMINATIM_URL,
+            _GOOGLE_DIRECTIONS_URL,
             params={
-                "q": query,
-                "format": "json",
-                "limit": 1,
-                "countrycodes": "no",
-                "accept-language": "no",
+                "origin": f"{from_lat},{from_lon}",
+                "destination": f"{to_lat},{to_lon}",
+                "mode": "driving",
+                "departure_time": "now",
+                "traffic_model": "best_guess",
+                "key": key,
             },
-            headers={"User-Agent": _USER_AGENT},
             timeout=5,
         )
         if not resp.ok:
             return None
-        results = resp.json()
-        if not results:
-            _GEOCODE_CACHE[query] = (now, None)
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("routes"):
             return None
-        first = results[0]
-        coords = (float(first["lat"]), float(first["lon"]))
-        _GEOCODE_CACHE[query] = (now, coords)
-        return coords
-    except (requests.RequestException, ValueError, KeyError):
+        leg = data["routes"][0]["legs"][0]
+        # duration_in_traffic finnes når mode=driving + departure_time gitt
+        duration_sec = (leg.get("duration_in_traffic") or leg.get("duration") or {}).get("value", 0)
+        distance_m = (leg.get("distance") or {}).get("value", 0)
+        return {
+            "distance_km": round(distance_m / 1000.0, 2),
+            "duration_min": round(duration_sec / 60.0, 1),
+            "source": "google",
+        }
+    except (requests.RequestException, ValueError, KeyError, IndexError):
         return None
 
 
@@ -110,9 +184,14 @@ def fallback_eta(from_lat: float, from_lon: float, to_lat: float, to_lon: float
 
 def compute_eta(from_lat: float, from_lon: float, to_lat: float, to_lon: float
                 ) -> dict:
-    """Returnerer {distance_km, duration_min, source}. Aldri None."""
-    return osrm_route(from_lat, from_lon, to_lat, to_lon) \
+    """Returnerer {distance_km, duration_min, source}. Aldri None.
+    Forsøker Google først (trafikk-bevisst), så OSRM, så haversine-fallback.
+    """
+    return (
+        google_directions_eta(from_lat, from_lon, to_lat, to_lon)
+        or osrm_route(from_lat, from_lon, to_lat, to_lon)
         or fallback_eta(from_lat, from_lon, to_lat, to_lon)
+    )
 
 
 def order_destination(order: dict) -> Optional[Tuple[float, float]]:
@@ -155,6 +234,176 @@ def order_destination(order: dict) -> Optional[Tuple[float, float]]:
 
     return geocode(str(addr), str(postnr) if postnr else None,
                    str(poststed) if poststed else None)
+
+
+def google_directions_trip(coords: list[tuple[float, float]], *,
+                            roundtrip: bool = False) -> Optional[dict]:
+    """TSP via Google Directions med 'optimize:true' i waypoints.
+
+    coords = [(lat, lon), ...] — første er start (depot), siste er destination.
+    roundtrip=True returnerer til depot. Hvis ikke, siste coord er sluttpunkt.
+
+    Returnerer:
+      {order, legs, total_distance_km, total_duration_min, geometry, source}
+    eller None ved feil.
+    """
+    key = _google_key()
+    if not key or not coords or len(coords) < 2:
+        return None
+    # Google API har max 25 waypoints (eks. origin/destination) i standard tier
+    if len(coords) > 23 and not roundtrip:
+        return None
+
+    origin = f"{coords[0][0]},{coords[0][1]}"
+    if roundtrip:
+        # Tour: depot → alle stopp (optimaliseres) → depot
+        waypoints = coords[1:]
+        destination = origin
+    else:
+        # Linje: depot → alle stopp (optimaliseres) → siste stopp ikke optimaliseres
+        waypoints = coords[1:-1]
+        destination = f"{coords[-1][0]},{coords[-1][1]}"
+
+    # Når vi har minst ett waypoint, bruk optimize:true
+    if waypoints:
+        wp = "optimize:true|" + "|".join(f"{la},{lo}" for la, lo in waypoints)
+    else:
+        wp = None
+
+    try:
+        params = {
+            "origin": origin,
+            "destination": destination,
+            "mode": "driving",
+            "departure_time": "now",
+            "traffic_model": "best_guess",
+            "key": key,
+        }
+        if wp:
+            params["waypoints"] = wp
+        resp = requests.get(_GOOGLE_DIRECTIONS_URL, params=params, timeout=15)
+        if not resp.ok:
+            return None
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("routes"):
+            return None
+        route = data["routes"][0]
+        legs = route.get("legs", [])
+        wp_order = route.get("waypoint_order", []) or []
+
+        # Bygg input-index-ordre. coords[0] = depot (alltid index 0).
+        # Resterende waypoints er coords[1:1+len(waypoints)].
+        # waypoint_order er en permutasjon av [0..len(waypoints)-1].
+        order = [0]  # depot først
+        for w_idx in wp_order:
+            order.append(1 + w_idx)
+        if not roundtrip:
+            order.append(len(coords) - 1)  # destination sist
+        # Hvis ingen waypoints: order = [0, 1] for normal linje
+
+        out_legs = [
+            {
+                "distance_km": round((l.get("distance") or {}).get("value", 0) / 1000.0, 2),
+                "duration_min": round(
+                    ((l.get("duration_in_traffic") or l.get("duration") or {}).get("value", 0)) / 60.0, 1
+                ),
+            }
+            for l in legs
+        ]
+        total_distance = sum((l.get("distance") or {}).get("value", 0) for l in legs)
+        total_duration = sum(
+            ((l.get("duration_in_traffic") or l.get("duration") or {}).get("value", 0))
+            for l in legs
+        )
+
+        # Geometry: decode polyline til GeoJSON så frontend kan tegne den
+        polyline = (route.get("overview_polyline") or {}).get("points")
+        geometry = None
+        if polyline:
+            try:
+                coords_decoded = _decode_polyline(polyline)
+                geometry = {
+                    "type": "LineString",
+                    "coordinates": [[lon, lat] for lat, lon in coords_decoded],
+                }
+            except Exception:
+                pass
+
+        return {
+            "order": order,
+            "legs": out_legs,
+            "total_distance_km": round(total_distance / 1000.0, 2),
+            "total_duration_min": round(total_duration / 60.0, 1),
+            "geometry": geometry,
+            "source": "google",
+        }
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        return None
+
+
+def _decode_polyline(s: str) -> list[tuple[float, float]]:
+    """Google polyline algorithm → [(lat, lon), ...]."""
+    coords = []
+    index = lat = lng = 0
+    while index < len(s):
+        for which in ('lat', 'lng'):
+            result = shift = 0
+            while True:
+                b = ord(s[index]) - 63
+                index += 1
+                result |= (b & 0x1f) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            dv = ~(result >> 1) if (result & 1) else (result >> 1)
+            if which == 'lat':
+                lat += dv
+            else:
+                lng += dv
+        coords.append((lat / 1e5, lng / 1e5))
+    return coords
+
+
+def google_matrix_one_to_many(source: tuple[float, float],
+                               destinations: list[tuple[float, float]]) -> Optional[list[dict]]:
+    """Google Distance Matrix: ÉN source → mange destinasjoner. Trafikk-bevisst."""
+    key = _google_key()
+    if not key or not destinations:
+        return None if not key else []
+    try:
+        resp = requests.get(
+            _GOOGLE_MATRIX_URL,
+            params={
+                "origins": f"{source[0]},{source[1]}",
+                "destinations": "|".join(f"{la},{lo}" for la, lo in destinations),
+                "mode": "driving",
+                "departure_time": "now",
+                "traffic_model": "best_guess",
+                "key": key,
+            },
+            timeout=10,
+        )
+        if not resp.ok:
+            return None
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("rows"):
+            return None
+        elements = data["rows"][0].get("elements", [])
+        out = []
+        for el in elements:
+            if el.get("status") != "OK":
+                out.append({"distance_km": None, "duration_min": None, "source": "google"})
+                continue
+            duration_sec = (el.get("duration_in_traffic") or el.get("duration") or {}).get("value", 0)
+            distance_m = (el.get("distance") or {}).get("value", 0)
+            out.append({
+                "distance_km": round(distance_m / 1000.0, 2),
+                "duration_min": round(duration_sec / 60.0, 1),
+                "source": "google",
+            })
+        return out
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        return None
 
 
 def osrm_trip(coords: list[tuple[float, float]], *, source_first: bool = True,
@@ -215,6 +464,23 @@ def osrm_trip(coords: list[tuple[float, float]], *, source_first: bool = True,
         }
     except (requests.RequestException, ValueError, KeyError, IndexError):
         return None
+
+
+def trip_optimize(coords: list[tuple[float, float]], *, roundtrip: bool = False) -> Optional[dict]:
+    """Foretrukket entry-point for TSP: Google først, så OSRM."""
+    return (
+        google_directions_trip(coords, roundtrip=roundtrip)
+        or osrm_trip(coords, source_first=True, roundtrip=roundtrip)
+    )
+
+
+def matrix_one_to_many(source: tuple[float, float],
+                        destinations: list[tuple[float, float]]) -> Optional[list[dict]]:
+    """Foretrukket entry-point for batched ETA: Google først, så OSRM."""
+    return (
+        google_matrix_one_to_many(source, destinations)
+        or osrm_table_one_to_many(source, destinations)
+    )
 
 
 def osrm_table_one_to_many(source: tuple[float, float],
