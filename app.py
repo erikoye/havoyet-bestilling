@@ -513,6 +513,12 @@ _vipps_imported_payments = {}
 _card_payments_imported = {}
 _auth_users = []   # [{email, role, password_hash, must_set_password, created_at}]
 _auth_sessions = {}  # legacy lookup — beholdes for bakoverkompatibilitet med eldre tokens
+# ── NYHETSBREV-ABONNENTER (sannhetskilde — erstatter MailerLite per 2026-05-11) ──
+# Hver entry: {id, email, navn, status, kilde, created_at, updated_at,
+#              unsubscribed_at, tags[], mailerlite_id (legacy ref)}
+# status: 'active' | 'unsubscribed' | 'bounced'
+# kilde: 'website' | 'admin' | 'mailerlite-migration' | 'checkout'
+_subscribers = []
 # Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
 # selv logger ut. Fjern token manuelt via /api/auth/logout for å invalidere det.
 AUTH_SESSION_TTL = None
@@ -586,6 +592,7 @@ def _save_sync_state():
                 "card_payments_imported":  _card_payments_imported,
                 "auth_users":          _auth_users,
                 "auth_sessions":       _auth_sessions,
+                "subscribers":         _subscribers,
             }, f, ensure_ascii=False)
     except Exception:
         pass
@@ -644,7 +651,7 @@ def _restore_vipps_baseline():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         _restore_vipps_baseline()
@@ -689,7 +696,8 @@ def _load_sync_state():
                 if isinstance(sess, dict) and int(sess.get("created_at", 0)) >= cutoff
             }
         _seed_auth_users()
-        print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder, {len(_auth_users)} auth-brukere, {len(_auth_sessions)} aktive sesjoner")
+        _subscribers       = d.get("subscribers", []) or []
+        print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder, {len(_auth_users)} auth-brukere, {len(_auth_sessions)} aktive sesjoner, {len(_subscribers)} nyhetsbrev-abonnenter")
     except Exception as e:
         print(f"[ADVARSEL] Kunne ikke laste sync-state: {e}")
         _seed_auth_users()
@@ -4594,12 +4602,18 @@ def _user_from_request():
     return user, token
 
 def _public_user(u):
+    email = u.get("email") or ""
+    # _is_active_subscriber defineres lenger ned i fila (i NYHETSBREV-ABONNENTER-
+    # seksjonen). Defer-lookup med getattr for å unngå NameError ved import-rekkefølge.
+    is_sub_fn = globals().get("_is_active_subscriber")
+    is_subscriber = bool(is_sub_fn(email)) if (is_sub_fn and email) else False
     return {
-        "email": u.get("email"),
+        "email": email,
         "role": u.get("role"),
         "mustSetPassword": bool(u.get("must_set_password")),
         "hasPassword": bool(u.get("password_hash")),
         "createdAt": u.get("created_at"),
+        "isNewsletterSubscriber": is_subscriber,
     }
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -4691,10 +4705,12 @@ def api_auth_forgot_password():
             f"Hilsen Havøyet"
         )
         try:
-            if SMTP_USER and SMTP_PASS:
+            if RESEND_API_KEY:
+                _send_via_resend("", "Havøyet", "Tilbakestill passord", body, to_email=email)
+            elif SMTP_USER and SMTP_PASS:
                 _send_via_smtp(SMTP_USER, "Havøyet", "Tilbakestill passord", body, to_email=email)
             else:
-                print(f"[PWD-RESET] Ingen SMTP konfigurert — link: {link}")
+                print(f"[PWD-RESET] Ingen mail-konfig — link: {link}")
         except Exception as e:
             print(f"[PWD-RESET] Kunne ikke sende e-post: {e}")
     # Svar likt uavhengig av om e-posten finnes
@@ -6177,6 +6193,224 @@ def api_newsletter_archive_delete(file_id):
     return jsonify({"ok": True, "removed": removed})
 
 
+# ── NYHETSBREV-ABONNENTER (Flask = sannhetskilde, Resend = sender) ──────────
+# Erstatter MailerLite. Subscribers lagres lokalt; Resend brukes kun til sending.
+
+import re as _re_mod
+
+_EMAIL_RE = _re_mod.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+# Admin-token for å gate skrive-endepunkter (DELETE, bulk-import). Hvis env ikke
+# er satt: tillatt i dev, men logges. Sett ADMIN_API_TOKEN i Render-env i prod.
+ADMIN_API_TOKEN = os.environ.get("ADMIN_API_TOKEN", "").strip()
+
+
+def _normalize_email(raw):
+    if not raw or not isinstance(raw, str):
+        return None
+    e = raw.strip().lower()
+    return e if _EMAIL_RE.match(e) else None
+
+
+def _is_admin_request():
+    if not ADMIN_API_TOKEN:
+        return True  # Ikke konfigurert → tillatt (men logges)
+    auth = (request.headers.get("X-Admin-Token") or "").strip()
+    if not auth:
+        auth = (request.headers.get("Authorization") or "").replace("Bearer ", "").strip()
+    return _hmac_mod.compare_digest(auth, ADMIN_API_TOKEN)
+
+
+def _find_subscriber(email):
+    email = _normalize_email(email)
+    if not email:
+        return None
+    for s in _subscribers:
+        if s.get("email") == email:
+            return s
+    return None
+
+
+def _is_active_subscriber(email):
+    s = _find_subscriber(email)
+    return bool(s and s.get("status") == "active")
+
+
+@app.route("/api/subscribers", methods=["GET"])
+def api_subscribers_list():
+    """Lister abonnenter. Filter: ?status=active|unsubscribed|bounced (default: alle)."""
+    status_filter = (request.args.get("status") or "").strip().lower()
+    rows = _subscribers
+    if status_filter in ("active", "unsubscribed", "bounced"):
+        rows = [s for s in rows if s.get("status") == status_filter]
+    counts = {
+        "total": len(_subscribers),
+        "active": sum(1 for s in _subscribers if s.get("status") == "active"),
+        "unsubscribed": sum(1 for s in _subscribers if s.get("status") == "unsubscribed"),
+        "bounced": sum(1 for s in _subscribers if s.get("status") == "bounced"),
+    }
+    return jsonify({"ok": True, "subscribers": rows, "counts": counts})
+
+
+@app.route("/api/subscribers/subscribe", methods=["POST"])
+def api_subscribers_subscribe():
+    """Public sign-up endpoint. Idempotent — re-subscribe reaktiverer."""
+    data = request.get_json(force=True, silent=True) or {}
+    email = _normalize_email(data.get("email"))
+    if not email:
+        return jsonify({"error": "Ugyldig e-postadresse"}), 400
+    navn = (data.get("navn") or data.get("name") or "").strip()[:120]
+    kilde = (data.get("kilde") or data.get("source") or "website").strip()[:32]
+    tags = data.get("tags") or []
+    if not isinstance(tags, list):
+        tags = []
+    now = datetime.now().isoformat()
+    existing = _find_subscriber(email)
+    if existing:
+        existing["status"] = "active"
+        existing["updated_at"] = now
+        existing["unsubscribed_at"] = None
+        if navn and not existing.get("navn"):
+            existing["navn"] = navn
+        if tags:
+            existing["tags"] = sorted(set((existing.get("tags") or []) + tags))
+        _save_sync_state()
+        return jsonify({"ok": True, "subscriber": existing, "reactivated": True})
+    new = {
+        "id": "s_" + _uuid.uuid4().hex[:12],
+        "email": email,
+        "navn": navn,
+        "status": "active",
+        "kilde": kilde,
+        "tags": sorted(set(tags)) if tags else [],
+        "created_at": now,
+        "updated_at": now,
+        "unsubscribed_at": None,
+    }
+    _subscribers.append(new)
+    _save_sync_state()
+    return jsonify({"ok": True, "subscriber": new, "reactivated": False})
+
+
+@app.route("/api/subscribers/unsubscribe", methods=["POST"])
+def api_subscribers_unsubscribe():
+    """Public unsubscribe (via e-post). Senere kan vi legge til signert token-lenke."""
+    data = request.get_json(force=True, silent=True) or {}
+    email = _normalize_email(data.get("email"))
+    if not email:
+        return jsonify({"error": "Ugyldig e-postadresse"}), 400
+    s = _find_subscriber(email)
+    if not s:
+        return jsonify({"ok": True, "found": False})
+    s["status"] = "unsubscribed"
+    now = datetime.now().isoformat()
+    s["unsubscribed_at"] = now
+    s["updated_at"] = now
+    _save_sync_state()
+    return jsonify({"ok": True, "found": True})
+
+
+@app.route("/api/subscribers/check", methods=["GET"])
+def api_subscribers_check():
+    """Sjekk om en e-post er aktiv abonnent. Brukes av /api/auth/me."""
+    email = _normalize_email(request.args.get("email"))
+    if not email:
+        return jsonify({"ok": True, "is_subscriber": False})
+    return jsonify({"ok": True, "is_subscriber": _is_active_subscriber(email)})
+
+
+@app.route("/api/subscribers/<path:email>", methods=["DELETE", "PATCH"])
+def api_subscribers_modify(email):
+    if not _is_admin_request():
+        return jsonify({"error": "Mangler admin-token"}), 401
+    email = _normalize_email(email)
+    if not email:
+        return jsonify({"error": "Ugyldig e-postadresse"}), 400
+    s = _find_subscriber(email)
+    if not s:
+        return jsonify({"error": "Ikke funnet"}), 404
+    if request.method == "DELETE":
+        _subscribers.remove(s)
+        _save_sync_state()
+        return jsonify({"ok": True, "deleted": True})
+    # PATCH
+    data = request.get_json(force=True, silent=True) or {}
+    now = datetime.now().isoformat()
+    for field in ("navn", "status", "kilde"):
+        if field in data:
+            s[field] = data[field]
+    if "tags" in data and isinstance(data["tags"], list):
+        s["tags"] = sorted(set(data["tags"]))
+    s["updated_at"] = now
+    _save_sync_state()
+    return jsonify({"ok": True, "subscriber": s})
+
+
+@app.route("/api/subscribers/bulk-import", methods=["POST"])
+def api_subscribers_bulk_import():
+    """Importer flere abonnenter på en gang. Brukes til MailerLite-migrering.
+    Body: { subscribers: [{ email, navn?, kilde?, status?, mailerlite_id? }, ...] }
+    Idempotent: e-poster som allerede finnes oppdateres (status/navn merges)."""
+    if not _is_admin_request():
+        return jsonify({"error": "Mangler admin-token"}), 401
+    data = request.get_json(force=True, silent=True) or {}
+    rows = data.get("subscribers") or []
+    if not isinstance(rows, list):
+        return jsonify({"error": "subscribers må være en liste"}), 400
+    now = datetime.now().isoformat()
+    added = 0
+    updated = 0
+    skipped = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            skipped += 1
+            continue
+        email = _normalize_email(row.get("email"))
+        if not email:
+            skipped += 1
+            continue
+        navn = (row.get("navn") or row.get("name") or "").strip()[:120]
+        kilde = (row.get("kilde") or row.get("source") or "mailerlite-migration").strip()[:32]
+        status = (row.get("status") or "active").strip().lower()
+        if status not in ("active", "unsubscribed", "bounced"):
+            status = "active"
+        ml_id = (row.get("mailerlite_id") or row.get("id") or "").strip()
+        existing = _find_subscriber(email)
+        if existing:
+            existing["updated_at"] = now
+            if navn and not existing.get("navn"):
+                existing["navn"] = navn
+            if ml_id and not existing.get("mailerlite_id"):
+                existing["mailerlite_id"] = ml_id
+            # ikke overskriv status hvis allerede aktiv lokalt
+            if existing.get("status") != "active" and status == "active":
+                existing["status"] = "active"
+                existing["unsubscribed_at"] = None
+            updated += 1
+        else:
+            _subscribers.append({
+                "id": "s_" + _uuid.uuid4().hex[:12],
+                "email": email,
+                "navn": navn,
+                "status": status,
+                "kilde": kilde,
+                "tags": [],
+                "created_at": now,
+                "updated_at": now,
+                "unsubscribed_at": None if status == "active" else now,
+                "mailerlite_id": ml_id or None,
+            })
+            added += 1
+    _save_sync_state()
+    return jsonify({
+        "ok": True,
+        "added": added,
+        "updated": updated,
+        "skipped": skipped,
+        "total_after": len(_subscribers),
+    })
+
+
 # ── BACKUP / GJENOPPRETT ────────────────────────────────────────────────────
 # Sikkerhetsnett mens persistent disk ikke er montert på Render: admin kan
 # laste ned hele state-en som JSON og laste den opp igjen om containeren ble
@@ -6202,6 +6436,7 @@ def _full_state_dict():
         "card_payments_imported":  _card_payments_imported,
         "auth_users":             _auth_users,
         "auth_sessions":          _auth_sessions,
+        "subscribers":            _subscribers,
     }
 
 @app.route("/api/admin/backup", methods=["GET"])
