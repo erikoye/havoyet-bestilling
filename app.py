@@ -118,20 +118,49 @@ _prisliste = {"items": [], "last_sync": None, "error": None, "faktura": None}
 # ── ORDRE-NORMALISERING ───────────────────────────────────────────────────────
 def _normalize_manual_order(o):
     """Konverter ny.havoyet.no/kasse-ordre (fra _manual_orders) til iPad-shapen
-    som index.html / pakke.html forventer (id, customer, delivery, items, ...)."""
+    som index.html / pakke.html forventer (id, customer, delivery, items, ...).
+
+    VIKTIG: vi normaliserer BÅDE manuelle admin-ordre (lagret med felt som
+    name/qty/unit/price) OG kunde-checkout-ordre (med slug/selectedOpts/
+    variantLabel/cost), slik at pakke.html ser samme shape uansett kilde.
+    """
     kunde = o.get("kunde") or {}
     varer = o.get("varer") or o.get("items") or []
     items = []
     for v in varer:
+        # Bygg en konsistent `variant`-streng. Foretrekk eksplisitt felt,
+        # ellers fall tilbake til kundeside-konvensjonen (variantLabel/
+        # selectedOpts). For manuelle ordre der bare `unit` er satt brukes
+        # ikke variant — pakke.html håndterer enhet separat.
+        variant_str = v.get("variant") or v.get("variantStr") or v.get("variantLabel") or ""
+        if not variant_str:
+            sel = v.get("selectedOpts")
+            if isinstance(sel, dict) and sel:
+                # Stilen "ca. 250 g · Uten bein · Med skinn" — matcher kunde-checkout
+                variant_str = " · ".join(str(x) for x in sel.values() if x)
         items.append({
-            "id":       v.get("id"),
-            "name":     v.get("name") or v.get("navn") or v.get("title", ""),
-            "quantity": v.get("qty") or v.get("quantity", 1),
-            "weight":   v.get("weight"),
-            "expiry":   v.get("expiry"),
-            "variant":  v.get("variant"),
-            "sku":      v.get("sku"),
-            "grams":    v.get("grams", 0),
+            "id":           v.get("id"),
+            "slug":         v.get("slug") or "",
+            "name":         v.get("name") or v.get("navn") or v.get("title", ""),
+            "productName":  v.get("productName") or v.get("name") or v.get("navn") or "",
+            "quantity":     v.get("qty") or v.get("quantity", 1),
+            "qty":          v.get("qty") or v.get("quantity", 1),
+            "weight":       v.get("weight"),
+            "expiry":       v.get("expiry"),
+            "variant":      variant_str,
+            "variantStr":   variant_str,
+            "variantLabel": v.get("variantLabel") or "",
+            "selectedOpts": v.get("selectedOpts") or None,
+            "unit":         v.get("unit") or "",
+            "price":        v.get("price"),
+            "pris":         v.get("pris"),
+            "cost":         v.get("cost"),
+            "lineCost":     v.get("lineCost"),
+            "sku":          v.get("sku"),
+            "grams":        v.get("grams", 0),
+            "kind":         v.get("kind") or "",
+            "tilbehorValgt": v.get("tilbehorValgt") or v.get("tilbehor_valgt") or [],
+            "boxSelection":  v.get("boxSelection") or [],
         })
     return {
         "id":         o.get("ordrenr") or o.get("id"),

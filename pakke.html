@@ -1301,15 +1301,36 @@ function serverPost(endpoint, data) {
 function _normalizeManualOrder(o){
   const k = o.kunde || {};
   const id = o.id || o.ordrenr || ('M' + Math.random().toString(16).slice(2, 8).toUpperCase());
-  const items = (o.items && o.items.length ? o.items : (o.varer || [])).map(v => ({
-    name: v.name || v.navn || v.title || '',
-    productName: v.name || v.navn || '',
-    variantStr: v.variant || '',
-    qty: Number(v.qty || v.quantity || 1),
-    unit: v.unit || '',
-    price: Number(v.price || 0),
-    pris: Number(v.pris || 0),
-  }));
+  // Bygg variantStr konsistent for både manuelle og kunde-checkout-ordre.
+  // Foretrekk eksplisitt felt; fall tilbake til variantLabel ("ca. 250 g")
+  // eller verdiene i selectedOpts ("ca. 250 g · Uten bein") — samme regel
+  // som Flask sin _normalize_manual_order bruker, slik at iPad-en ser
+  // identisk shape uansett om ordren kommer fra admin eller kunde-checkout.
+  const items = (o.items && o.items.length ? o.items : (o.varer || [])).map(v => {
+    let variantStr = v.variant || v.variantStr || v.variantLabel || '';
+    if (!variantStr && v.selectedOpts && typeof v.selectedOpts === 'object') {
+      variantStr = Object.values(v.selectedOpts).filter(Boolean).join(' · ');
+    }
+    return {
+      name: v.name || v.navn || v.title || '',
+      productName: v.productName || v.name || v.navn || '',
+      variantStr,
+      variantLabel: v.variantLabel || '',
+      selectedOpts: v.selectedOpts || null,
+      slug: v.slug || '',
+      qty: Number(v.qty || v.quantity || 1),
+      quantity: Number(v.qty || v.quantity || 1),
+      unit: v.unit || '',
+      price: Number(v.price || 0),
+      pris: Number(v.pris || 0),
+      cost: v.cost != null ? Number(v.cost) : null,
+      lineCost: v.lineCost != null ? Number(v.lineCost) : null,
+      grams: v.grams || 0,
+      kind: v.kind || '',
+      tilbehorValgt: v.tilbehorValgt || v.tilbehor_valgt || [],
+      boxSelection: v.boxSelection || [],
+    };
+  });
   // Bevar paymentStatus fra admin-shape — brukes til "skjul betalt+levert"-filteret.
   const psRaw = String(o.paymentStatus || '').toLowerCase();
   const paid = !(psRaw === 'unpaid' || psRaw === 'pending' || psRaw === 'awaiting_payment');
