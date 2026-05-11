@@ -101,6 +101,16 @@ const stopLayer = L.layerGroup();
 const stopMarkers = {};   // order_id -> marker
 let currentRoute = null;
 let livePollTimer = null;
+// Pause polling når fanen ikke er synlig (sparer Google-API-kall)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && livePollTimer) {
+    clearInterval(livePollTimer);
+    livePollTimer = null;
+  } else if (!document.hidden && currentRoute && !livePollTimer) {
+    livePollTimer = setInterval(pollLive, 30000);
+    pollLive();
+  }
+});
 
 function initMap(){
   map = L.map("map", {zoomControl:true}).setView([60.39, 5.32], 11);

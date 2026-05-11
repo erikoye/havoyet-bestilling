@@ -1322,6 +1322,14 @@ def admin_delete_driver(driver_id: str):
     return jsonify({"ok": True})
 
 
+# ── Live-poll cache: hindrer at hver poll trigger nye Google-API-kall ───
+# Vehicle-position oppdateres ~30s av ABAX, så det er ingen mening i å kalle
+# Distance Matrix oftere enn det. Vi cachar matrix-resultatet per (vehicle_lat,
+# vehicle_lon-runded, date_iso) i 25 sekunder.
+_LIVE_CACHE: dict = {}
+_LIVE_CACHE_TTL = 25  # sek
+
+
 def _route_live_payload(date_iso: str):
     """Felles live-ETA-payload: brukes både av admin- og sjåfør-endepunktet.
 
@@ -1343,15 +1351,35 @@ def _route_live_payload(date_iso: str):
     vehicle = _current_vehicle_position()
     etas_to_stops: list[dict] = []
     if vehicle and stops:
-        dests = [(s["lat"], s["lon"]) for s in stops]
-        table = matrix_one_to_many((vehicle["lat"], vehicle["lon"]), dests)
-        if table:
-            etas_to_stops = table
+        # Cache-key: vehicle-posisjon rundet til ~50m (3 desimaler ≈ 100m) +
+        # liste av order-ids. Hvis bilen ikke har flyttet seg mye og samme
+        # ordresett, returner cached resultat (sparer Google-kall).
+        cache_key = (
+            round(vehicle["lat"], 3),
+            round(vehicle["lon"], 3),
+            date_iso,
+            tuple(s["order_id"] for s in stops),
+        )
+        cached = _LIVE_CACHE.get(cache_key)
+        now = time.time()
+        if cached and (now - cached[0]) < _LIVE_CACHE_TTL:
+            etas_to_stops = cached[1]
         else:
-            etas_to_stops = [
-                fallback_eta(vehicle["lat"], vehicle["lon"], s["lat"], s["lon"])
-                for s in stops
-            ]
+            dests = [(s["lat"], s["lon"]) for s in stops]
+            table = matrix_one_to_many((vehicle["lat"], vehicle["lon"]), dests)
+            if table:
+                etas_to_stops = table
+            else:
+                etas_to_stops = [
+                    fallback_eta(vehicle["lat"], vehicle["lon"], s["lat"], s["lon"])
+                    for s in stops
+                ]
+            _LIVE_CACHE[cache_key] = (now, etas_to_stops)
+            # Rydd opp gamle cache-entries så dict ikke vokser ubegrenset
+            for k in list(_LIVE_CACHE.keys()):
+                if (now - _LIVE_CACHE[k][0]) > _LIVE_CACHE_TTL * 4:
+                    del _LIVE_CACHE[k]
+
     eta_by_order: dict[str, dict] = {}
     for s, eta in zip(stops, etas_to_stops):
         eta_by_order[s["order_id"]] = {

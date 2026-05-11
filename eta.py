@@ -109,25 +109,28 @@ def geocode(address: str, postnr: str | None = None, poststed: str | None = None
     return coords
 
 
-def google_directions_eta(from_lat: float, from_lon: float, to_lat: float, to_lon: float
-                          ) -> Optional[dict]:
-    """ETA fra A → B via Google Directions (med trafikkdata når mulig)."""
+def google_directions_eta(from_lat: float, from_lon: float, to_lat: float, to_lon: float,
+                          *, with_traffic: bool = False) -> Optional[dict]:
+    """ETA fra A → B via Google Directions.
+
+    with_traffic=True bruker Directions Advanced (kostbart: NOK 93/1K kall).
+    Default er False (basic tier: NOK 47/1K kall) — vi sparer ~50% når sanntids-
+    trafikk ikke er kritisk (f.eks. live-poll, proximity-watcher).
+    """
     key = _google_key()
     if not key:
         return None
     try:
-        resp = requests.get(
-            _GOOGLE_DIRECTIONS_URL,
-            params={
-                "origin": f"{from_lat},{from_lon}",
-                "destination": f"{to_lat},{to_lon}",
-                "mode": "driving",
-                "departure_time": "now",
-                "traffic_model": "best_guess",
-                "key": key,
-            },
-            timeout=5,
-        )
+        params = {
+            "origin": f"{from_lat},{from_lon}",
+            "destination": f"{to_lat},{to_lon}",
+            "mode": "driving",
+            "key": key,
+        }
+        if with_traffic:
+            params["departure_time"] = "now"
+            params["traffic_model"] = "best_guess"
+        resp = requests.get(_GOOGLE_DIRECTIONS_URL, params=params, timeout=5)
         if not resp.ok:
             return None
         data = resp.json()
@@ -365,24 +368,28 @@ def _decode_polyline(s: str) -> list[tuple[float, float]]:
 
 
 def google_matrix_one_to_many(source: tuple[float, float],
-                               destinations: list[tuple[float, float]]) -> Optional[list[dict]]:
-    """Google Distance Matrix: ÉN source → mange destinasjoner. Trafikk-bevisst."""
+                               destinations: list[tuple[float, float]],
+                               *, with_traffic: bool = False) -> Optional[list[dict]]:
+    """Google Distance Matrix: ÉN source → mange destinasjoner.
+
+    with_traffic=True bruker Distance Matrix Advanced (NOK 93/1K elementer).
+    Default er False (basic, NOK 47/1K) — vi sparer 50% på live-poll-flyten
+    hvor sanntids-trafikk ikke flytter "X min unna"-tallet vesentlig.
+    """
     key = _google_key()
     if not key or not destinations:
         return None if not key else []
     try:
-        resp = requests.get(
-            _GOOGLE_MATRIX_URL,
-            params={
-                "origins": f"{source[0]},{source[1]}",
-                "destinations": "|".join(f"{la},{lo}" for la, lo in destinations),
-                "mode": "driving",
-                "departure_time": "now",
-                "traffic_model": "best_guess",
-                "key": key,
-            },
-            timeout=10,
-        )
+        params = {
+            "origins": f"{source[0]},{source[1]}",
+            "destinations": "|".join(f"{la},{lo}" for la, lo in destinations),
+            "mode": "driving",
+            "key": key,
+        }
+        if with_traffic:
+            params["departure_time"] = "now"
+            params["traffic_model"] = "best_guess"
+        resp = requests.get(_GOOGLE_MATRIX_URL, params=params, timeout=10)
         if not resp.ok:
             return None
         data = resp.json()

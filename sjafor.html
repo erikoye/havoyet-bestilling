@@ -139,6 +139,16 @@ const stopLayer = (typeof L !== "undefined") ? L.layerGroup() : null;
 const stopMarkers = {};
 let currentRoute = null;
 let livePollTimer = null;
+// Pause polling når sjåføren låser telefonen eller bytter app
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && livePollTimer) {
+    clearInterval(livePollTimer);
+    livePollTimer = null;
+  } else if (!document.hidden && currentRoute && !livePollTimer) {
+    livePollTimer = setInterval(pollLive, 30000);
+    pollLive();
+  }
+});
 
 function getPin(){ return localStorage.getItem(PIN_KEY) || ""; }
 function setPin(v){ localStorage.setItem(PIN_KEY, v); }
