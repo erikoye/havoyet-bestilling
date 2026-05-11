@@ -1430,10 +1430,31 @@ def _notify_customer_order_update(order, event, change_summary=""):
     return False, f"mail={mail_detail}, sms={sms_detail}"
 
 
+VALID_CHANNELS = ("email", "sms", "push", "telegram")
+
+
+def _event_channels_for(notifier, event):
+    """Returnerer settet med kanaler som skal fyre for (notifier, event).
+
+    Bakoverkompat: hvis `event_channels` mangler for en event, brukes alle
+    kanaler som er konfigurert på notifier-en (gammel oppførsel)."""
+    ec = notifier.get("event_channels") or {}
+    if event in ec and isinstance(ec[event], list):
+        return {c for c in ec[event] if c in VALID_CHANNELS}
+    # Default: alle kanaler som har en verdi
+    fallback = set()
+    if notifier.get("email"):            fallback.add("email")
+    if notifier.get("phone"):            fallback.add("sms")
+    if notifier.get("ntfy_topic"):       fallback.add("push")
+    if notifier.get("telegram_chat_id"): fallback.add("telegram")
+    return fallback
+
+
 def _notify_admins(event, subject, body):
-    """Send varsel til alle admin-mottakere som har valgt `event`. Sender e-post
-    hvis mottakeren har e-post, og SMS hvis mottakeren har telefon (og Twilio
-    er konfigurert). Begge kanaler brukes hvis begge feltene er fylt ut."""
+    """Send varsel til alle admin-mottakere som har valgt `event`. Hver mottaker
+    kan styre per varseltype hvilke kanaler som fyrer (event_channels).
+    Bakoverkompat: hvis event_channels ikke er satt, brukes alle konfigurerte
+    kanaler (e-post + SMS + push + telegram)."""
     if event not in ADMIN_EVENTS:
         return
 
@@ -1456,17 +1477,18 @@ def _notify_admins(event, subject, body):
     mail_sent = sms_sent = push_sent = tg_sent = 0
     mail_failed = sms_failed = push_failed = tg_failed = 0
     for n in matching:
+        allowed = _event_channels_for(n, event)
         email = (n.get("email") or "").strip()
         phone = (n.get("phone") or "").strip()
         ntfy  = (n.get("ntfy_topic") or "").strip()
         tg    = (n.get("telegram_chat_id") or "").strip()
-        if email:
+        if email and "email" in allowed:
             ok, detail = _send_admin_mail(email, subject, body)
             if ok: mail_sent += 1
             else:
                 mail_failed += 1
                 print(f"[ADMIN-NOTIFY] mail {email}: {detail}")
-        if phone:
+        if phone and "sms" in allowed:
             normalized = _normalize_phone(phone)
             if not normalized:
                 sms_failed += 1
@@ -1477,13 +1499,13 @@ def _notify_admins(event, subject, body):
                 else:
                     sms_failed += 1
                     print(f"[ADMIN-NOTIFY] sms {normalized}: {detail}")
-        if ntfy:
+        if ntfy and "push" in allowed:
             ok, detail = _send_admin_push(ntfy, subject, body)
             if ok: push_sent += 1
             else:
                 push_failed += 1
                 print(f"[ADMIN-NOTIFY] push {ntfy}: {detail}")
-        if tg:
+        if tg and "telegram" in allowed:
             ok, detail = _send_admin_telegram(tg, subject, body)
             if ok: tg_sent += 1
             else:
@@ -1666,6 +1688,15 @@ def api_admin_notifiers():
                 return jsonify({"error": "Ntfy-topicen er allerede registrert"}), 409
             if tg_chat and n.get("telegram_chat_id", "") == tg_chat:
                 return jsonify({"error": "Telegram chat-ID er allerede registrert"}), 409
+        # Per-event-kanal-mapping. Hvis ikke angitt, defaulter dispatcheren
+        # til alle konfigurerte kanaler (bakoverkompat).
+        event_channels = {}
+        raw_ec = data.get("event_channels") or {}
+        if isinstance(raw_ec, dict):
+            for k, v in raw_ec.items():
+                if k not in ADMIN_EVENTS or not isinstance(v, list):
+                    continue
+                event_channels[k] = [c for c in v if c in VALID_CHANNELS]
         new = {
             "id": str(_uuid.uuid4()),
             "name": name,
@@ -1674,6 +1705,7 @@ def api_admin_notifiers():
             "ntfy_topic": ntfy,
             "telegram_chat_id": tg_chat,
             "events": events,
+            "event_channels": event_channels,
             "created_at": datetime.now().isoformat(),
         }
         _admin_notifiers.append(new)
@@ -1699,6 +1731,15 @@ def api_admin_notifier_one(notifier_id):
             if "events" in data:
                 ev = [e for e in (data.get("events") or []) if e in ADMIN_EVENTS]
                 n["events"] = ev
+            if "event_channels" in data:
+                raw_ec = data.get("event_channels") or {}
+                if isinstance(raw_ec, dict):
+                    cleaned = {}
+                    for k, v in raw_ec.items():
+                        if k not in ADMIN_EVENTS or not isinstance(v, list):
+                            continue
+                        cleaned[k] = [c for c in v if c in VALID_CHANNELS]
+                    n["event_channels"] = cleaned
             if "email" in data:
                 em = (data.get("email") or "").strip().lower()
                 if em == "":
