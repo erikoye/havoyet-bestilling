@@ -1883,22 +1883,10 @@ function _orderIsManual(orderId){
 }
 
 function renderItemQtyEditor(item, i){
+  // Mengde og enhet er kun-lesbar her — endringer gjøres i admin-panelet.
   const qty = (item && (item.qty ?? item.quantity)) ?? 1;
   const unit = (item && item.unit) || _guessUnitFromName(item && item.name) || 'stk';
-  const editable = _orderIsManual(currentOrderId);
-  if (!editable) {
-    return `<div class="item-qty-edit readonly" title="Hentet fra kasseflyten — kan ikke endres her"><span class="qty-num">${qty}</span><span class="qty-unit">${unit}</span></div>`;
-  }
-  const baseUnits = ['kg','g','stk'];
-  const allUnits = (unit && !baseUnits.includes(unit)) ? [...baseUnits, unit] : baseUnits;
-  return `<div class="item-qty-edit" id="qtyEdit-${i}">
-    <input type="number" min="0" step="any" value="${qty}" id="qtyInput-${i}"
-      oninput="onItemQtyChange('${currentOrderId}',${i},'qty',this.value)" />
-    <select id="qtyUnit-${i}" onchange="onItemQtyChange('${currentOrderId}',${i},'unit',this.value)">
-      ${allUnits.map(u => `<option value="${u}" ${u===(unit||'kg')?'selected':''}>${u}</option>`).join('')}
-    </select>
-    <span class="saved-flash">✓</span>
-  </div>`;
+  return `<div class="item-qty-edit readonly" title="Endres i admin-panelet"><span class="qty-num">${qty}</span><span class="qty-unit">${unit}</span></div>`;
 }
 
 let _qtySaveTimers = {};
