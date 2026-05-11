@@ -719,6 +719,13 @@ _discounts = []
 #              total, fee, sum, rabattBelop, source}
 # status: 'open' | 'contacted' | 'converted'
 _abandoned_carts = []
+# ── ORDRE-TOMBSTONES (slettede ordre-id-er) ──────────────────────────────────
+# iPad-en (pakke.html, index.html) merger sin localStorage med server-lista og
+# POSTer union-en tilbake. Uten tombstones ville en slettet test-ordre dukke
+# opp igjen så snart iPad-en synket. Vi lagrer derfor slettede id/ordrenr som
+# {kode: ts_deleted}; POST /api/manual-orders filtrerer dem bort fra incoming
+# lister. En ny ordre med samme nr (via /api/orders/new) fjerner tombstone-en.
+_order_tombstones = {}
 # Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
 # selv logger ut. Fjern token manuelt via /api/auth/logout for å invalidere det.
 AUTH_SESSION_TTL = None
@@ -803,6 +810,7 @@ def _save_sync_state():
             "subscribers":         _subscribers,
             "discounts":           _discounts,
             "abandoned_carts":     _abandoned_carts,
+            "order_tombstones":    _order_tombstones,
         }
         tmp = SYNC_STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -873,7 +881,7 @@ def _restore_vipps_baseline():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts, _abandoned_carts
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts, _abandoned_carts, _order_tombstones
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         _restore_vipps_baseline()
@@ -921,11 +929,16 @@ def _load_sync_state():
         _subscribers       = d.get("subscribers", []) or []
         _discounts         = d.get("discounts", []) or []
         _abandoned_carts   = d.get("abandoned_carts", []) or []
+        _order_tombstones  = d.get("order_tombstones", {}) or {}
         print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder, {len(_auth_users)} auth-brukere, {len(_auth_sessions)} aktive sesjoner, {len(_subscribers)} nyhetsbrev-abonnenter")
     except Exception as e:
         print(f"[ADVARSEL] Kunne ikke laste sync-state: {e}")
         _seed_auth_users()
 
+
+def _order_keys(o):
+    """Begge mulige nøkler en ordre identifiseres med (kan være ulike i edge-cases)."""
+    return {str(o.get("id") or "").strip(), str(o.get("ordrenr") or "").strip()} - {""}
 
 @app.route("/api/manual-orders", methods=["GET", "POST"])
 def api_manual_orders():
@@ -933,6 +946,11 @@ def api_manual_orders():
     if request.method == "POST":
         old_ids = {str(o.get("ordrenr") or o.get("id")) for o in _manual_orders}
         new_list = request.get_json(force=True) or []
+        # Filter ut ordre vi har slettet før — iPad-en (pakke.html/index.html)
+        # merger lokal localStorage med server-lista og POSTer union-en tilbake.
+        # Uten dette filteret ville slettede ordre dukke opp igjen på neste sync.
+        if _order_tombstones and isinstance(new_list, list):
+            new_list = [o for o in new_list if not (_order_keys(o) & set(_order_tombstones.keys()))]
         # Finn ordre som er nye i innkommende liste
         added = [o for o in new_list
                  if str(o.get("ordrenr") or o.get("id")) not in old_ids]
@@ -952,11 +970,44 @@ def api_manual_orders():
 
 @app.route("/api/manual-orders/<order_id>", methods=["DELETE"])
 def api_delete_manual_order(order_id):
-    global _manual_orders
+    """Slett ordre + opprett tombstone så stale iPad-cache ikke kan re-skape den."""
+    global _manual_orders, _order_tombstones
+    target = str(order_id).strip()
+    if not target:
+        return jsonify({"ok": False, "error": "Tomt ordrenummer"}), 400
     before = len(_manual_orders)
-    _manual_orders = [o for o in _manual_orders if str(o.get("id")) != str(order_id)]
+    # Match både id og ordrenr (tidligere matchet bare id — feilet på ordrer
+    # opprettet via /api/orders/new som setter ordrenr men ikke id).
+    removed_keys = set()
+    keep = []
+    for o in _manual_orders:
+        keys = _order_keys(o)
+        if target in keys:
+            removed_keys |= keys
+        else:
+            keep.append(o)
+    _manual_orders = keep
+    # Tombstone alle nøkler ordren ble identifisert med, så iPad-syncen
+    # ikke kan resurrekte den. Inkluder også target uavhengig av om ordren
+    # faktisk fantes (idempotent — gjentatt sletting funker).
+    now = int(time.time())
+    _order_tombstones[target] = now
+    for k in removed_keys:
+        _order_tombstones[k] = now
     _save_sync_state()
-    return jsonify({"ok": True, "removed": before - len(_manual_orders)})
+    return jsonify({"ok": True, "removed": before - len(_manual_orders), "tombstoned": list({target} | removed_keys)})
+
+
+@app.route("/api/manual-orders/tombstones", methods=["GET", "DELETE"])
+def api_order_tombstones():
+    """GET: liste tombstones. DELETE: tøm alle (admin "Glem slettede ordre")."""
+    global _order_tombstones
+    if request.method == "DELETE":
+        n = len(_order_tombstones)
+        _order_tombstones = {}
+        _save_sync_state()
+        return jsonify({"ok": True, "cleared": n})
+    return jsonify({"ok": True, "tombstones": _order_tombstones, "count": len(_order_tombstones)})
 
 
 @app.route("/api/hidden-orders", methods=["GET", "POST"])
@@ -2798,7 +2849,11 @@ def api_orders_new():
         _mark_carts_converted_for_order(merged)
         return jsonify({"ok": True, "ordrenr": target_id, "updated": True})
 
-    # Ny ordre — legg til i state
+    # Ny ordre — legg til i state. Fjern eventuelle tombstones for samme nr
+    # så ordren faktisk vises (relevant hvis admin slettet ordren før kunden
+    # gjorde retry, eller hvis vi gjenbruker et tidligere brukt ordrenummer).
+    for k in _order_keys(data):
+        _order_tombstones.pop(k, None)
     _manual_orders.append(data)
     _save_sync_state()
     _mark_carts_converted_for_order(data)
