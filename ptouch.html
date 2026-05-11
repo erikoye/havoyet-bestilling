@@ -468,6 +468,7 @@ const STATE = {
   // pakke.html sin packing-state.
   isKasse: false,
   components: [], // [{name, weight, weightUnit, expiry, avail}]
+  variants: [],   // ['Uten bein', 'Uten skinn', 'Lettsaltet', ...] — vises i Innhold-blokken på etiketten
 };
 let ORDERS = [];
 let PACKING = {};
@@ -756,6 +757,7 @@ function selectItem(id, idx) {
       }
     }
     STATE.components = baseline;
+    STATE.variants = [];  // kasse-etiketten viser komponenter, ikke bein/skinn-valg
     // Tidligste holdbarhet → Holdbarhetsdato på etiketten
     let earliest = null;
     STATE.components.forEach(c => { if (c.expiry && (!earliest || c.expiry < earliest)) earliest = c.expiry; });
@@ -769,6 +771,26 @@ function selectItem(id, idx) {
     STATE.weight = s.weight || it.weight || '';
     STATE.unit = s.weightUnit || it.unit || 'g';
     STATE.expiry = s.expiry || it.expiry || '';
+    // Bevar variant-info (Uten bein / Uten skinn / Lettsaltet / ...) så
+    // buildLabelHTML kan vise den i Innhold-blokken. Vi filtrerer bort
+    // vekt-deler fordi de allerede vises i "Vekt"-raden.
+    const _variants = [];
+    if (it.selectedOpts && typeof it.selectedOpts === 'object') {
+      Object.entries(it.selectedOpts).forEach(([k, v]) => {
+        if (!v) return;
+        if (k === 'vekt' || k === 'antall' || k === 'personer' || k === 'pers') return;
+        _variants.push(String(v));
+      });
+    } else if (it.variantStr) {
+      String(it.variantStr).split(/\s*·\s*|\s*\/\s*/).forEach(part => {
+        const t = String(part).trim();
+        if (!t) return;
+        // Hopp over vekt-fragmenter (250 g, 1 kg, "ca. 250 g")
+        if (/^(?:ca\.?\s*)?\d+(?:[.,]\d+)?\s*(?:g|kg|stk|pk|porsjon)/i.test(t)) return;
+        _variants.push(t);
+      });
+    }
+    STATE.variants = _variants;
   }
 
   STATE.capture = defaultCapture(STATE.product);
@@ -920,7 +942,12 @@ function buildLabelHTML() {
           : `<div class="lbl-trio-row">
               <span class="lbl-trio-label">Vekt</span>
               <span class="lbl-trio-val">${STATE.weight ? escapeHTML(STATE.weight) + ' ' + escapeHTML(STATE.unit || 'g') : '–'}</span>
-             </div>`}
+             </div>
+             ${(Array.isArray(STATE.variants) && STATE.variants.length) ? `
+             <div class="lbl-trio-row">
+               <span class="lbl-trio-label">Variant</span>
+               <span class="lbl-trio-val">${STATE.variants.map(v => escapeHTML(v)).join(', ')}</span>
+             </div>` : ''}`}
         <div class="lbl-trio-row">
           <span class="lbl-trio-label">Holdbarhetsdato:</span>
           <span class="lbl-trio-val">${fmtDate(STATE.expiry)}</span>
