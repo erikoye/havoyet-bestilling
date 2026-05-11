@@ -324,7 +324,7 @@ def fetch_domstein_prisliste():
 # ── SERVE HTML-FILER (iPad / andre enheter på samme WiFi) ─────────────────────
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-_DRIVER_HOST_MARKERS = ("sjåfør", "xn--sjfr-zra", "sjafor.")
+_DRIVER_HOST_MARKERS = ("rute.", "sjåfør", "xn--sjfr-zra", "sjafor.")
 
 
 def _is_driver_host() -> bool:
