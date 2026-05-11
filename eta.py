@@ -239,6 +239,70 @@ def order_destination(order: dict) -> Optional[Tuple[float, float]]:
                    str(poststed) if poststed else None)
 
 
+def google_directions_fixed_order(coords: list[tuple[float, float]]) -> Optional[dict]:
+    """Google Directions med fast rekkefølge (ingen optimalisering).
+
+    coords = [start, stop1, stop2, ..., end]
+    Returnerer {legs, total_distance_km, total_duration_min, geometry} —
+    samme form som google_directions_trip, men respekterer input-rekkefølgen.
+    """
+    key = _google_key()
+    if not key or not coords or len(coords) < 2:
+        return None
+    origin = f"{coords[0][0]},{coords[0][1]}"
+    destination = f"{coords[-1][0]},{coords[-1][1]}"
+    waypoints = coords[1:-1]
+    wp = "|".join(f"{la},{lo}" for la, lo in waypoints) if waypoints else None
+    try:
+        params = {
+            "origin": origin,
+            "destination": destination,
+            "mode": "driving",
+            "departure_time": "now",
+            "traffic_model": "best_guess",
+            "key": key,
+        }
+        if wp:
+            params["waypoints"] = wp
+        resp = requests.get(_GOOGLE_DIRECTIONS_URL, params=params, timeout=15)
+        if not resp.ok:
+            return None
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("routes"):
+            return None
+        route = data["routes"][0]
+        legs = route.get("legs", [])
+        out_legs = [
+            {
+                "distance_km": round((l.get("distance") or {}).get("value", 0) / 1000.0, 2),
+                "duration_min": round(
+                    ((l.get("duration_in_traffic") or l.get("duration") or {}).get("value", 0)) / 60.0, 1
+                ),
+            }
+            for l in legs
+        ]
+        total_dist = sum((l.get("distance") or {}).get("value", 0) for l in legs)
+        total_dur = sum(((l.get("duration_in_traffic") or l.get("duration") or {}).get("value", 0))
+                        for l in legs)
+        polyline = (route.get("overview_polyline") or {}).get("points")
+        geometry = None
+        if polyline:
+            try:
+                decoded = _decode_polyline(polyline)
+                geometry = {"type": "LineString", "coordinates": [[lon, lat] for lat, lon in decoded]}
+            except Exception:
+                pass
+        return {
+            "legs": out_legs,
+            "total_distance_km": round(total_dist / 1000.0, 2),
+            "total_duration_min": round(total_dur / 60.0, 1),
+            "geometry": geometry,
+            "source": "google",
+        }
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        return None
+
+
 def google_directions_trip(coords: list[tuple[float, float]], *,
                             roundtrip: bool = False) -> Optional[dict]:
     """TSP via Google Directions med 'optimize:true' i waypoints.

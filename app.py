@@ -943,9 +943,8 @@ def api_manual_orders():
             _notify_admins(
                 "new_order",
                 f"[Havøyet] Ny bestilling #{nr}",
-                "Det er kommet inn en ny bestilling.\n"
-                + "=" * 54 + "\n\n"
-                + _format_order_lines(o),
+                _format_order_lines(o),
+                html_body=_format_order_email_html(o, "Det er kommet inn en ny bestilling.", "new_order"),
             )
         return jsonify({"ok": True, "count": len(_manual_orders)})
     return jsonify(_manual_orders)
@@ -1457,12 +1456,16 @@ def _body_to_html(body):
     )
 
 
-def _send_via_resend(from_email, from_name, subject, body, to_email=None, reply_to=None):
+def _send_via_resend(from_email, from_name, subject, body, to_email=None, reply_to=None,
+                      html_body=None):
     """Send via Resend API (enklest — bare API-nøkkel trengs).
-    Legger automatisk ved signatur (text + html) på alle utgående e-poster."""
+    Legger automatisk ved signatur (text + html) på alle utgående e-poster.
+
+    Hvis `html_body` er gitt, brukes den som HTML-versjon istedenfor å auto-
+    konvertere `body`. Plain-text-versjonen er fortsatt avledet fra `body`."""
     try:
         text_body = _strip_image_placeholders(body or "") + _SIGNATURE_TEXT
-        html_body = _body_to_html(body) + _SIGNATURE_HTML
+        html_body = (html_body if html_body is not None else _body_to_html(body)) + _SIGNATURE_HTML
         payload = {
             "from": f"Havøyet <{RESEND_FROM}>",
             "to": [to_email or CONTACT_TO],
@@ -1488,12 +1491,15 @@ def _send_via_resend(from_email, from_name, subject, body, to_email=None, reply_
         return False, f"resend-exception: {e}"
 
 
-def _send_via_smtp(from_email, from_name, subject, body, to_email=None, reply_to=None):
+def _send_via_smtp(from_email, from_name, subject, body, to_email=None, reply_to=None,
+                    html_body=None):
     """Send via SMTP (Gmail / annen SMTP-server).
-    Sender multipart/alternative med både text- og HTML-versjon med signatur."""
+    Sender multipart/alternative med både text- og HTML-versjon med signatur.
+
+    Hvis `html_body` er gitt, brukes den istedenfor auto-konvertert HTML."""
     recipient = to_email or CONTACT_TO
     text_body = _strip_image_placeholders(body or "") + _SIGNATURE_TEXT
-    html_body = _body_to_html(body) + _SIGNATURE_HTML
+    html_body = (html_body if html_body is not None else _body_to_html(body)) + _SIGNATURE_HTML
     msg = _MIMEMultipart("alternative")
     msg["From"]     = _formataddr((f"Havøyet – {from_name}", SMTP_USER))
     if reply_to or from_email:
@@ -1598,14 +1604,17 @@ def _normalize_phone(raw):
     return None
 
 
-def _send_admin_mail(to_email, subject, body):
-    """Send én e-post til en admin-mottaker. Bruker Resend → SMTP → log."""
+def _send_admin_mail(to_email, subject, body, html_body=None):
+    """Send én e-post til en admin-mottaker. Bruker Resend → SMTP → log.
+    `html_body` (valgfritt) lar deg sende rik HTML istedenfor auto-konvertert."""
     if RESEND_API_KEY:
-        ok, detail = _send_via_resend("", "Admin-varsel", subject, body, to_email=to_email)
+        ok, detail = _send_via_resend("", "Admin-varsel", subject, body,
+                                      to_email=to_email, html_body=html_body)
         if ok:
             return True, detail
     if SMTP_USER and SMTP_PASS:
-        ok, detail = _send_via_smtp("", "Admin-varsel", subject, body, to_email=to_email)
+        ok, detail = _send_via_smtp("", "Admin-varsel", subject, body,
+                                    to_email=to_email, html_body=html_body)
         if ok:
             return True, detail
     return False, "no-mail-service"
@@ -1946,11 +1955,14 @@ def _event_channels_for(notifier, event):
     return fallback
 
 
-def _notify_admins(event, subject, body):
+def _notify_admins(event, subject, body, html_body=None):
     """Send varsel til alle admin-mottakere som har valgt `event`. Hver mottaker
     kan styre per varseltype hvilke kanaler som fyrer (event_channels).
     Bakoverkompat: hvis event_channels ikke er satt, brukes alle konfigurerte
-    kanaler (e-post + SMS + push + telegram)."""
+    kanaler (e-post + SMS + push + telegram).
+
+    `html_body` (valgfritt) gir rik HTML for e-post-kanalen. Plain-text-`body`
+    brukes fortsatt for SMS, push og som fallback-tekst i e-postene."""
     if event not in ADMIN_EVENTS:
         return
 
@@ -1979,7 +1991,7 @@ def _notify_admins(event, subject, body):
         ntfy  = (n.get("ntfy_topic") or "").strip()
         tg    = (n.get("telegram_chat_id") or "").strip()
         if email and "email" in allowed:
-            ok, detail = _send_admin_mail(email, subject, body)
+            ok, detail = _send_admin_mail(email, subject, body, html_body=html_body)
             if ok: mail_sent += 1
             else:
                 mail_failed += 1
@@ -2012,6 +2024,142 @@ def _notify_admins(event, subject, body):
           f"sms={sms_sent}/{sms_sent+sms_failed}, "
           f"push={push_sent}/{push_sent+push_failed}, "
           f"telegram={tg_sent}/{tg_sent+tg_failed}")
+
+
+def _format_order_email_html(order, change_summary="", event=""):
+    """Pen HTML-versjon av admin-ordre-varselet — strukturert med tabeller,
+    farger og tydelige seksjoner som ikke kollapser i Gmail/Outlook.
+    Returnerer en `<div>` som passer å sende rett som e-post-body."""
+    import html as _html
+
+    nr = order.get("ordrenr") or order.get("name") or order.get("id") or "?"
+    raw_kunde = order.get("kunde") if isinstance(order.get("kunde"), dict) else {}
+    navn = raw_kunde.get("navn") or raw_kunde.get("name") or order.get("customer") or "Ukjent"
+    tlf  = raw_kunde.get("tlf") or raw_kunde.get("phone") or order.get("phone") or ""
+    adr  = raw_kunde.get("adresse") or raw_kunde.get("address") or ""
+    postnr = raw_kunde.get("postnr") or ""
+    poststed = raw_kunde.get("poststed") or ""
+    full_adr = ", ".join(p for p in [adr, f"{postnr} {poststed}".strip()] if p) or "—"
+    dag  = raw_kunde.get("leveringsdag") or order.get("delivery") or "—"
+    tid  = raw_kunde.get("leveringstid") or order.get("slot") or ""
+    levering = f"{dag} {tid}".strip()
+    merk = raw_kunde.get("kommentar") or order.get("note") or ""
+    epost = raw_kunde.get("epost") or raw_kunde.get("email") or ""
+    total = order.get("sum") if order.get("sum") is not None else order.get("total")
+    status = order.get("status") or "—"
+    varer = order.get("varer") or order.get("items") or []
+
+    # Banner-farge basert på event-type
+    banner_color, banner_label = "#1A3A5C", "Ordre-oppdatering"
+    if event == "new_order":
+        banner_color, banner_label = "#2F7A4F", "Ny bestilling"
+    elif event == "order_delivered":
+        banner_color, banner_label = "#0d9488", "Bestilling levert"
+    elif event == "order_updated":
+        banner_color, banner_label = "#1A3A5C", "Ordre oppdatert"
+
+    def esc(s): return _html.escape(str(s or ""))
+
+    rows = []
+    for v in varer:
+        name = esc(v.get("name") or v.get("navn") or "?")
+        qty  = v.get("qty") or v.get("quantity") or v.get("antall") or 1
+        price = v.get("price") if v.get("price") is not None else v.get("pris")
+        rows.append(
+            f'<tr>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;color:#1a1a1a">{name}</td>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:center;color:#475569">×{esc(qty)}</td>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right;color:#1a1a1a;font-variant-numeric:tabular-nums">{esc(price)+" kr" if price is not None else ""}</td>'
+            f'</tr>'
+        )
+    varer_html = "".join(rows) or (
+        '<tr><td colspan="3" style="padding:14px;text-align:center;color:#999;font-style:italic">Ingen varer registrert</td></tr>'
+    )
+
+    sum_html = (f"{esc(total)} kr" if total is not None and total != "" else "—")
+
+    change_html = ""
+    if change_summary:
+        change_html = (
+            f'<div style="background:#FFF8E1;border-left:3px solid #C8A45C;'
+            f'padding:10px 14px;margin-bottom:18px;border-radius:4px;'
+            f'color:#5C4A1E;font-size:14px">{esc(change_summary)}</div>'
+        )
+
+    merk_html = ""
+    if merk:
+        merk_html = (
+            f'<div style="margin-top:16px;padding:12px 14px;background:#F4F1EA;'
+            f'border-radius:6px"><div style="font-size:11px;color:#666;'
+            f'text-transform:uppercase;letter-spacing:.5px;font-weight:600;'
+            f'margin-bottom:4px">Merknad</div>'
+            f'<div style="color:#1a1a1a;font-size:14px;line-height:1.5;'
+            f'white-space:pre-wrap">{esc(merk)}</div></div>'
+        )
+
+    return (
+        f'<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\','
+        f'Helvetica,Arial,sans-serif;background:#F4F1EA;padding:24px 12px;'
+        f'color:#1a1a1a">'
+        f'<div style="max-width:560px;margin:0 auto;background:#fff;'
+        f'border-radius:10px;overflow:hidden;'
+        f'box-shadow:0 1px 3px rgba(0,0,0,.08)">'
+
+        # Banner
+        f'<div style="background:{banner_color};color:#fff;padding:18px 22px">'
+        f'<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;'
+        f'opacity:.8">{banner_label}</div>'
+        f'<div style="font-size:22px;font-weight:700;margin-top:4px">'
+        f'Bestilling #{esc(nr)}</div>'
+        f'</div>'
+
+        # Body
+        f'<div style="padding:22px">'
+        f'{change_html}'
+
+        # Info-tabell
+        f'<table style="width:100%;border-collapse:collapse;font-size:14px;'
+        f'margin-bottom:18px">'
+        f'<tr><td style="padding:6px 0;color:#666;width:90px">Kunde</td>'
+        f'<td style="padding:6px 0;color:#1a1a1a;font-weight:600">{esc(navn)}</td></tr>'
+        + (f'<tr><td style="padding:6px 0;color:#666">Telefon</td>'
+           f'<td style="padding:6px 0"><a href="tel:{esc(tlf)}" style="color:#1A3A5C;text-decoration:none">{esc(tlf)}</a></td></tr>' if tlf else "")
+        + (f'<tr><td style="padding:6px 0;color:#666">E-post</td>'
+           f'<td style="padding:6px 0"><a href="mailto:{esc(epost)}" style="color:#1A3A5C;text-decoration:none">{esc(epost)}</a></td></tr>' if epost else "")
+        + f'<tr><td style="padding:6px 0;color:#666;vertical-align:top">Adresse</td>'
+          f'<td style="padding:6px 0;color:#1a1a1a">{esc(full_adr)}</td></tr>'
+        + f'<tr><td style="padding:6px 0;color:#666">Levering</td>'
+          f'<td style="padding:6px 0;color:#1a1a1a;font-weight:600">{esc(levering)}</td></tr>'
+        + f'<tr><td style="padding:6px 0;color:#666">Status</td>'
+          f'<td style="padding:6px 0;color:#1a1a1a">'
+          f'<span style="background:#F4F1EA;padding:2px 10px;border-radius:999px;'
+          f'font-size:12px;font-weight:600">{esc(status)}</span></td></tr>'
+        + f'</table>'
+
+        # Varer
+        f'<div style="font-size:11px;color:#666;text-transform:uppercase;'
+        f'letter-spacing:.5px;font-weight:600;margin-bottom:6px">Varer</div>'
+        f'<table style="width:100%;border-collapse:collapse;font-size:14px;'
+        f'border-top:1px solid #eee">'
+        f'{varer_html}'
+        f'<tr><td style="padding:10px;font-weight:700;color:#1a1a1a">Sum</td>'
+        f'<td></td>'
+        f'<td style="padding:10px;text-align:right;font-weight:700;color:#1a1a1a;'
+        f'font-size:16px;font-variant-numeric:tabular-nums">{esc(sum_html)}</td></tr>'
+        f'</table>'
+
+        f'{merk_html}'
+
+        # Footer
+        f'<div style="margin-top:22px;padding-top:14px;border-top:1px solid #eee;'
+        f'font-size:12px;color:#999;text-align:center">'
+        f'Sendt automatisk fra admin-systemet'
+        f'</div>'
+
+        f'</div>'   # body
+        f'</div>'   # card
+        f'</div>'   # wrapper
+    )
 
 
 def _format_order_lines(order):
@@ -2794,14 +2942,16 @@ def api_order_update_status(order_id):
                 _notify_admins(
                     "order_delivered",
                     f"[Havøyet] Bestilling #{nr} er levert",
-                    change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
+                    change_summary + "\n\n" + _format_order_lines(o),
+                    html_body=_format_order_email_html(o, change_summary, "order_delivered"),
                 )
                 _notify_customer_order_update(o, "order_delivered", change_summary)
             elif old_status != new_status:
                 _notify_admins(
                     "order_updated",
                     f"[Havøyet] Bestilling #{nr} oppdatert",
-                    change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
+                    change_summary + "\n\n" + _format_order_lines(o),
+                    html_body=_format_order_email_html(o, change_summary, "order_updated"),
                 )
                 _notify_customer_order_update(o, "order_updated", change_summary)
             return jsonify({"ok": True, "order": o})
@@ -2858,14 +3008,16 @@ def api_order_patch(order_id):
                     _notify_admins(
                         "order_delivered",
                         f"[Havøyet] Bestilling #{nr} er levert",
-                        change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
+                        change_summary + "\n\n" + _format_order_lines(o),
+                        html_body=_format_order_email_html(o, change_summary, "order_delivered"),
                     )
                     _notify_customer_order_update(o, "order_delivered", change_summary)
                 else:
                     _notify_admins(
                         "order_updated",
                         f"[Havøyet] Bestilling #{nr} oppdatert",
-                        change_summary + "\n" + "=" * 54 + "\n\n" + _format_order_lines(o),
+                        change_summary + "\n\n" + _format_order_lines(o),
+                        html_body=_format_order_email_html(o, change_summary, "order_updated"),
                     )
                     _notify_customer_order_update(o, "order_updated", change_summary)
             except Exception as _notify_err:

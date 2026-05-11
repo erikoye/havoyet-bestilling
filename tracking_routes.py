@@ -23,6 +23,7 @@ from eta import (
     compute_eta,
     fallback_eta,
     geocode,
+    google_directions_fixed_order,
     matrix_one_to_many,
     order_destination,
     trip_optimize,
@@ -866,6 +867,96 @@ def _set_day_state(date_iso: str, updates: dict) -> dict:
     return day
 
 
+_DWELL_MIN = 10           # minutter brukt hos hver kunde (default)
+_DEFAULT_START = (14, 0)  # default avreise fra depot hvis ingen tidspunkt gitt
+
+
+def _parse_slot_start_min(slot_str: str) -> int:
+    """Returnerer slot-start i minutter siden midnatt. 9999 hvis ikke gyldig."""
+    import re
+    if not slot_str:
+        return 9999
+    m = re.match(r"\s*(\d{1,2})", str(slot_str))
+    if not m:
+        return 9999
+    h = int(m.group(1))
+    if 0 <= h <= 23:
+        return h * 60
+    return 9999
+
+
+def _parse_slot_end_min(slot_str: str) -> int:
+    """Returnerer slot-slutt i minutter siden midnatt. 9999 hvis ikke gyldig."""
+    import re
+    if not slot_str:
+        return 9999
+    # Match siste tall i strengen (slot-slutt) — håndterer både "13-15", "13–15", "13:00-15:00"
+    nums = re.findall(r"(\d{1,2})", str(slot_str))
+    if len(nums) < 2:
+        return 9999
+    h = int(nums[-2])  # antar formatet "Hstart-Hslutt" eller "Hstart:Mstart-Hslutt:Mslutt"
+    if 0 <= h <= 23:
+        return h * 60
+    return 9999
+
+
+def _min_to_clock(total_min: int) -> str:
+    """Returnerer 'HH:MM' fra minutter siden midnatt."""
+    total = int(round(total_min)) % (24 * 60)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _group_stops_by_slot(stops: list[dict]) -> list[list[dict]]:
+    """Grupperer stopp etter leveringstid-slot-start, sortert kronologisk."""
+    by_slot: dict[int, list[dict]] = {}
+    for s in stops:
+        key = _parse_slot_start_min(s.get("leveringstid", ""))
+        by_slot.setdefault(key, []).append(s)
+    return [by_slot[k] for k in sorted(by_slot.keys())]
+
+
+def _optimize_group_geographically(group: list[dict], start_point: tuple) -> list[dict]:
+    """Optimaliserer rekkefølge innen ÉN slot-gruppe ved bruk av OSRM/Google trip
+    fra start_point. Returnerer stopp i optimal rekkefølge."""
+    if len(group) <= 1:
+        return list(group)
+    coords = [start_point] + [(s["lat"], s["lon"]) for s in group]
+    trip = trip_optimize(coords, roundtrip=False)
+    if trip and trip.get("order"):
+        ordered = []
+        # trip.order er liste av input-indekser; 0 = start_point, 1+ = group
+        for idx in trip["order"][1:]:
+            ordered.append(group[idx - 1])
+        return ordered
+    return list(group)  # behold opprinnelig rekkefølge ved feil
+
+
+def _annotate_clock_times(stops: list[dict], start_clock: tuple[int, int] | None = None) -> None:
+    """Setter `arrival_clock`, `departure_clock`, `late`-felter på hver stopp.
+
+    arrival_clock = avreise + cum_min_from_depot (kjøretid)
+    departure_clock = arrival + _DWELL_MIN
+    late = True hvis arrival er etter slot-slutt
+    """
+    if not stops:
+        return
+    start_h, start_m = start_clock or _DEFAULT_START
+    start_total = start_h * 60 + start_m
+    cum_drive = 0.0
+    for s in stops:
+        cum_drive += float(s.get("leg_min") or 0)
+        arrival_min = start_total + cum_drive
+        # Legg på dwell-tid for tidligere stopp (alle utenom dette)
+        prev_dwells = (s.get("stop_index", 1) - 1) * _DWELL_MIN
+        arrival_min += prev_dwells
+        s["arrival_clock"] = _min_to_clock(arrival_min)
+        s["departure_clock"] = _min_to_clock(arrival_min + _DWELL_MIN)
+        slot_end = _parse_slot_end_min(s.get("leveringstid", ""))
+        slot_start = _parse_slot_start_min(s.get("leveringstid", ""))
+        s["late"] = (slot_end != 9999 and arrival_min > slot_end * 1)
+        s["early"] = (slot_start != 9999 and slot_start != 0 and arrival_min + _DWELL_MIN < slot_start * 1)
+
+
 def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
     """Bygger dagens rute. Felles for /today og /live.
 
@@ -951,6 +1042,68 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "optimizer": "custom",
             "approved": bool(day_state.get("approved")),
             "approved_at": day_state.get("approved_at"),
+            "unresolved": unresolved,
+        }
+
+    # ─── Slot-bevisst rekkefølge: 13-15-slot leveres før 15-18-slot ─────
+    # Innen samme slot optimeres geografisk via OSRM/Google trip.
+    if optimize:
+        groups = _group_stops_by_slot(stops)
+        ordered_within_groups: list[dict] = []
+        prev_point = depot
+        for grp in groups:
+            grp_ordered = _optimize_group_geographically(grp, prev_point)
+            ordered_within_groups.extend(grp_ordered)
+            if grp_ordered:
+                last = grp_ordered[-1]
+                prev_point = (last["lat"], last["lon"])
+        # Bygg legs sekvensielt slik at cum-tider blir riktige
+        slot_stops = []
+        cum_min = 0.0
+        prev = depot
+        start_clock_hint = day_state.get("start_clock") if isinstance(day_state, dict) else None
+        for i, s in enumerate(ordered_within_groups, start=1):
+            seg = compute_eta(prev[0], prev[1], s["lat"], s["lon"])
+            cum_min += seg["duration_min"]
+            slot_stops.append({
+                **s,
+                "stop_index": i,
+                "leg_min": seg["duration_min"],
+                "leg_km": seg["distance_km"],
+                "cum_min_from_depot": round(cum_min, 1),
+            })
+            prev = (s["lat"], s["lon"])
+
+        # Klokkeslett-annotering (default 14:00 hvis ingen er satt for dagen)
+        clock = None
+        if isinstance(start_clock_hint, str) and ":" in start_clock_hint:
+            try:
+                h, m = start_clock_hint.split(":", 1)
+                clock = (int(h), int(m))
+            except ValueError:
+                clock = None
+        _annotate_clock_times(slot_stops, clock)
+
+        # Hent geometri i fast rekkefølge fra Google (én ekstra call, billig)
+        geometry = None
+        if slot_stops:
+            fixed_coords = [depot] + [(s["lat"], s["lon"]) for s in slot_stops]
+            fixed = google_directions_fixed_order(fixed_coords)
+            if fixed and fixed.get("geometry"):
+                geometry = fixed["geometry"]
+
+        return {
+            "date": date_iso,
+            "depot": {"lat": depot[0], "lon": depot[1]},
+            "stops": slot_stops,
+            "geometry": geometry,
+            "total_distance_km": round(sum(s["leg_km"] for s in slot_stops), 2),
+            "total_duration_min": round(cum_min, 1),
+            "optimizer": "slot-aware",
+            "approved": bool(day_state.get("approved")),
+            "approved_at": day_state.get("approved_at"),
+            "start_clock": f"{(clock or _DEFAULT_START)[0]:02d}:{(clock or _DEFAULT_START)[1]:02d}",
+            "dwell_min": _DWELL_MIN,
             "unresolved": unresolved,
         }
 
