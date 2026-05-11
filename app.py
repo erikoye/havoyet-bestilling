@@ -519,6 +519,11 @@ _auth_sessions = {}  # legacy lookup — beholdes for bakoverkompatibilitet med 
 # status: 'active' | 'unsubscribed' | 'bounced'
 # kilde: 'website' | 'admin' | 'mailerlite-migration' | 'checkout'
 _subscribers = []
+# ── PRODUKT-RABATTER (knyttet til nyhetsbrev-sendinger eller manuelt opprettet) ──
+# Hver entry: {id, handle, prosent (0-100), start (YYYY-MM-DD), slutt (YYYY-MM-DD),
+#              beskrivelse, kun_nyhetsbrev (bool), aktiv (bool),
+#              kilde_newsletter_id (str|null), created_at, updated_at}
+_discounts = []
 # Sesjoner utløper ikke lenger automatisk; brukeren forblir innlogget til de
 # selv logger ut. Fjern token manuelt via /api/auth/logout for å invalidere det.
 AUTH_SESSION_TTL = None
@@ -593,6 +598,7 @@ def _save_sync_state():
                 "auth_users":          _auth_users,
                 "auth_sessions":       _auth_sessions,
                 "subscribers":         _subscribers,
+                "discounts":           _discounts,
             }, f, ensure_ascii=False)
     except Exception:
         pass
@@ -651,7 +657,7 @@ def _restore_vipps_baseline():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         _restore_vipps_baseline()
@@ -697,6 +703,7 @@ def _load_sync_state():
             }
         _seed_auth_users()
         _subscribers       = d.get("subscribers", []) or []
+        _discounts         = d.get("discounts", []) or []
         print(f"Lastet sync-state fra disk: {len(_packing_state)} pakket, {len(_manual_orders)} manuelle ordre, {len(_product_overrides)} produkt-overrides, {len(_reviews)} anmeldelser, {len(_admin_notifiers)} admin-mottakere, {len(_customers)} kunder, {len(_auth_users)} auth-brukere, {len(_auth_sessions)} aktive sesjoner, {len(_subscribers)} nyhetsbrev-abonnenter")
     except Exception as e:
         print(f"[ADVARSEL] Kunne ikke laste sync-state: {e}")
@@ -6222,12 +6229,21 @@ def _normalize_email(raw):
 
 
 def _is_admin_request():
-    if not ADMIN_API_TOKEN:
-        return True  # Ikke konfigurert → tillatt (men logges)
-    auth = (request.headers.get("X-Admin-Token") or "").strip()
-    if not auth:
-        auth = (request.headers.get("Authorization") or "").replace("Bearer ", "").strip()
-    return _hmac_mod.compare_digest(auth, ADMIN_API_TOKEN)
+    # 1) Innlogget bruker med rolle "admin" (admin.html via auth-bearer)
+    try:
+        user, _ = _user_from_request()
+        if user and (user.get("role") or "").lower() == "admin":
+            return True
+    except Exception:
+        pass
+    # 2) Eksplisitt X-Admin-Token-header (scripts/cron uten user-session)
+    if ADMIN_API_TOKEN:
+        auth = (request.headers.get("X-Admin-Token") or "").strip()
+        if auth and _hmac_mod.compare_digest(auth, ADMIN_API_TOKEN):
+            return True
+        return False
+    # 3) Hvis verken auth eller ADMIN_API_TOKEN er satt — åpen (dev-modus)
+    return True
 
 
 def _find_subscriber(email):
@@ -6420,6 +6436,194 @@ def api_subscribers_bulk_import():
     })
 
 
+# ── RABATTER (produkt-rabatter, ofte knyttet til nyhetsbrev-sendinger) ──────
+# Brukes til at innloggede nyhetsbrev-abonnenter ser rabattert pris på spesifikke
+# produkter i en gitt tidsperiode. Aktiveres automatisk når et nyhetsbrev sendes,
+# eller manuelt via admin "Rabatter"-fanen.
+
+_DATE_RE = _re_mod.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _today_str():
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _valid_date(s):
+    return bool(s and isinstance(s, str) and _DATE_RE.match(s))
+
+
+def _is_discount_currently_active(d):
+    if not d.get("aktiv", True):
+        return False
+    today = _today_str()
+    start = d.get("start") or ""
+    slutt = d.get("slutt") or ""
+    if start and today < start:
+        return False
+    if slutt and today > slutt:
+        return False
+    return True
+
+
+def _active_discounts_for(user_email=None):
+    """Returnerer rabatter som faktisk gjelder akkurat nå. Filtrerer på
+    kun_nyhetsbrev hvis user_email enten er None eller ikke aktiv abonnent."""
+    is_sub = bool(user_email and _is_active_subscriber(user_email))
+    out = []
+    for d in _discounts:
+        if not _is_discount_currently_active(d):
+            continue
+        if d.get("kun_nyhetsbrev") and not is_sub:
+            continue
+        out.append(d)
+    return out
+
+
+@app.route("/api/discounts/active", methods=["GET"])
+def api_discounts_active():
+    """Returnerer aktive rabatter som faktisk gjelder for den som kaller.
+    Sender ?email=... for å få med 'kun_nyhetsbrev'-rabatter for en gitt bruker.
+    Brukes av nettsiden ved produktlisting."""
+    email = _normalize_email(request.args.get("email"))
+    rows = _active_discounts_for(email)
+    return jsonify({
+        "ok": True,
+        "discounts": rows,
+        "is_subscriber": bool(email and _is_active_subscriber(email)),
+    })
+
+
+@app.route("/api/discounts", methods=["GET", "POST"])
+def api_discounts_root():
+    if request.method == "GET":
+        # Admin/intern: liste ALLE rabatter (også utløpte/inaktive)
+        return jsonify({"ok": True, "discounts": list(_discounts)})
+    if not _is_admin_request():
+        return jsonify({"error": "Mangler admin-token"}), 401
+    data = request.get_json(force=True, silent=True) or {}
+    handle = (data.get("handle") or "").strip()
+    if not handle:
+        return jsonify({"error": "Mangler produkt-handle"}), 400
+    try:
+        prosent = float(data.get("prosent") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Ugyldig prosent"}), 400
+    if prosent <= 0 or prosent >= 100:
+        return jsonify({"error": "Prosent må være mellom 1 og 99"}), 400
+    start = (data.get("start") or _today_str()).strip()
+    slutt = (data.get("slutt") or "").strip()
+    if not _valid_date(start):
+        return jsonify({"error": "Ugyldig start-dato (forventer YYYY-MM-DD)"}), 400
+    if slutt and not _valid_date(slutt):
+        return jsonify({"error": "Ugyldig slutt-dato (forventer YYYY-MM-DD)"}), 400
+    now = datetime.now().isoformat()
+    new = {
+        "id": "d_" + _uuid.uuid4().hex[:12],
+        "handle": handle,
+        "prosent": prosent,
+        "start": start,
+        "slutt": slutt or None,
+        "beskrivelse": (data.get("beskrivelse") or "").strip()[:200],
+        "kun_nyhetsbrev": bool(data.get("kun_nyhetsbrev", True)),
+        "aktiv": bool(data.get("aktiv", True)),
+        "kilde_newsletter_id": (data.get("kilde_newsletter_id") or None),
+        "created_at": now,
+        "updated_at": now,
+    }
+    _discounts.append(new)
+    _save_sync_state()
+    return jsonify({"ok": True, "discount": new})
+
+
+@app.route("/api/discounts/<discount_id>", methods=["PATCH", "DELETE"])
+def api_discounts_modify(discount_id):
+    if not _is_admin_request():
+        return jsonify({"error": "Mangler admin-token"}), 401
+    d = next((x for x in _discounts if x.get("id") == discount_id), None)
+    if not d:
+        return jsonify({"error": "Ikke funnet"}), 404
+    if request.method == "DELETE":
+        _discounts.remove(d)
+        _save_sync_state()
+        return jsonify({"ok": True, "deleted": True})
+    data = request.get_json(force=True, silent=True) or {}
+    now = datetime.now().isoformat()
+    if "prosent" in data:
+        try:
+            p = float(data["prosent"])
+            if 0 < p < 100:
+                d["prosent"] = p
+        except (TypeError, ValueError):
+            pass
+    for f in ("handle", "beskrivelse"):
+        if f in data and isinstance(data[f], str):
+            d[f] = data[f].strip()
+    for f in ("start", "slutt"):
+        if f in data:
+            v = (data[f] or "").strip()
+            if not v or _valid_date(v):
+                d[f] = v or None
+    for f in ("kun_nyhetsbrev", "aktiv"):
+        if f in data:
+            d[f] = bool(data[f])
+    d["updated_at"] = now
+    _save_sync_state()
+    return jsonify({"ok": True, "discount": d})
+
+
+@app.route("/api/discounts/bulk", methods=["POST"])
+def api_discounts_bulk():
+    """Aktiverer flere rabatter samtidig — brukes når nyhetsbrev sendes.
+    Body: { newsletter_id, rabatter: [{handle, prosent, start, slutt, beskrivelse}, ...] }
+    Alle får 'kun_nyhetsbrev': true automatisk."""
+    if not _is_admin_request():
+        return jsonify({"error": "Mangler admin-token"}), 401
+    data = request.get_json(force=True, silent=True) or {}
+    newsletter_id = (data.get("newsletter_id") or "").strip() or None
+    rows = data.get("rabatter") or []
+    if not isinstance(rows, list):
+        return jsonify({"error": "rabatter må være liste"}), 400
+    now = datetime.now().isoformat()
+    today = _today_str()
+    created = []
+    skipped = []
+    for row in rows:
+        if not isinstance(row, dict):
+            skipped.append({"reason": "not-object"})
+            continue
+        handle = (row.get("handle") or "").strip()
+        try:
+            prosent = float(row.get("prosent") or 0)
+        except (TypeError, ValueError):
+            prosent = 0
+        if not handle or prosent <= 0 or prosent >= 100:
+            skipped.append({"handle": handle, "reason": "invalid-input"})
+            continue
+        start = (row.get("start") or today).strip()
+        slutt = (row.get("slutt") or "").strip()
+        if not _valid_date(start):
+            start = today
+        if slutt and not _valid_date(slutt):
+            slutt = ""
+        new = {
+            "id": "d_" + _uuid.uuid4().hex[:12],
+            "handle": handle,
+            "prosent": prosent,
+            "start": start,
+            "slutt": slutt or None,
+            "beskrivelse": (row.get("beskrivelse") or "Nyhetsbrev-rabatt").strip()[:200],
+            "kun_nyhetsbrev": True,
+            "aktiv": True,
+            "kilde_newsletter_id": newsletter_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        _discounts.append(new)
+        created.append(new)
+    _save_sync_state()
+    return jsonify({"ok": True, "created": len(created), "skipped": len(skipped), "discounts": created})
+
+
 # ── BACKUP / GJENOPPRETT ────────────────────────────────────────────────────
 # Sikkerhetsnett mens persistent disk ikke er montert på Render: admin kan
 # laste ned hele state-en som JSON og laste den opp igjen om containeren ble
@@ -6446,6 +6650,7 @@ def _full_state_dict():
         "auth_users":             _auth_users,
         "auth_sessions":          _auth_sessions,
         "subscribers":            _subscribers,
+        "discounts":              _discounts,
     }
 
 @app.route("/api/admin/backup", methods=["GET"])
