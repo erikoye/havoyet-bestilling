@@ -16,7 +16,13 @@ import time
 import json
 import os
 import secrets
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
+
+
+def _now_iso_utc():
+    """ISO-timestamp med UTC-tidssone (Z-suffix). Sendes til klienter slik at
+    JS' new Date() konverterer riktig til lokal tid uavhengig av server-tidssone."""
+    return datetime.now(timezone.utc).isoformat()
 
 app = Flask(__name__)
 CORS(app)  # Tillat kall fra HTML-filer åpnet lokalt
@@ -263,7 +269,7 @@ def fetch_domstein_prisliste():
                 })
 
         _prisliste["items"]    = items
-        _prisliste["last_sync"] = datetime.now().isoformat()
+        _prisliste["last_sync"] = _now_iso_utc()
         _prisliste["error"]    = None
         _prisliste["faktura"]  = {
             "id":     siste.get("id"),
@@ -527,7 +533,7 @@ def api_orders():
     orders = _all_orders_normalized(only_paid=only_paid)
     return jsonify({
         "orders":    orders,
-        "last_sync": datetime.now().isoformat(),
+        "last_sync": _now_iso_utc(),
         "error":     None,
         "count":     len(orders),
         "source":    "havoyet.no",
@@ -551,7 +557,7 @@ def api_sync():
     return jsonify({
         "ok":        True,
         "count":     len(_manual_orders),
-        "last_sync": datetime.now().isoformat(),
+        "last_sync": _now_iso_utc(),
         "error":     None,
         "source":    "havoyet.no",
     })
@@ -561,7 +567,7 @@ def api_sync():
 def api_status():
     return jsonify({
         "source":    "havoyet.no",
-        "last_sync": datetime.now().isoformat(),
+        "last_sync": _now_iso_utc(),
         "count":     len(_manual_orders),
         "error":     None,
     })
