@@ -1382,16 +1382,31 @@ def _send_admin_telegram(chat_id, subject, body):
         return False, f"telegram-exception: {e}"
 
 
+def _sanitize_sender_id(s):
+    """Twilio Alphanumeric Sender ID må kun inneholde A-Z, 0-9, mellomrom (maks 11 tegn).
+    Konverterer norske tegn til ASCII (ø→o, æ→a, å→a) og trimmer ulovlige tegn."""
+    if not s:
+        return s
+    # Hvis det er et telefonnummer (+47…) eller starter med tall: la stå urørt.
+    if s.startswith("+") or (s and s[0].isdigit()):
+        return s
+    mapping = str.maketrans({"ø": "o", "Ø": "O", "æ": "a", "Æ": "A", "å": "a", "Å": "A"})
+    cleaned = s.translate(mapping)
+    cleaned = "".join(c for c in cleaned if c.isalnum() or c == " ")
+    return cleaned[:11]  # Twilio cap
+
+
 def _send_admin_sms(to_phone, body):
     """Send SMS via Twilio. Trimmer til 1 SMS-segment (160 tegn) for å holde
     kostnaden lav. Returnerer (ok, detail)."""
     if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM):
         return False, "twilio-not-configured"
     msg = body if len(body) <= 160 else body[:157] + "…"
+    sender = _sanitize_sender_id(TWILIO_FROM)
     try:
         r = requests.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
-            data={"From": TWILIO_FROM, "To": to_phone, "Body": msg},
+            data={"From": sender, "To": to_phone, "Body": msg},
             auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
             timeout=15,
         )
