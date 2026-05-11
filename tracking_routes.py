@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import os
 import secrets
+import threading
 import time
-from typing import Callable, Iterable
+from pathlib import Path
+from typing import Callable, Optional
 from flask import Blueprint, jsonify, request, redirect, render_template_string, abort
 
 from abax import AbaxClient, AbaxError, AbaxNotConnected
@@ -29,6 +31,11 @@ _state: dict = {
     "admin_check": None,       # Callable returns (user|None, errResp|None)
     "active_vehicle_id": None, # str — satt av admin: hvilken bil leverer i dag?
     "depot": None,             # (lat, lon) — fallback hvis bilen er offline
+    "sms_sender": None,        # Callable(phone, body) -> (ok, detail)
+    "tracking_base_url": "",   # "https://bestilling.havoyet.no" — for SMS-lenker
+    "state_dir": None,         # Path — brukes til proximity-låser
+    "notify_threshold_min": 5, # ETA-terskel for "snart fremme"-SMS
+    "watcher_started": False,
 }
 
 
@@ -40,6 +47,8 @@ def register_tracking(
     state_dir: str,
     admin_check: Callable[[], tuple],
     depot_coords: tuple[float, float] | None = None,
+    sms_sender: Optional[Callable[[str, str], tuple]] = None,
+    tracking_base_url: str = "",
 ) -> None:
     _state["client"] = AbaxClient(state_dir)
     _state["orders_ref"] = manual_orders_ref
@@ -47,7 +56,19 @@ def register_tracking(
     _state["admin_check"] = admin_check
     _state["active_vehicle_id"] = os.environ.get("ABAX_DEFAULT_VEHICLE_ID")
     _state["depot"] = depot_coords or _parse_depot()
+    _state["sms_sender"] = sms_sender
+    _state["tracking_base_url"] = (
+        tracking_base_url
+        or os.environ.get("TRACKING_PUBLIC_URL")
+        or "https://bestilling.havoyet.no"
+    ).rstrip("/")
+    _state["state_dir"] = Path(state_dir)
+    try:
+        _state["notify_threshold_min"] = int(os.environ.get("TRACKING_NOTIFY_MIN", "5"))
+    except ValueError:
+        _state["notify_threshold_min"] = 5
     app.register_blueprint(bp)
+    _start_proximity_watcher()
 
 
 def _parse_depot() -> tuple[float, float] | None:
@@ -180,7 +201,8 @@ def admin_tracking_set_active():
 
 @bp.post("/api/admin/orders/<order_id>/track-token")
 def admin_create_track_token(order_id: str):
-    """Admin trykker 'Send tracking-link' → vi genererer token og lagrer på ordren."""
+    """Admin trykker 'Start levering' → vi genererer token, sender SMS til kunden,
+    og setter watcheren til å varsle når bilen er nær fremme."""
     _, err = _admin_only()
     if err:
         return err
@@ -188,23 +210,232 @@ def admin_create_track_token(order_id: str):
     if not order:
         return jsonify({"error": "Ordre ikke funnet"}), 404
 
-    if not order.get("track_token"):
+    is_new_token = not order.get("track_token")
+    if is_new_token:
         order["track_token"] = secrets.token_urlsafe(20)
         order["track_token_created"] = int(time.time())
-    if request.json and request.json.get("vehicle_id"):
-        order["track_vehicle_id"] = request.json["vehicle_id"]
+    payload = request.get_json(silent=True) or {}
+    if payload.get("vehicle_id"):
+        order["track_vehicle_id"] = payload["vehicle_id"]
     elif _state["active_vehicle_id"]:
         order.setdefault("track_vehicle_id", _state["active_vehicle_id"])
+    # Nullstill proximity-varsel hvis vi starter en ny leveringsrunde
+    if is_new_token:
+        order.pop("proximity_notified_at", None)
+        _clear_proximity_lock(order_id)
 
     _state["save_state"]()
 
-    base = (request.host_url or "").rstrip("/")
+    base = _state["tracking_base_url"] or (request.host_url or "").rstrip("/")
+    track_url = f"{base}/track/{order_id}?token={order['track_token']}"
+
+    sms_result = {"sent": False, "detail": "skipped"}
+    if is_new_token or payload.get("force_sms"):
+        ok, detail = _send_track_link_sms(order, track_url)
+        sms_result = {"sent": ok, "detail": detail}
+
     return jsonify({
         "ok": True,
         "track_token": order["track_token"],
-        "track_url": f"{base}/track/{order_id}?token={order['track_token']}",
+        "track_url": track_url,
         "vehicle_id": order.get("track_vehicle_id"),
+        "sms": sms_result,
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Kunde-varsler: lenke-SMS + "snart fremme"-SMS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _get_customer_phone(order: dict) -> str:
+    kunde = order.get("kunde") or {}
+    raw = (
+        kunde.get("tlf")
+        or kunde.get("phone")
+        or kunde.get("phoneNumber")
+        or order.get("phone")
+        or ""
+    )
+    return str(raw).strip()
+
+
+def _sms_opt_in(order: dict) -> bool:
+    pref = (order.get("kunde") or {}).get("notify") or order.get("notify") or {}
+    return bool(pref.get("sms", True)) and not pref.get("opted_out", False)
+
+
+def _send_track_link_sms(order: dict, track_url: str) -> tuple[bool, str]:
+    sender = _state["sms_sender"]
+    if not sender:
+        return False, "no-sms-sender"
+    phone = _get_customer_phone(order)
+    if not phone:
+        return False, "no-phone"
+    if not _sms_opt_in(order):
+        return False, "opted-out"
+    nr = order.get("ordrenr") or order.get("id") or "?"
+    body = (
+        f"Havøyet: Bestilling #{nr} er på vei. "
+        f"Følg leveringen live: {track_url}"
+    )
+    try:
+        ok, detail = sender(phone, body)
+        return bool(ok), str(detail)
+    except Exception as e:
+        return False, f"sms-exception: {e}"
+
+
+def _send_proximity_sms(order: dict, minutes: int) -> tuple[bool, str]:
+    sender = _state["sms_sender"]
+    if not sender:
+        return False, "no-sms-sender"
+    phone = _get_customer_phone(order)
+    if not phone:
+        return False, "no-phone"
+    if not _sms_opt_in(order):
+        return False, "opted-out"
+    nr = order.get("ordrenr") or order.get("id") or "?"
+    unit = "minutt" if minutes == 1 else "minutter"
+    body = (
+        f"Havøyet: Sjåføren er ca. {minutes} {unit} unna med bestilling #{nr}. "
+        f"Vennligst gjør deg klar."
+    )
+    try:
+        ok, detail = sender(phone, body)
+        return bool(ok), str(detail)
+    except Exception as e:
+        return False, f"sms-exception: {e}"
+
+
+def _proximity_lock_dir() -> Path:
+    d = (_state["state_dir"] or Path("/tmp")) / "proximity_locks"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def _claim_proximity_lock(order_id: str) -> bool:
+    """Atomisk fil-opprettelse: returnerer True kun for første worker som tar låsen."""
+    flag = _proximity_lock_dir() / f"{order_id}.flag"
+    try:
+        fd = os.open(str(flag), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+    except OSError:
+        return False
+
+
+def _clear_proximity_lock(order_id: str) -> None:
+    flag = _proximity_lock_dir() / f"{order_id}.flag"
+    try:
+        flag.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Background-watcher
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _start_proximity_watcher() -> None:
+    if _state.get("watcher_started"):
+        return
+    _state["watcher_started"] = True
+    t = threading.Thread(target=_proximity_watcher_loop, name="abax-proximity", daemon=True)
+    t.start()
+
+
+def _proximity_watcher_loop() -> None:
+    """Sjekker periodisk alle aktive tracking-ordrer og sender 'snart fremme'-SMS.
+
+    Trygt på tvers av Gunicorn-workers via _claim_proximity_lock() — kun første
+    worker som klarer å lage flagg-filen sender SMS. Etter sending lagres
+    proximity_notified_at på ordren slik at vi ikke fyrer på nytt etter cooldown.
+    """
+    base_interval = 90  # sek
+    while True:
+        try:
+            _proximity_tick()
+        except Exception as e:
+            print(f"[PROXIMITY] tick feilet: {e}")
+        time.sleep(base_interval)
+
+
+def _proximity_tick() -> None:
+    client = _state.get("client")
+    orders = _state.get("orders_ref")
+    if not client or not orders:
+        return
+    if not client.is_connected():
+        return  # ingen vits — venter på OAuth
+    threshold = int(_state.get("notify_threshold_min") or 5)
+
+    # Cache vehicle-posisjoner per kall så vi ikke kaller ABAX 1x per ordre
+    pos_cache: dict[str, Optional[dict]] = {}
+
+    active = []
+    for o in (orders() or []):
+        if not isinstance(o, dict):
+            continue
+        if not o.get("track_token"):
+            continue
+        if _is_delivered(o):
+            continue
+        if o.get("proximity_notified_at"):
+            continue  # allerede varslet for denne runden
+        active.append(o)
+
+    if not active:
+        return
+
+    for order in active:
+        order_id = str(order.get("ordrenr") or order.get("id") or "")
+        if not order_id:
+            continue
+        dest = order_destination(order)
+        if not dest:
+            continue
+        vehicle_id = order.get("track_vehicle_id") or _state["active_vehicle_id"]
+        if not vehicle_id:
+            continue
+
+        if vehicle_id not in pos_cache:
+            try:
+                pos_cache[vehicle_id] = client.get_position(vehicle_id)
+            except (AbaxError, AbaxNotConnected):
+                pos_cache[vehicle_id] = None
+        position = pos_cache.get(vehicle_id)
+        if not position:
+            continue
+
+        try:
+            eta = compute_eta(position["lat"], position["lon"], dest[0], dest[1])
+        except Exception as e:
+            print(f"[PROXIMITY] ETA-feil for #{order_id}: {e}")
+            continue
+        minutes = int(round(eta.get("duration_min") or 999))
+        if minutes > threshold:
+            continue
+
+        # Vi er innenfor terskelen — prøv å ta låsen
+        if not _claim_proximity_lock(order_id):
+            continue  # en annen worker tok den
+
+        ok, detail = _send_proximity_sms(order, minutes)
+        order["proximity_notified_at"] = int(time.time())
+        order["proximity_notified_minutes"] = minutes
+        order["proximity_notified_detail"] = detail
+        try:
+            _state["save_state"]()
+        except Exception as e:
+            print(f"[PROXIMITY] save_state feilet: {e}")
+        print(f"[PROXIMITY] #{order_id}: ETA {minutes}min, SMS {'ok' if ok else 'feil'} ({detail})")
 
 
 @bp.delete("/api/admin/orders/<order_id>/track-token")
@@ -218,6 +449,10 @@ def admin_revoke_track_token(order_id: str):
     order.pop("track_token", None)
     order.pop("track_token_created", None)
     order.pop("track_vehicle_id", None)
+    order.pop("proximity_notified_at", None)
+    order.pop("proximity_notified_minutes", None)
+    order.pop("proximity_notified_detail", None)
+    _clear_proximity_lock(order_id)
     _state["save_state"]()
     return jsonify({"ok": True})
 

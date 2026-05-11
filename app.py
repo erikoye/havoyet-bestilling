@@ -7036,6 +7036,8 @@ try:
         save_state=_save_sync_state,
         state_dir=STATE_DIR,
         admin_check=_user_from_request,
+        sms_sender=_send_admin_sms,
+        tracking_base_url=os.environ.get("TRACKING_PUBLIC_URL", "https://bestilling.havoyet.no"),
     )
     print("[BOOT] Tracking-routes registrert (ABAX)")
 except Exception as _e:
