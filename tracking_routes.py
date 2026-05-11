@@ -78,15 +78,20 @@ def register_tracking(
     _start_proximity_watcher()
 
 
+# Havøyet AS, Nesttunvegen 96, 5221 Nesttun (geokodet via Nominatim).
+# Brukes hvis HAVOYET_DEPOT_COORDS-env-var ikke er satt.
+_DEFAULT_DEPOT: tuple[float, float] = (60.3184, 5.3528)
+
+
 def _parse_depot() -> tuple[float, float] | None:
     raw = os.environ.get("HAVOYET_DEPOT_COORDS")  # "60.39,5.32"
-    if not raw or "," not in raw:
-        return None
-    try:
-        lat, lon = raw.split(",", 1)
-        return float(lat.strip()), float(lon.strip())
-    except ValueError:
-        return None
+    if raw and "," in raw:
+        try:
+            lat, lon = raw.split(",", 1)
+            return float(lat.strip()), float(lon.strip())
+        except ValueError:
+            pass
+    return _DEFAULT_DEPOT
 
 
 def _client() -> AbaxClient:
@@ -149,6 +154,150 @@ def admin_tracking_status():
         "active_vehicle_id": _state["active_vehicle_id"],
         "depot": _state["depot"],
     })
+
+
+@bp.get("/api/admin/tracking/diagnose")
+def admin_tracking_diagnose():
+    """Helt-systemets-helse-sjekk — hver komponent rapporterer ok/feil/mangler.
+
+    Brukes av tracking-admin-siden til å vise en sjekkliste så admin ser
+    nøyaktig hva som mangler før brikken kan spores.
+    """
+    _, err = _admin_only()
+    if err:
+        return err
+
+    checks: list[dict] = []
+    overall_ready = True
+
+    def add(name: str, ok: bool, detail: str = "", action: str = "", critical: bool = True):
+        nonlocal overall_ready
+        if critical and not ok:
+            overall_ready = False
+        checks.append({"name": name, "ok": ok, "detail": detail, "action": action,
+                       "critical": critical})
+
+    # 1) ABAX env-vars
+    client = _client()
+    missing_env = []
+    for key in ("ABAX_CLIENT_ID", "ABAX_CLIENT_SECRET", "ABAX_REDIRECT_URI"):
+        if not os.environ.get(key):
+            missing_env.append(key)
+    add(
+        "ABAX-kreds satt",
+        not missing_env,
+        detail="Alle env-vars OK" if not missing_env else f"Mangler: {', '.join(missing_env)}",
+        action="Sett env-vars i Render-dashboard → Environment",
+    )
+
+    # 2) OAuth gjennomført?
+    connected = client.is_connected()
+    add(
+        "OAuth-tilkoblet ABAX",
+        connected,
+        detail="Tokens lagret" if connected else "Ingen tokens — OAuth ikke gjennomført",
+        action='Trykk "Koble til" på denne siden',
+    )
+
+    # 3) Vehicles tilgjengelige (kun hvis OAuth er gjort)
+    vehicles_count = 0
+    vehicles_ok = False
+    vehicles_detail = "Hopper over — OAuth ikke gjort"
+    if connected:
+        try:
+            vehicles = client.list_vehicles()
+            vehicles_count = len(vehicles)
+            vehicles_ok = vehicles_count > 0
+            vehicles_detail = f"{vehicles_count} kjøretøy funnet på kontoen" if vehicles_ok else (
+                "0 kjøretøy — brikken er sannsynligvis ikke tildelt enda i ABAX-portalen"
+            )
+        except (AbaxError, AbaxNotConnected) as e:
+            vehicles_detail = f"API-feil: {e}"
+    add(
+        "Kjøretøy hos ABAX",
+        vehicles_ok,
+        detail=vehicles_detail,
+        action='I ABAX-portalen: trykk "KOBLE TIL" på brikken for å tildele kjøretøy',
+    )
+
+    # 4) Aktiv bil valgt
+    active = bool(_state["active_vehicle_id"])
+    add(
+        "Aktiv bil valgt",
+        active,
+        detail=f"Aktiv vehicleId: {_state['active_vehicle_id']}" if active else "Ingen bil valgt",
+        action="Velg fra dropdown nedenfor",
+    )
+
+    # 5) Test live-posisjon (mest tellende — viser om brikken faktisk sender data)
+    pos_ok = False
+    pos_detail = "Hopper over — aktiv bil ikke valgt"
+    if active and connected:
+        try:
+            pos = client.get_position(_state["active_vehicle_id"])
+            if pos and pos.get("lat") is not None:
+                pos_ok = True
+                pos_detail = (f"Sist sett: lat={pos['lat']:.5f}, "
+                              f"lon={pos['lon']:.5f}"
+                              + (f" ({pos.get('timestamp', '?')})" if pos.get("timestamp") else ""))
+            else:
+                pos_detail = (
+                    "ABAX svarer, men brikken har ikke rapportert posisjon ennå "
+                    "(monter brikken i OBD-port + kjør 5-10 min)"
+                )
+        except (AbaxError, AbaxNotConnected) as e:
+            pos_detail = f"API-feil: {e}"
+    add(
+        "Brikke rapporterer posisjon",
+        pos_ok,
+        detail=pos_detail,
+        action="Plugg brikken i OBD-porten og kjør en kort tur",
+    )
+
+    # 6) Depot satt
+    depot = _state["depot"]
+    add(
+        "Depot konfigurert",
+        bool(depot),
+        detail=f"lat={depot[0]:.4f}, lon={depot[1]:.4f}" if depot else "Mangler",
+        action="Sett HAVOYET_DEPOT_COORDS env-var (eller bruk standard Nesttun)",
+        critical=False,
+    )
+
+    # 7) SMS-sender koblet
+    sms_ready = bool(_state.get("sms_sender"))
+    add(
+        "SMS-sender klar",
+        sms_ready,
+        detail="Kobling til app.py _send_admin_sms OK" if sms_ready else "Ikke koblet",
+        action="Sjekk at register_tracking() får sms_sender=_send_admin_sms",
+        critical=False,
+    )
+
+    # 8) Driver-PIN satt
+    driver_pin = os.environ.get("DRIVER_PIN", "")
+    pin_ok = bool(driver_pin and len(driver_pin) >= 4)
+    add(
+        "Sjåfør-PIN satt",
+        pin_ok,
+        detail="Satt (sjåfør-app fungerer)" if pin_ok else "Ikke satt — sjåfør-app vil avvise login",
+        action="Sett DRIVER_PIN env-var på Render (4+ tegn)",
+        critical=False,
+    )
+
+    return jsonify({
+        "ready_for_tracking": overall_ready,
+        "checks": checks,
+        "next_action": _next_action(checks),
+    })
+
+
+def _next_action(checks: list[dict]) -> str:
+    """Returnerer instruksjonen for første ufullførte kritiske sjekk."""
+    for c in checks:
+        if c.get("critical") and not c.get("ok"):
+            return c.get("action") or c.get("name", "")
+    return "Alt klart — du kan begynne å spore ordrer!"
 
 
 @bp.post("/api/admin/tracking/connect")

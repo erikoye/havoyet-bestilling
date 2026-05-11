@@ -48,6 +48,23 @@
   <a href="/rute" class="btn btn-primary" style="text-decoration:none;display:inline-block">→ Dagens leveringsrute</a>
 </div>
 
+<!-- SJEKKLISTE — full helse-rapport -->
+<div class="card" id="diagnose-card">
+  <h2>Klar for sporing?</h2>
+  <div id="ready-banner" style="padding:10px 14px;border-radius:8px;margin-bottom:10px;
+                                 font-weight:600;background:#FFF3CD;color:#856404;
+                                 border:1px solid #FFE69C">
+    Sjekker …
+  </div>
+  <ul id="diagnose-list" style="list-style:none;padding:0;margin:0">
+    <li class="muted">Henter diagnose …</li>
+  </ul>
+  <p class="muted" style="margin-top:10px;font-size:12px">
+    Sjekklisten oppdateres automatisk når du gjør endringer.
+    Verdier i grønt er klare — gult/rødt mangler.
+  </p>
+</div>
+
 <!-- Status-kort -->
 <div class="card">
   <h2>Tilkobling</h2>
@@ -231,7 +248,54 @@
     navigator.clipboard.writeText(inp.value).then(() => toast("Kopiert", "ok"));
   };
 
+  // ── Diagnose-panel ────────────────────────────────────────────────
+  async function refreshDiagnose() {
+    const r = await api("/api/admin/tracking/diagnose");
+    if (!r.ok) {
+      $("diagnose-list").innerHTML = `<li class="muted">Kunne ikke hente diagnose</li>`;
+      return;
+    }
+    const d = r.data;
+    const banner = $("ready-banner");
+    if (d.ready_for_tracking) {
+      banner.style.background = "#D1F2DD";
+      banner.style.color = "#1F6B43";
+      banner.style.borderColor = "#A6E6BD";
+      banner.textContent = "✓ Alt klart — du kan begynne å spore ordrer nå!";
+    } else {
+      banner.style.background = "#FFF3CD";
+      banner.style.color = "#856404";
+      banner.style.borderColor = "#FFE69C";
+      banner.textContent = "Neste steg: " + (d.next_action || "");
+    }
+    $("diagnose-list").innerHTML = d.checks.map(c => {
+      const icon = c.ok ? "✓" : (c.critical ? "✗" : "○");
+      const color = c.ok ? "#2F7A4F" : (c.critical ? "#B33A3A" : "#C8A45C");
+      return `
+        <li style="padding:8px 0;border-bottom:1px solid var(--line);
+                   display:flex;gap:10px;align-items:flex-start">
+          <span style="color:${color};font-weight:700;font-size:16px;flex:0 0 20px">${icon}</span>
+          <div style="flex:1">
+            <div style="font-weight:600;color:${c.ok ? 'var(--ink)' : color}">
+              ${c.name}${c.critical ? "" : " <span style='color:var(--soft);font-weight:400;font-size:11px'>(valgfritt)</span>"}
+            </div>
+            <div style="font-size:12px;color:var(--soft);margin-top:2px">${c.detail || ""}</div>
+            ${!c.ok ? `<div style="font-size:12px;color:${color};margin-top:3px;font-style:italic">→ ${c.action}</div>` : ""}
+          </div>
+        </li>`;
+    }).join("");
+  }
+
+  // Hver gang status oppdateres, oppdater diagnose også
+  const _origRefreshStatus = refreshStatus;
+  refreshStatus = async () => {
+    await _origRefreshStatus();
+    await refreshDiagnose();
+  };
+
   refreshStatus();
+  // Auto-refresh hvert 20s mens admin har siden åpen
+  setInterval(refreshDiagnose, 20000);
 </script>
 </body>
 </html>
