@@ -328,7 +328,14 @@ _DRIVER_HOST_MARKERS = ("rute.", "sjåfør", "xn--sjfr-zra", "sjafor.")
 
 
 def _is_driver_host() -> bool:
-    host = (request.host or "").lower()
+    # Vercel proxies bestilling/rute.havoyet.no → Render og bytter Host-headeren
+    # til onrender.com-targetet. Vi må derfor sjekke X-Forwarded-Host først (den
+    # bevares av Vercel) og falle tilbake til request.host for direkte tilkobling.
+    host = (
+        request.headers.get("X-Forwarded-Host")
+        or request.host
+        or ""
+    ).lower()
     return any(m in host for m in _DRIVER_HOST_MARKERS)
 
 
