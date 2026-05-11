@@ -326,6 +326,101 @@ def serve_static(filename):
 _VIPPS_PAID_STATES   = {"AUTHORIZED", "CAPTURED", "CHARGED", "COMPLETED", "RESERVED"}
 _STRIPE_PAID_STATES  = {"PAID"}
 
+def _build_product_cost_map():
+    """Bygg {navn_lc: {price, cost, ratio}} fra baseline + overrides.
+    Brukes til kost-beregning i økonomi-stats. ratio = cost/price så vi kan
+    beregne linje-kost proporsjonalt fra linje-pris (uavhengig av enhet)."""
+    try:
+        products = _get_products_baseline()
+    except Exception:
+        products = []
+    overrides = _product_overrides or {}
+    out = {}
+    seen_slugs = set()
+    for p in products:
+        slug = p.get("slug")
+        if slug:
+            seen_slugs.add(slug)
+        ov = overrides.get(slug, {})
+        merged = {**p, **(ov if isinstance(ov, dict) else {})}
+        name = (merged.get("name") or "").strip().lower()
+        try:
+            price = float(merged.get("price") or 0)
+            cost  = float(merged.get("cost") or 0)
+        except (TypeError, ValueError):
+            continue
+        if name and price > 0 and cost > 0:
+            out[name] = {"price": price, "cost": cost, "ratio": cost / price}
+    # Overrides-only-produkter (auto-opprettet via Excel-import)
+    for slug, ov in overrides.items():
+        if slug in seen_slugs or not isinstance(ov, dict):
+            continue
+        name = (ov.get("name") or "").strip().lower()
+        if not name:
+            continue
+        try:
+            price = float(ov.get("price") or 0)
+            cost  = float(ov.get("cost") or 0)
+        except (TypeError, ValueError):
+            continue
+        if price > 0 and cost > 0 and name not in out:
+            out[name] = {"price": price, "cost": cost, "ratio": cost / price}
+    return out
+
+
+def _order_cost_kr(order, cost_map):
+    """Beregn innkjøpskostnad for én ordre ved å bruke proporsjonal metode:
+    linje_kost = linje.pris × (produkt.cost / produkt.price). Returnerer 0
+    hvis produktet mangler kost-data."""
+    if not isinstance(order, dict):
+        return 0.0
+    items = order.get("varer") or order.get("prods") or order.get("items") or []
+    if not isinstance(items, list):
+        return 0.0
+    total = 0.0
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        name = (it.get("name") or it.get("navn") or it.get("title") or "").strip().lower()
+        info = cost_map.get(name)
+        if not info:
+            continue
+        # Linje-pris: foretrekk lagret 'pris', ellers qty * price
+        line_price = it.get("pris")
+        if line_price is None:
+            try:
+                qty = float(it.get("qty") or it.get("quantity") or 1)
+                unit_price = float(it.get("price") or 0)
+                line_price = qty * unit_price
+            except (TypeError, ValueError):
+                line_price = 0
+        try:
+            line_price = float(line_price)
+        except (TypeError, ValueError):
+            line_price = 0.0
+        if line_price > 0:
+            total += line_price * info["ratio"]
+    return total
+
+
+def _settled_ordrenrs():
+    """Ordre-numre som er "oppgjort" — paid ELLER free. Brukes for kost-
+    beregning (gratis-ordre koster oss like mye uansett om vi fakturerer)."""
+    out = set(_paid_ordrenrs())
+    try:
+        for o in (_manual_orders or []):
+            if not isinstance(o, dict):
+                continue
+            ps = (o.get("paymentStatus") or "").lower()
+            if ps == "free":
+                ordrenr = str(o.get("ordrenr") or o.get("id") or "").strip()
+                if ordrenr:
+                    out.add(ordrenr)
+    except Exception:
+        pass
+    return out
+
+
 def _paid_ordrenrs():
     """Returnerer settet av ordrenumre som har bekreftet betaling.
     Tre kilder:
@@ -3147,10 +3242,16 @@ def _api_economy_stats_impl():
         # Inkluderer fremtidige datoer ikke (forhindrer at typo/feil-data blåser opp ukens-tall)
         return since <= d <= today
 
-    # Nettside-ordre (kun betalte teller)
+    # Nettside-ordre (kun betalte teller for omsetning, men "oppgjort" =
+    # paid+free teller for innkjøpskost — gratis-ordre koster oss like mye)
     paid_set = _paid_ordrenrs()
+    settled_set = _settled_ordrenrs()
     web_orders = [o for o in _manual_orders
                   if str(o.get("ordrenr") or o.get("id")) in paid_set]
+    cost_orders = [o for o in _manual_orders
+                   if str(o.get("ordrenr") or o.get("id")) in settled_set]
+    # Bygg kost-map én gang for å unngå å iterere produktlisten per ordre
+    _cost_map = _build_product_cost_map()
     def _order_total_kr(o):
         try:
             return float(o.get("sum") or o.get("total") or 0)
@@ -3230,6 +3331,17 @@ def _api_economy_stats_impl():
     period_vipps_kr = sum((r.get("amount_ore") or 0) for r in vipps_period_rows) / 100.0
     period_card_kr  = sum(_card_signed_kr(r) for r in card_period_rows)
     period_total_kr = period_web_kr + period_vipps_kr + period_card_kr
+
+    # === INNKJØPSKOST ===
+    # Telles på alle "oppgjorte" ordrer (paid + free), uavhengig av kilde-rad
+    # i Vipps/kort-CSV (de har ingen item-data å regne på). Hvis kunden har
+    # paid en ordre med ID som matches via paid_set, er den allerede med.
+    period_cost_rows = [o for o in cost_orders if _in_period(_order_date(o))]
+    period_cost_kr = sum(_order_cost_kr(o, _cost_map) for o in period_cost_rows)
+    cost_total_year  = sum(_order_cost_kr(o, _cost_map) for o in cost_orders if _in_range(_order_date(o), start_year))
+    cost_total_month = sum(_order_cost_kr(o, _cost_map) for o in cost_orders if _in_range(_order_date(o), start_month))
+    cost_total_week  = sum(_order_cost_kr(o, _cost_map) for o in cost_orders if _in_range(_order_date(o), start_week))
+    cost_total_today = sum(_order_cost_kr(o, _cost_map) for o in cost_orders if _parse_date(_order_date(o)) == today)
     # Snitt-ordresum for valgt periode
     period_charge_count = len(web_period_rows) + len(vipps_period_rows) + len(card_period_charges)
     period_avg_kr = (period_total_kr / period_charge_count) if period_charge_count > 0 else 0.0
@@ -3286,6 +3398,8 @@ def _api_economy_stats_impl():
             "card_count":       len(card_period_rows),
             "avg_kr":           round(period_avg_kr, 2),
             "total_count":      period_charge_count,
+            "cost_kr":          round(period_cost_kr, 2),
+            "cost_count":       len(period_cost_rows),
         },
         "by_year": by_year_out,
         "totals": {
@@ -3294,6 +3408,13 @@ def _api_economy_stats_impl():
             "this_week_kr": round(grand_total_week, 2),
             "this_month_kr": round(grand_total_month, 2),
             "this_year_kr":  round(grand_total_year, 2),
+        },
+        "cost": {
+            "this_year_kr":  round(cost_total_year, 2),
+            "this_month_kr": round(cost_total_month, 2),
+            "this_week_kr":  round(cost_total_week, 2),
+            "today_kr":      round(cost_total_today, 2),
+            "settled_count": len(cost_orders),
         },
         "web": {
             "count":          len(web_orders),
