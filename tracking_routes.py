@@ -886,15 +886,18 @@ def _parse_slot_start_min(slot_str: str) -> int:
 
 
 def _parse_slot_end_min(slot_str: str) -> int:
-    """Returnerer slot-slutt i minutter siden midnatt. 9999 hvis ikke gyldig."""
+    """Returnerer slot-slutt i minutter siden midnatt. 9999 hvis ikke gyldig.
+    Støtter "13-15", "13–15", "13:00-15:00", "13.00-15.00"."""
     import re
     if not slot_str:
         return 9999
-    # Match siste tall i strengen (slot-slutt) — håndterer både "13-15", "13–15", "13:00-15:00"
-    nums = re.findall(r"(\d{1,2})", str(slot_str))
-    if len(nums) < 2:
+    parts = re.split(r"[-–—]", str(slot_str), maxsplit=1)
+    if len(parts) < 2:
         return 9999
-    h = int(nums[-2])  # antar formatet "Hstart-Hslutt" eller "Hstart:Mstart-Hslutt:Mslutt"
+    m = re.match(r"\s*(\d{1,2})", parts[1])
+    if not m:
+        return 9999
+    h = int(m.group(1))
     if 0 <= h <= 23:
         return h * 60
     return 9999
