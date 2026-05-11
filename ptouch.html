@@ -474,6 +474,43 @@ let PACKING = {};
 let TEMPLATES = [];
 
 // ─── DATAHENTING ────────────────────────────────────
+// Normaliser raw manual-order (varer/kunde-form) til iPad-shape (items/customer)
+// så p-touch-listen alltid har konsistente felt uansett kilde.
+function _ptouchNormalizeRaw(o) {
+  if (!o || typeof o !== 'object') return null;
+  // Allerede normalisert (har id+customer+items) → returner som-er
+  if (o.id && o.customer && Array.isArray(o.items)) return o;
+  const k = o.kunde || {};
+  const varer = Array.isArray(o.varer) ? o.varer : (Array.isArray(o.items) ? o.items : []);
+  const items = varer.map(v => {
+    let variantStr = v.variant || v.variantStr || v.variantLabel || '';
+    if (!variantStr && v.selectedOpts && typeof v.selectedOpts === 'object') {
+      variantStr = Object.values(v.selectedOpts).filter(Boolean).join(' · ');
+    }
+    return {
+      name: v.name || v.navn || v.title || '',
+      productName: v.productName || v.name || v.navn || '',
+      variantStr, variantLabel: v.variantLabel || '',
+      qty: Number(v.qty || v.quantity || 1),
+      quantity: Number(v.qty || v.quantity || 1),
+      unit: v.unit || '', price: Number(v.price || 0), pris: Number(v.pris || 0),
+      grams: v.grams || 0, kind: v.kind || '',
+    };
+  });
+  return {
+    ...o,
+    id:        o.id || o.ordrenr || '',
+    customer:  o.customer || k.navn || k.name || 'Ukjent',
+    phone:     o.phone || k.tlf || k.phone || '',
+    email:     o.email || k.epost || k.email || '',
+    delivery:  o.delivery || k.leveringsdag || '',
+    slot:      o.slot || k.leveringstid || '',
+    status:    o.status || 'NEW',
+    paymentStatus: o.paymentStatus || '',
+    items,
+  };
+}
+
 async function loadOrders() {
   try {
     const [or, mo, ps] = await Promise.all([
@@ -483,9 +520,15 @@ async function loadOrders() {
     ]);
     PACKING = ps || {};
     const list = [];
-    (or.orders || []).forEach(o => list.push(o));
+    (or.orders || []).forEach(o => {
+      const n = _ptouchNormalizeRaw(o);
+      if (n) list.push(n);
+    });
     (Array.isArray(mo) ? mo : (mo.orders || [])).forEach(o => {
-      if (!list.find(x => String(x.id) === String(o.id || o.ordrenr))) list.push(o);
+      const candId = String(o.id || o.ordrenr || '');
+      if (!candId || list.find(x => String(x.id) === candId)) return;
+      const n = _ptouchNormalizeRaw(o);
+      if (n) list.push(n);
     });
     ORDERS = list;
   } catch (e) {

@@ -533,7 +533,17 @@ def _all_orders_normalized(only_paid=True):
         for o in _manual_orders:
             ordrenr  = str(o.get("ordrenr") or o.get("id") or "")
             status   = (o.get("status") or "").upper()
-            is_paid  = ordrenr in paid or status in ("PAID", "PAID_OUT")
+            ps_norm  = (o.get("paymentStatus") or "").lower()
+            # Match admin-logikken: en ordre regnes som "oppgjort" (synlig for
+            # staff/p-touch/pakke-iPad) med mindre paymentStatus eksplisitt sier
+            # ubetalt. Tomt felt eller "free" → vises. Det hindrer at admin og
+            # bestillingsside viser ulikt sett ordrer.
+            is_unpaid_explicit = ps_norm in ("unpaid", "pending", "awaiting_payment")
+            is_paid  = (
+                ordrenr in paid
+                or status in ("PAID", "PAID_OUT")
+                or (not is_unpaid_explicit and ps_norm in ("paid", "free", ""))
+            )
             # Sjekk både "source" og "kilde" — historiske Shopify-imports bruker "kilde",
             # mens nye webbestillinger fra havoyet.no/kasse setter "source".
             kilde    = (o.get("kilde") or "").lower()
@@ -545,6 +555,8 @@ def _all_orders_normalized(only_paid=True):
                 or "import" in kilde
                 or kilde.startswith("admin")
             )
+            # Ubetalte admin-fakturaer skal også med i staff-listen (ikke i
+            # omsetning, men vi pakker og leverer dem). is_staff fanger dem opp.
             if is_paid or is_staff:
                 source.append(o)
     else:
