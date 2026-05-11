@@ -1020,7 +1020,7 @@ _SIGNATURE_HTML = """
       Nettside: <a href="https://www.havoyet.no" style="color:#1d6fc9;text-decoration:none;">www.havoyet.no</a>
     </p>
     <p style="margin:14px 0 16px 0;font-style:italic;">Fersk fisk og skalldyr levert hjem i Bergen</p>
-    <a href="https://www.havoyet.no" style="text-decoration:none;display:inline-block;"><img src="https://admin.havoyet.no/assets/logo-brand.png" alt="Havøyet" width="220" style="display:block;max-width:220px;height:auto;border:0;" /></a>
+    <a href="https://www.havoyet.no" style="text-decoration:none;display:inline-block;"><img src="https://admin.havoyet.no/assets/logo-email.png" alt="Havøyet — Bare fersk sjømat" width="240" style="display:block;max-width:240px;height:auto;border:0;" /></a>
   </td></tr>
 </table>
 """
