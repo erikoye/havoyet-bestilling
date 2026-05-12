@@ -577,6 +577,15 @@
       margin-left: 2px;
     }
     .chip-revert:hover { background: #fff; border-color: rgba(0,0,0,0.2); }
+    .btn-reset {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--muted); font-size: 11px; font-weight: 600;
+      padding: 4px 10px; border-radius: 999px; cursor: pointer;
+      font-family: 'DM Sans', sans-serif; line-height: 1.3;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      flex-shrink: 0; white-space: nowrap;
+    }
+    .btn-reset:hover { background: #fff; color: var(--dark); border-color: rgba(0,0,0,0.2); }
     .repl-price {
       font-size: 11px; font-weight: 500; opacity: 0.75;
     }
@@ -2012,6 +2021,7 @@ function renderItemCard(item, i, s) {
         <button class="${chipClass('unsure')}" onclick="setAvail('${currentOrderId}',${i},'unsure')">Avventer fiskebåt</button>
         <button class="${chipClass('no')}"     onclick="setAvail('${currentOrderId}',${i},'no')">Ikke tilgjengelig</button>
       </div>
+      <button class="btn-reset" title="Sett tilbake til original vare og Tilgjengelig" onclick="resetItem('${currentOrderId}',${i})">↶ Tilbakestill</button>
     </div>
 
     <div class="item-fields ${fieldsVisible}" id="fields-${i}">
@@ -2136,6 +2146,7 @@ function renderComponentCard(c, i, ci) {
         <button class="${chipClass('unsure')}" onclick="setComponentAvail('${currentOrderId}',${i},${ci},'unsure')">Avventer fiskebåt</button>
         <button class="${chipClass('no')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'no')">Ikke tilgjengelig</button>
       </div>
+      <button class="btn-reset" title="Sett tilbake til original komponent og Tilgjengelig" onclick="resetComponent('${currentOrderId}',${i},${ci})">↶ Tilbakestill</button>
     </div>
     <div class="item-fields ${fieldsVisible}">
       <div class="field-group">
@@ -2369,6 +2380,24 @@ function revertComponentReplacement(orderId, i, ci) {
   saveState();
 }
 
+// Tilbakestiller komponenten: original ingrediens, status 'Tilgjengelig', og fjerner
+// alle erstatningsforslag og vekt/holdbarhet.
+function resetComponent(orderId, i, ci) {
+  const entry = STATE[orderId] && STATE[orderId][i];
+  if (!entry || !entry.isKasse) return;
+  const c = entry.components && entry.components[ci];
+  if (!c) return;
+  c.avail = 'ok';
+  c.confirmedReplacement = null;
+  c.suggestedReplacement = null;
+  c.replacements = [];
+  c.weight = '';
+  c.expiry = '';
+  saveState();
+  renderDetail();
+  updateToolbar();
+}
+
 // Pakke foreslår en erstatning til admin. Admin må deretter bekrefte (eller avslå)
 // fra ordre-drawer på admin.havoyet.no — først da blir det confirmedReplacement og
 // pris-justering legges til ordren.
@@ -2456,6 +2485,21 @@ function setAvail(orderId, i, val) {
   renderDetail();
   updateToolbar();
   if (val !== 'ok') setTimeout(() => { const el = document.getElementById('search-'+i); if(el) el.focus(); }, 50);
+}
+
+// Tilbakestiller hele varen: original vare, status 'Tilgjengelig', og fjerner alle
+// foreslåtte/bekreftede erstatninger samt vekt/holdbarhet.
+function resetItem(orderId, i) {
+  const s = STATE[orderId] && STATE[orderId][i];
+  if (!s) return;
+  s.avail = 'ok';
+  s.confirmedReplacement = null;
+  s.replacements = [];
+  s.weight = '';
+  s.expiry = '';
+  saveState();
+  renderDetail();
+  updateToolbar();
 }
 
 function onFieldChange(orderId, i, field, val) {
