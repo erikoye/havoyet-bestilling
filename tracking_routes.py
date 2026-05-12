@@ -975,10 +975,63 @@ def _compute_earliest_start(stops: list[dict]) -> tuple[int, int] | None:
     return (minutes // 60, minutes % 60)
 
 
-def _annotate_clock_times(stops: list[dict], start_clock: tuple[int, int] | None = None) -> tuple[int, int]:
+def _normalize_breaks(breaks_raw) -> list[dict]:
+    """Validerer breaks-list. Format: [{after_order_id, minutes, label?}].
+    after_order_id == 'depot' = pause før første stopp.
+    """
+    out: list[dict] = []
+    if not isinstance(breaks_raw, list):
+        return out
+    for br in breaks_raw:
+        if not isinstance(br, dict):
+            continue
+        anchor = str(br.get("after_order_id") or "").strip()
+        if not anchor:
+            continue
+        try:
+            mins = int(br.get("minutes") or 0)
+        except (TypeError, ValueError):
+            mins = 0
+        if mins <= 0:
+            continue
+        item = {"after_order_id": anchor, "minutes": mins}
+        label = str(br.get("label") or "").strip()
+        if label:
+            item["label"] = label[:40]
+        out.append(item)
+    return out
+
+
+def _break_min_before_stop(stop_zero_idx: int, breaks_list: list[dict], stops: list[dict]) -> int:
+    """Returnerer akkumulerte pause-minutter som skjer FØR stoppet på indeks i.
+    `after_order_id == 'depot'` = før første stopp (legges til alle).
+    `after_order_id == X` = etter stopp X's avgang, så påvirker alle senere.
+    """
+    if not breaks_list:
+        return 0
+    total = 0
+    for br in breaks_list:
+        anchor = str(br.get("after_order_id") or "")
+        mins = int(br.get("minutes") or 0)
+        if mins <= 0:
+            continue
+        if anchor == "depot":
+            total += mins
+            continue
+        anchor_idx = next(
+            (i for i, s in enumerate(stops) if str(s.get("order_id")) == anchor),
+            None,
+        )
+        if anchor_idx is not None and anchor_idx < stop_zero_idx:
+            total += mins
+    return total
+
+
+def _annotate_clock_times(stops: list[dict], start_clock: tuple[int, int] | None = None,
+                          breaks: list[dict] | None = None) -> tuple[int, int]:
     """Setter `arrival_clock`, `departure_clock`, `late`-felter på hver stopp.
 
-    arrival_clock = avreise + cum_min_from_depot (kjøretid)
+    arrival_clock = avreise + cum_min_from_depot (kjøretid) + dwell + pauser før stoppet
     departure_clock = arrival + _DWELL_MIN
     late = True hvis arrival er etter slot-slutt
 
@@ -991,13 +1044,16 @@ def _annotate_clock_times(stops: list[dict], start_clock: tuple[int, int] | None
         start_clock = _compute_earliest_start(stops) or _DEFAULT_START
     start_h, start_m = start_clock
     start_total = start_h * 60 + start_m
+    breaks_list = breaks or []
     cum_drive = 0.0
-    for s in stops:
+    for i, s in enumerate(stops):
         cum_drive += float(s.get("leg_min") or 0)
         arrival_min = start_total + cum_drive
         # Legg på dwell-tid for tidligere stopp (alle utenom dette)
         prev_dwells = (s.get("stop_index", 1) - 1) * _DWELL_MIN
         arrival_min += prev_dwells
+        # Legg på pauser som ligger før dette stoppet
+        arrival_min += _break_min_before_stop(i, breaks_list, stops)
         s["arrival_clock"] = _min_to_clock(arrival_min)
         s["departure_clock"] = _min_to_clock(arrival_min + _DWELL_MIN)
         slot_end = _parse_slot_end_min(s.get("leveringstid", ""))
@@ -1085,7 +1141,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
         # Auto-beregn tidligst mulig avreise + klokkeslett-annotering
         start_clock_hint = day_state.get("start_clock") if isinstance(day_state, dict) else None
         clock_override = _parse_start_clock_hint(start_clock_hint)
-        used_clock = _annotate_clock_times(ordered_stops, clock_override)
+        breaks_list = _normalize_breaks(day_state.get("breaks"))
+        used_clock = _annotate_clock_times(ordered_stops, clock_override, breaks_list)
         return {
             "date": date_iso,
             "depot": {"lat": depot[0], "lon": depot[1]},
@@ -1098,6 +1155,7 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "approved_at": day_state.get("approved_at"),
             "start_clock": f"{used_clock[0]:02d}:{used_clock[1]:02d}",
             "dwell_min": _DWELL_MIN,
+            "breaks": breaks_list,
             "unresolved": unresolved,
         }
 
@@ -1135,7 +1193,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
         # unngår FOR TIDLIG-stopp. Dette gjør at endringer på leveringstid i
         # en bestilling automatisk gir ny avreisetid neste gang ruten hentes.
         clock = _parse_start_clock_hint(start_clock_hint)
-        clock = _annotate_clock_times(slot_stops, clock)
+        breaks_list = _normalize_breaks(day_state.get("breaks"))
+        clock = _annotate_clock_times(slot_stops, clock, breaks_list)
 
         # Hent geometri i fast rekkefølge fra Google (én ekstra call, billig)
         geometry = None
@@ -1157,6 +1216,7 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "approved_at": day_state.get("approved_at"),
             "start_clock": f"{clock[0]:02d}:{clock[1]:02d}",
             "dwell_min": _DWELL_MIN,
+            "breaks": breaks_list,
             "unresolved": unresolved,
         }
 
@@ -1182,7 +1242,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             }
             ordered_stops.append(stop)
         clock_override = _parse_start_clock_hint(day_state.get("start_clock") if isinstance(day_state, dict) else None)
-        used_clock = _annotate_clock_times(ordered_stops, clock_override)
+        breaks_list = _normalize_breaks(day_state.get("breaks"))
+        used_clock = _annotate_clock_times(ordered_stops, clock_override, breaks_list)
         return {
             "date": date_iso,
             "depot": {"lat": depot[0], "lon": depot[1]},
@@ -1195,6 +1256,7 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "approved_at": day_state.get("approved_at"),
             "start_clock": f"{used_clock[0]:02d}:{used_clock[1]:02d}",
             "dwell_min": _DWELL_MIN,
+            "breaks": breaks_list,
             "unresolved": unresolved,
         }
 
@@ -1214,7 +1276,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
         })
         prev = (s["lat"], s["lon"])
     clock_override = _parse_start_clock_hint(day_state.get("start_clock") if isinstance(day_state, dict) else None)
-    used_clock = _annotate_clock_times(fallback_stops, clock_override)
+    breaks_list = _normalize_breaks(day_state.get("breaks"))
+    used_clock = _annotate_clock_times(fallback_stops, clock_override, breaks_list)
     return {
         "date": date_iso,
         "depot": {"lat": depot[0], "lon": depot[1]},
@@ -1227,6 +1290,7 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
         "approved_at": day_state.get("approved_at"),
         "start_clock": f"{used_clock[0]:02d}:{used_clock[1]:02d}",
         "dwell_min": _DWELL_MIN,
+        "breaks": breaks_list,
         "unresolved": unresolved,
     }
 
@@ -1265,6 +1329,45 @@ def admin_route_reorder():
         "approved_at": None,
         "reordered_at": int(time.time()),
     })
+    return jsonify({"ok": True, "date": date_iso})
+
+
+@bp.post("/api/admin/tracking/route/schedule")
+def admin_route_schedule():
+    """Setter start-tid (første ankomst) og pauser mellom stopp for dato.
+
+    Body (alt valgfritt — det som ikke sendes lar nåværende verdi stå):
+      - date: "YYYY-MM-DD" (default: i dag)
+      - start_clock: "HH:MM" — avreise fra depot
+      - breaks: [{after_order_id, minutes, label?}, ...]
+        after_order_id == 'depot' = pause før første stopp
+      - clear_start: bool — nullstill manuell start_clock (auto-beregn igjen)
+
+    Endringer nullstiller godkjenningen.
+    """
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    updates: dict = {"approved": False, "approved_at": None}
+
+    if data.get("clear_start"):
+        updates["start_clock"] = None
+    elif "start_clock" in data:
+        sc = (data.get("start_clock") or "").strip()
+        if sc:
+            parsed = _parse_start_clock_hint(sc)
+            if not parsed:
+                return jsonify({"error": "start_clock must be HH:MM"}), 400
+            updates["start_clock"] = f"{parsed[0]:02d}:{parsed[1]:02d}"
+        else:
+            updates["start_clock"] = None
+
+    if "breaks" in data:
+        updates["breaks"] = _normalize_breaks(data.get("breaks"))
+
+    _set_day_state(date_iso, updates)
     return jsonify({"ok": True, "date": date_iso})
 
 
@@ -1346,8 +1449,12 @@ def admin_route_approve():
 
     start_hh, start_mm = _parse_start_time(start_time_arg, stops)
     base = (_state["tracking_base_url"] or "").rstrip("/")
+    # Persist start_clock + breaks så refresh viser samme tider, og senere
+    # /today-kall regner med samme avreise og pauser.
+    breaks_list = _normalize_breaks(_get_day_state(date_iso).get("breaks"))
+    _set_day_state(date_iso, {"start_clock": f"{start_hh:02d}:{start_mm:02d}"})
 
-    for stop in stops:
+    for i, stop in enumerate(stops):
         order_id = str(stop.get("order_id") or "")
         order = _find_order(order_id)
         if not order:
@@ -1361,7 +1468,11 @@ def admin_route_approve():
         order.pop("proximity_notified_at", None)
         _clear_proximity_lock(order_id)
 
-        eta_clock = _eta_clock_for_stop(start_hh, start_mm, stop.get("cum_min_from_depot") or 0)
+        # ETA = kjøretid + dwell for tidligere stopp + pauser før dette stoppet
+        cum = float(stop.get("cum_min_from_depot") or 0)
+        cum += i * _DWELL_MIN
+        cum += _break_min_before_stop(i, breaks_list, stops)
+        eta_clock = _eta_clock_for_stop(start_hh, start_mm, cum)
         order["estimated_eta_clock"] = eta_clock
 
         track_url = f"{base}/track/{order_id}?token={order['track_token']}"
