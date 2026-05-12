@@ -701,6 +701,17 @@ _CUSTOMER_NOTIFY_DEFAULTS = {
         "body": ("Hei {navn}! Vi er på vei med bestilling #{ordrenr} om "
                  "ca. {kontolenke}"),
     },
+    "route_eta": {
+        "enabled": True, "channel": "email",
+        "subject": "Estimert leveringstid for bestilling #{ordrenr} — Havøyet",
+        "body": ("Hei {navn},\n\nVi planlegger å være på døren din i dag "
+                 "ca. kl. {eta_clock} med bestilling #{ordrenr}.\n\n"
+                 "Du vil høre fra oss kort tid før vi er på døren, og vi "
+                 "tar kontakt umiddelbart hvis det blir vesentlige avvik "
+                 "fra estimert tid.\n\n"
+                 "Følg leveringen live: {tracking_url}\n\n"
+                 "Spørsmål? Svar på denne e-posten.\n\n— Havøyet"),
+    },
 }
 _customer_notify_config = {k: dict(v) for k, v in _CUSTOMER_NOTIFY_DEFAULTS.items()}
 _customers = []  # [{id, navn, tlf, epost, adresse, kommentar, created_at}]
@@ -7837,6 +7848,77 @@ try:
 except Exception as _e:
     print(f"[BOOT-WSGI] _load_subscriptions feilet: {_e}")
 
+def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str) -> tuple[bool, str]:
+    """Send leveringstids-varsling til en kunde basert på route_eta-mal.
+
+    Bruker e-post og/eller SMS i henhold til admin-konfig
+    (`_customer_notify_config["route_eta"]`). Returnerer (ok, detail).
+    """
+    if not isinstance(order, dict):
+        return False, "no-order"
+    cfg = (_customer_notify_config or {}).get("route_eta") or {}
+    if not cfg.get("enabled", True):
+        return False, "disabled-by-config"
+    channel = cfg.get("channel", "email")
+    allow_email = channel in ("email", "both")
+    allow_sms   = channel in ("sms", "both")
+
+    kunde = order.get("kunde") or {}
+    nr    = order.get("ordrenr") or order.get("id") or "?"
+    navn  = (kunde.get("navn") or kunde.get("name") or "").strip()
+    epost = (kunde.get("epost") or kunde.get("email") or "").strip()
+    tlf   = (kunde.get("tlf") or kunde.get("phone") or order.get("phone") or "").strip()
+
+    tmpl_vars = {
+        "navn": navn or "kunde",
+        "ordrenr": nr,
+        "eta_clock": eta_clock or "—",
+        "tracking_url": tracking_url or "",
+        "kontolenke": f"{PUBLIC_SITE_URL}/konto",
+    }
+    subject = _kv_render(cfg.get("subject"), **tmpl_vars) or (
+        f"Estimert leveringstid for bestilling #{nr} — Havøyet"
+    )
+    body_template = cfg.get("body") or (
+        "Hei {navn},\n\nVi leverer bestillingen din #{ordrenr} i dag "
+        "ca. kl. {eta_clock}.\n\nFølg live: {tracking_url}\n\n— Havøyet"
+    )
+    body = _kv_render(body_template, **tmpl_vars)
+
+    mail_ok = False
+    mail_detail = "skipped"
+    has_mail = bool(RESEND_API_KEY or (SMTP_USER and SMTP_PASS))
+    if epost and has_mail and allow_email:
+        if RESEND_API_KEY:
+            mail_ok, mail_detail = _send_via_resend(
+                CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
+            )
+        if not mail_ok and SMTP_USER and SMTP_PASS:
+            mail_ok, mail_detail = _send_via_smtp(
+                CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
+            )
+
+    sms_ok = False
+    sms_detail = "skipped"
+    notify_pref = (kunde.get("notify") or order.get("notify") or {})
+    sms_opt_in  = notify_pref.get("sms", True) and not notify_pref.get("opted_out", False)
+    if (tlf and sms_opt_in and allow_sms and TWILIO_ACCOUNT_SID
+            and TWILIO_AUTH_TOKEN and TWILIO_FROM):
+        clean_phone = tlf.replace(" ", "").replace("-", "")
+        if clean_phone and not clean_phone.startswith("+"):
+            digits = "".join(ch for ch in clean_phone if ch.isdigit())
+            if len(digits) == 8:
+                clean_phone = "+47" + digits
+        sms_text = _strip_image_placeholders(body or "").strip() + _SMS_SIGNATURE
+        sms_ok, sms_detail = _send_admin_sms(clean_phone, sms_text)
+
+    if mail_ok or sms_ok:
+        return True, f"mail={mail_detail}; sms={sms_detail}"
+    if not epost and not tlf:
+        return False, "no-contact-info"
+    return False, f"mail={mail_detail}; sms={sms_detail}"
+
+
 # ── ABAX ETA-integrasjon (kunder ser "X minutter til levering") ──────────
 try:
     from tracking_routes import register_tracking
@@ -7847,6 +7929,7 @@ try:
         state_dir=STATE_DIR,
         admin_check=_user_from_request,
         sms_sender=_send_admin_sms,
+        route_eta_sender=_send_route_eta_notification,
         tracking_base_url=os.environ.get("TRACKING_PUBLIC_URL", "https://bestilling.havoyet.no"),
     )
     print("[BOOT] Tracking-routes registrert (ABAX)")

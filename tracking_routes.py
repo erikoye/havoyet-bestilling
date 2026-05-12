@@ -40,6 +40,7 @@ _state: dict = {
     "active_vehicle_id": None, # str — satt av admin: hvilken bil leverer i dag?
     "depot": None,             # (lat, lon) — fallback hvis bilen er offline
     "sms_sender": None,        # Callable(phone, body) -> (ok, detail)
+    "route_eta_sender": None,  # Callable(order, eta_clock, tracking_url) -> (ok, detail)
     "tracking_base_url": "",   # "https://bestilling.havoyet.no" — for SMS-lenker
     "state_dir": None,         # Path — brukes til proximity-låser
     "notify_threshold_min": 5, # ETA-terskel for "snart fremme"-SMS
@@ -56,6 +57,7 @@ def register_tracking(
     admin_check: Callable[[], tuple],
     depot_coords: tuple[float, float] | None = None,
     sms_sender: Optional[Callable[[str, str], tuple]] = None,
+    route_eta_sender: Optional[Callable[[dict, str, str], tuple]] = None,
     tracking_base_url: str = "",
 ) -> None:
     _state["client"] = AbaxClient(state_dir)
@@ -65,6 +67,7 @@ def register_tracking(
     _state["active_vehicle_id"] = os.environ.get("ABAX_DEFAULT_VEHICLE_ID")
     _state["depot"] = depot_coords or _parse_depot()
     _state["sms_sender"] = sms_sender
+    _state["route_eta_sender"] = route_eta_sender
     _state["tracking_base_url"] = (
         tracking_base_url
         or os.environ.get("TRACKING_PUBLIC_URL")
@@ -1420,47 +1423,61 @@ def _eta_clock_for_stop(start_hh: int, start_mm: int, cum_min: float) -> str:
 
 @bp.post("/api/admin/tracking/route/approve")
 def admin_route_approve():
-    """Godkjenn dagens rute + send kundene SMS med estimert klokkeslett og
-    tracking-lenke. Sjåfør får ruten umiddelbart etter godkjenning.
+    """Markerer dagens rute som godkjent (admin OK). Sender IKKE varsler —
+    bruk /api/admin/tracking/route/notify for å sende e-post/SMS til kunder.
 
     Body (alt valgfritt):
       - date: "YYYY-MM-DD" (default: i dag)
-      - start_time: "HH:MM" (default: parse fra første stopps leveringstid)
-      - notify: bool (default true — send SMS til alle kunder)
+      - start_time: "HH:MM" (lagres for senere notify-kall)
     """
     _, err = _admin_only()
     if err:
         return err
     data = request.get_json(silent=True) or {}
     date_iso = (data.get("date") or _today_iso()).strip()
-    notify = data.get("notify", True)
     start_time_arg = (data.get("start_time") or "").strip()
 
-    # Lagre godkjenningen først
     now = int(time.time())
-    _set_day_state(date_iso, {
-        "approved": True,
-        "approved_at": now,
-    })
+    updates: dict = {"approved": True, "approved_at": now}
+    if start_time_arg:
+        parsed = _parse_start_clock_hint(start_time_arg)
+        if parsed:
+            updates["start_clock"] = f"{parsed[0]:02d}:{parsed[1]:02d}"
+    _set_day_state(date_iso, updates)
+    return jsonify({"ok": True, "date": date_iso, "approved_at": now})
+
+
+@bp.post("/api/admin/tracking/route/notify")
+def admin_route_notify():
+    """Sender e-post / SMS til alle kundene på dagens rute med deres estimerte
+    leveringstid. Bruker `route_eta`-malen fra customer-notify-config så admin
+    kan styre tekst på Varsel-siden.
+
+    Body:
+      - date: "YYYY-MM-DD" (default: i dag)
+      - start_time: "HH:MM" (valgfritt — overskriver evt. lagret start_clock)
+    """
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    start_time_arg = (data.get("start_time") or "").strip()
 
     notify_summary = {"sent": 0, "skipped": 0, "failed": 0, "details": []}
-    if not notify:
-        return jsonify({"ok": True, "date": date_iso, "approved_at": now,
-                        "notify": notify_summary})
-
-    # Bygg ruten på nytt for å få cum_min per stopp etter eventuell admin-omrokering
     route = _build_route(date_iso, optimize=True)
     stops = route.get("stops") or []
     if not stops:
-        return jsonify({"ok": True, "date": date_iso, "approved_at": now,
-                        "notify": notify_summary})
+        return jsonify({"ok": True, "date": date_iso, "notify": notify_summary,
+                        "info": "ingen stopp denne datoen"})
 
     start_hh, start_mm = _parse_start_time(start_time_arg, stops)
     base = (_state["tracking_base_url"] or "").rstrip("/")
-    # Persist start_clock + breaks så refresh viser samme tider, og senere
-    # /today-kall regner med samme avreise og pauser.
     breaks_list = _normalize_breaks(_get_day_state(date_iso).get("breaks"))
     _set_day_state(date_iso, {"start_clock": f"{start_hh:02d}:{start_mm:02d}"})
+
+    eta_sender = _state.get("route_eta_sender")
+    now = int(time.time())
 
     for i, stop in enumerate(stops):
         order_id = str(stop.get("order_id") or "")
@@ -1469,14 +1486,12 @@ def admin_route_approve():
             notify_summary["skipped"] += 1
             notify_summary["details"].append({"order_id": order_id, "result": "order_not_found"})
             continue
-        # Auto-generer track_token hvis ikke allerede
         if not order.get("track_token"):
             order["track_token"] = secrets.token_urlsafe(20)
             order["track_token_created"] = now
         order.pop("proximity_notified_at", None)
         _clear_proximity_lock(order_id)
 
-        # ETA = kjøretid + dwell for tidligere stopp + pauser før dette stoppet
         cum = float(stop.get("cum_min_from_depot") or 0)
         cum += i * _DWELL_MIN
         cum += _break_min_before_stop(i, breaks_list, stops)
@@ -1484,10 +1499,15 @@ def admin_route_approve():
         order["estimated_eta_clock"] = eta_clock
 
         track_url = f"{base}/track/{order_id}?token={order['track_token']}"
-        ok, detail = _send_track_link_sms(order, track_url, eta_clock=eta_clock)
+
+        # Bruk route_eta-mal hvis registrert. Fallback til gammel SMS-funksjon.
+        if eta_sender:
+            ok, detail = eta_sender(order, eta_clock, track_url)
+        else:
+            ok, detail = _send_track_link_sms(order, track_url, eta_clock=eta_clock)
         if ok:
             notify_summary["sent"] += 1
-        elif detail in ("no-phone", "opted-out"):
+        elif detail in ("no-phone", "opted-out", "no-contact-info", "disabled-by-config"):
             notify_summary["skipped"] += 1
         else:
             notify_summary["failed"] += 1
@@ -1499,9 +1519,9 @@ def admin_route_approve():
     try:
         _state["save_state"]()
     except Exception as e:
-        print(f"[APPROVE] save_state feilet: {e}")
+        print(f"[NOTIFY] save_state feilet: {e}")
 
-    return jsonify({"ok": True, "date": date_iso, "approved_at": now,
+    return jsonify({"ok": True, "date": date_iso,
                     "start_time": f"{start_hh:02d}:{start_mm:02d}",
                     "notify": notify_summary})
 
