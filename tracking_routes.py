@@ -1537,9 +1537,10 @@ def admin_route_today():
 def driver_route_today():
     """Sjåfør-versjon av /api/admin/tracking/route/today. PIN-beskyttet.
 
-    Returnerer ruten KUN hvis admin har godkjent den. Hvis ikke, returnerer
-    et tomt sett av stopp + 'awaiting_approval'-flagg så app-en kan vise
-    en venter-skjerm istedenfor å gjette rekkefølgen.
+    Returnerer den planlagte ruten uansett godkjenningsstatus, så sjåføren
+    kan forhåndsvise dagens leveringer før admin godkjenner. Når ruten
+    ikke er godkjent settes 'awaiting_approval' = True så app-en kan vise
+    et tydelig "venter på godkjenning"-banner.
     """
     _, err = _driver_only()
     if err:
@@ -1547,10 +1548,7 @@ def driver_route_today():
     date_iso = (request.args.get("date") or _today_iso()).strip()
     route = _build_route(date_iso, optimize=True)
     route["vehicle"] = _current_vehicle_position()
-    if not route.get("approved"):
-        route["awaiting_approval"] = True
-        route["stops"] = []  # hold tilbake til admin har godkjent
-        route["geometry"] = None
+    route["awaiting_approval"] = not bool(route.get("approved"))
     return jsonify(route)
 
 

@@ -51,6 +51,27 @@
                       width:36px;height:36px;border-radius:8px;font-size:18px;
                       cursor:pointer}
 
+    /* Datovelger-rad under topbaren — sjåfør kan se i morgen / forrige dag */
+    .date-bar{background:var(--blue);color:#fff;padding:0 12px 10px;
+              display:flex;align-items:center;gap:8px;flex-shrink:0;
+              border-bottom:1px solid rgba(255,255,255,.08)}
+    .date-bar .date-btn{background:rgba(255,255,255,.12);border:none;color:#fff;
+                        width:36px;height:36px;border-radius:8px;font-size:18px;
+                        cursor:pointer;flex-shrink:0}
+    .date-bar .date-label{flex:1;text-align:center;font-size:14px;font-weight:600;
+                          font-variant-numeric:tabular-nums}
+    .date-bar .date-label small{display:block;font-size:11px;color:rgba(255,255,255,.7);
+                                font-weight:500;margin-top:1px;text-transform:uppercase;
+                                letter-spacing:.5px}
+
+    /* Godkjenningsbanner — tydelig markert som forhåndsvisning */
+    .approval-banner{background:#fef3c7;color:#854d0e;border-bottom:2px solid #ca8a04;
+                     padding:10px 14px;display:flex;align-items:center;gap:10px;
+                     font-size:13px;line-height:1.4;flex-shrink:0}
+    .approval-banner .icon{font-size:20px;flex-shrink:0}
+    .approval-banner b{display:block;font-size:13px}
+    .approval-banner small{display:block;font-size:11px;color:#92400e;margin-top:1px}
+
     #map{flex:0 0 38vh;width:100%;background:#dde}
     @media (min-height:800px){ #map{flex-basis:42vh} }
 
@@ -76,21 +97,49 @@
     .next-card .nav-btn:active{filter:brightness(.92)}
 
     .stop{background:#fff;border:1px solid var(--line);border-radius:10px;
-          padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px}
+          padding:12px;margin-bottom:8px;display:flex;align-items:center;gap:12px;
+          min-height:64px}
     .stop.done{opacity:.5}
-    .stop-num{background:var(--blue);color:#fff;width:28px;height:28px;
+    .stop-num{background:var(--blue);color:#fff;width:32px;height:32px;
               border-radius:50%;display:flex;align-items:center;justify-content:center;
-              font-weight:700;font-size:13px;flex:0 0 28px}
+              font-weight:700;font-size:14px;flex:0 0 32px}
     .stop.done .stop-num{background:var(--ok)}
     .stop-info{flex:1;min-width:0}
-    .stop-info .name{font-weight:600;font-size:14px;
+    .stop-info .name{font-weight:600;font-size:15px;line-height:1.3;
                      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .stop-info .addr{font-size:12px;color:var(--soft);
+    .stop-info .addr{font-size:12px;color:var(--soft);line-height:1.3;margin-top:2px;
                      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .stop-info .clock{display:inline-block;background:rgba(13,148,136,.12);
+                      color:var(--primary-dk);font-weight:700;font-size:12px;
+                      padding:2px 8px;border-radius:5px;margin-top:4px;
+                      font-variant-numeric:tabular-nums}
+    .stop-info .slot{display:inline-block;color:var(--soft);font-size:11px;
+                     margin-left:6px}
     .stop-eta{flex:0 0 auto;text-align:right;font-weight:700;color:var(--blue);
               font-variant-numeric:tabular-nums;font-size:14px}
     .stop-eta small{display:block;color:var(--soft);font-weight:500;font-size:10px;
                     text-transform:uppercase;letter-spacing:.5px}
+
+    /* Pause-rad mellom stopp */
+    .break-row{background:#fef9c3;border:1px solid #fde68a;border-radius:10px;
+               padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;
+               gap:10px;color:#854d0e;font-size:13px}
+    .break-row .icon{font-size:18px;flex-shrink:0}
+    .break-row b{font-variant-numeric:tabular-nums}
+
+    /* Depot-rad — start fra butikken */
+    .depot-row{background:linear-gradient(135deg,var(--dark),#1e293b);color:#fff;
+               border-radius:10px;padding:12px;margin-bottom:8px;display:flex;
+               align-items:center;gap:12px}
+    .depot-row .icon{background:var(--gold);color:var(--blue);width:32px;height:32px;
+                     border-radius:8px;display:flex;align-items:center;justify-content:center;
+                     font-weight:700;flex:0 0 32px;font-size:16px}
+    .depot-row .info{flex:1}
+    .depot-row .info b{font-size:15px}
+    .depot-row .info small{display:block;font-size:11px;color:rgba(255,255,255,.7);
+                           margin-top:2px}
+    .depot-row .clock{font-weight:700;font-size:14px;color:var(--gold);
+                      font-variant-numeric:tabular-nums}
 
     .nav-small{background:none;border:none;color:var(--blue);font-size:18px;
                cursor:pointer;padding:6px 8px}
@@ -120,6 +169,12 @@
     <button class="menu-btn" id="refreshBtn" title="Last på nytt">⟳</button>
     <button class="menu-btn" id="logoutBtn" title="Logg ut">⏻</button>
   </div>
+  <div class="date-bar">
+    <button class="date-btn" id="datePrev" aria-label="Forrige dag">‹</button>
+    <div class="date-label" id="dateLabel">—</div>
+    <button class="date-btn" id="dateNext" aria-label="Neste dag">›</button>
+  </div>
+  <div id="approvalBanner" style="display:none"></div>
   <div id="map"></div>
   <div class="stops-panel">
     <div id="nextCard"></div>
@@ -134,6 +189,45 @@
 const $ = id => document.getElementById(id);
 const PIN_KEY = "havoyet_driver_pin";
 const today = () => new Date().toISOString().slice(0,10);
+// Aktiv dato — kan endres med pil-knappene i topbaren
+let activeDate = today();
+
+function _isoToDate(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return new Date(y, (m||1)-1, d||1);
+}
+function _dateToIso(dt) {
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+function _humanDate(iso) {
+  const dt = _isoToDate(iso);
+  const t = _isoToDate(today());
+  const diff = Math.round((dt - t) / (1000 * 60 * 60 * 24));
+  const weekday = dt.toLocaleDateString('nb-NO', { weekday: 'long' });
+  const pretty = `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${dt.getDate()}.${String(dt.getMonth()+1).padStart(2,'0')}`;
+  let rel = '';
+  if (diff === 0) rel = 'I dag';
+  else if (diff === 1) rel = 'I morgen';
+  else if (diff === -1) rel = 'I går';
+  else if (diff > 1) rel = `Om ${diff} dager`;
+  else rel = `${Math.abs(diff)} dager siden`;
+  return { pretty, rel };
+}
+function updateDateLabel() {
+  const { pretty, rel } = _humanDate(activeDate);
+  $("dateLabel").innerHTML = `${pretty}<small>${rel}</small>`;
+}
+function shiftDate(delta) {
+  const dt = _isoToDate(activeDate);
+  dt.setDate(dt.getDate() + delta);
+  activeDate = _dateToIso(dt);
+  updateDateLabel();
+  loadRoute();
+}
+
 let map, vehicleMarker, routeLine;
 const stopLayer = (typeof L !== "undefined") ? L.layerGroup() : null;
 const stopMarkers = {};
@@ -213,16 +307,38 @@ function navLink(lat, lon, label){
 }
 
 async function fetchRoute(){
-  const r = await fetch(`/api/driver/route/today?date=${today()}&pin=${encodeURIComponent(getPin())}`);
+  const r = await fetch(`/api/driver/route/today?date=${activeDate}&pin=${encodeURIComponent(getPin())}`);
   if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp. Logg inn på nytt."); return null; }
   if (!r.ok) return null;
   return r.json();
+}
+
+function renderApprovalBanner(data){
+  const box = $("approvalBanner");
+  if (!data || data.error === "no_depot" || !(data.stops || []).length) {
+    box.style.display = "none";
+    return;
+  }
+  if (data.awaiting_approval) {
+    box.innerHTML = `
+      <div class="approval-banner">
+        <div class="icon">⚠️</div>
+        <div>
+          <b>Forhåndsvisning — ikke godkjent</b>
+          <small>Admin må godkjenne ruten før den er offisiell. Du ser den planlagte ruten her, men kunder har ikke fått SMS ennå.</small>
+        </div>
+      </div>`;
+    box.style.display = "block";
+  } else {
+    box.style.display = "none";
+  }
 }
 
 async function loadRoute(){
   $("summary").textContent = "Laster …";
   $("stops").innerHTML = "";
   $("nextCard").innerHTML = "";
+  $("approvalBanner").style.display = "none";
   stopLayer.clearLayers();
   if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
 
@@ -235,19 +351,35 @@ async function loadRoute(){
     return;
   }
 
+  renderApprovalBanner(data);
+
   const stops = data.stops || [];
   if (!stops.length) {
-    $("summary").innerHTML = "Ingen leveringer i dag";
+    const label = data.awaiting_approval ? "Ingen ordrer denne dagen" : "Ingen leveringer i dag";
+    $("summary").innerHTML = label;
     $("stops").innerHTML = `<div class="empty">Ingen ordrer med leveringsdato ${data.date}.</div>`;
     return;
   }
 
-  $("summary").innerHTML = `<b>${stops.length}</b> stopp · <b>${Math.round(data.total_duration_min || 0)}</b> min<br>
-    ${data.vehicle ? '<span class="pulse-dot"></span>Bil online' : 'Bil offline'}`;
+  const startClock = data.start_clock || "—";
+  const statusPill = data.awaiting_approval
+    ? '<span style="color:#fbbf24">● Ikke godkjent</span>'
+    : '<span style="color:#22c55e">● Godkjent</span>';
+  $("summary").innerHTML = `<b>${stops.length}</b> stopp · start <b>${startClock}</b><br>${statusPill}
+    ${data.vehicle ? ' · <span class="pulse-dot"></span>Bil online' : ''}`;
 
-  if (data.geometry?.coordinates) {
+  if (data.geometry?.coordinates && data.geometry.coordinates.length > 1) {
     const latlngs = data.geometry.coordinates.map(([lon,lat]) => [lat,lon]);
     routeLine = L.polyline(latlngs, {color:"#0d9488", weight:4, opacity:.7}).addTo(map);
+  } else if (data.depot) {
+    // Fallback rettlinje gjennom depot + stopp så ruten alltid vises
+    const fallback = [[data.depot.lat, data.depot.lon]]
+      .concat(stops.filter(s => s.lat != null && s.lon != null).map(s => [s.lat, s.lon]));
+    if (fallback.length > 1) {
+      routeLine = L.polyline(fallback, {
+        color: "#0d9488", weight: 3, opacity: .55, dashArray: "6 6",
+      }).addTo(map);
+    }
   }
 
   for (const s of stops) {
@@ -259,12 +391,13 @@ async function loadRoute(){
   const next = stops[0];
   $("nextCard").innerHTML = `
     <div class="next-card">
-      <div class="label">Neste stopp · ${next.stop_index} av ${stops.length}</div>
+      <div class="label">Neste stopp · ${next.stop_index} av ${stops.length}${data.awaiting_approval ? ' · FORHÅNDSVISNING' : ''}</div>
       <div class="name">${next.navn || ('Bestilling #'+next.order_id)}</div>
       <div class="addr">${[next.adresse, next.postnr, next.poststed].filter(Boolean).join(", ") || "(adresse mangler)"}</div>
       <div class="meta">
+        ${next.arrival_clock ? `<div><div style="opacity:.7;font-size:11px">Planlagt</div><span class="val">${next.arrival_clock}</span></div>` : ""}
         <div><div style="opacity:.7;font-size:11px">ETA</div><span class="val" data-next-eta>—</span> min</div>
-        ${next.leveringstid ? `<div><div style="opacity:.7;font-size:11px">Tid</div><span class="val">${next.leveringstid}</span></div>` : ""}
+        ${next.leveringstid ? `<div><div style="opacity:.7;font-size:11px">Vindu</div><span class="val">${next.leveringstid}</span></div>` : ""}
         ${next.tlf ? `<div><div style="opacity:.7;font-size:11px">Telefon</div><a href="tel:${next.tlf}" style="color:#fff;text-decoration:underline">${next.tlf}</a></div>` : ""}
       </div>
       <a class="nav-btn" href="${navLink(next.lat, next.lon, next.navn)}" target="_blank">
@@ -272,20 +405,42 @@ async function loadRoute(){
       </a>
     </div>`;
 
-  // Liste over alle stopp
-  $("stops").innerHTML = stops.map((s,i) => `
+  // Hjelpere for å plassere pause-rader i listen
+  const breaks = Array.isArray(data.breaks) ? data.breaks : [];
+  const breaksForAnchor = (anchorId) => breaks.filter(b => String(b.after_order_id) === String(anchorId));
+  const breakRowHtml = (b) => `
+    <div class="break-row">
+      <span class="icon">☕</span>
+      <div>Pause <b>${b.minutes} min</b>${b.label ? ` — ${b.label}` : ''}</div>
+    </div>`;
+
+  // Depot-rad øverst + stoppene med eventuelle pauser før hver
+  const depotHtml = `
+    <div class="depot-row">
+      <span class="icon">⌂</span>
+      <div class="info"><b>Start fra butikken</b><small>Nesttunvegen 96, 5221 Nesttun</small></div>
+      <div class="clock">${startClock}</div>
+    </div>` + breaksForAnchor('depot').map(breakRowHtml).join('');
+
+  const stopsHtml = stops.map((s, i) => {
+    const breaksBefore = i === 0 ? '' : breaksForAnchor(String(stops[i-1].order_id)).map(breakRowHtml).join('');
+    return `${breaksBefore}
     <div class="stop" data-id="${s.order_id}">
       <span class="stop-num">${s.stop_index}</span>
       <div class="stop-info">
         <div class="name">${s.navn || ('Bestilling #'+s.order_id)}</div>
         <div class="addr">${[s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ")}</div>
+        ${s.arrival_clock ? `<span class="clock">${s.arrival_clock}</span>` : ''}
+        ${s.leveringstid ? `<span class="slot">${s.leveringstid}</span>` : ''}
       </div>
       <div class="stop-eta">
-        <span data-eta="${s.order_id}">—</span><small>min unna</small>
+        <span data-eta="${s.order_id}">—</span><small>min</small>
       </div>
       <a class="nav-small" href="${navLink(s.lat, s.lon)}" target="_blank" title="Naviger">🧭</a>
-    </div>
-  `).join("");
+    </div>`;
+  }).join('');
+
+  $("stops").innerHTML = depotHtml + stopsHtml;
 
   document.querySelectorAll(".stop").forEach(el => {
     el.addEventListener("click", e => {
@@ -322,8 +477,11 @@ function updateVehicle(v){
 
 async function pollLive(){
   if (!currentRoute) return;
+  // Live-ETA gir bare mening for dagens dato — hvis sjåfør ser fremover/bakover,
+  // hopper vi over live-polling (ETA-feltene står som "—")
+  if (activeDate !== today()) return;
   try {
-    const r = await fetch(`/api/driver/route/live?date=${today()}&pin=${encodeURIComponent(getPin())}`);
+    const r = await fetch(`/api/driver/route/live?date=${activeDate}&pin=${encodeURIComponent(getPin())}`);
     if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp."); return; }
     if (!r.ok) return;
     const data = await r.json();
@@ -370,6 +528,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     clearPin();
     showPinScreen("");
   });
+  $("datePrev").addEventListener("click", () => shiftDate(-1));
+  $("dateNext").addEventListener("click", () => shiftDate(1));
+  updateDateLabel();
 
   // Auto-login hvis PIN finnes
   const saved = getPin();
