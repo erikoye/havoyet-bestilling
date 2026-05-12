@@ -4700,7 +4700,12 @@ def api_subscription_sync_price(sub_id):
 @app.route("/api/checkout/card-payment-intent", methods=["POST"])
 def api_checkout_card_payment_intent():
     """Stripe Elements-flyt: oppretter en PaymentIntent og returnerer client_secret
-    så frontenden kan bekrefte betaling med kortdata in-line uten redirect."""
+    så frontenden kan bekrefte betaling med kortdata in-line uten redirect.
+
+    Når `requires_capture` er True (ordren har hel-fisk med vekt-reservasjon),
+    settes capture_method='manual' så kortet blir HOLDT på maks-beløp uten
+    trekk. Endelig sum belastes via /api/admin/orders/<nr>/capture når
+    butikken har veid fisken. Stripe-auth varer ~7 dager."""
     if not _stripe_configured():
         return jsonify({"error": "Kortbetaling er ikke konfigurert"}), 503
     data = request.get_json(silent=True) or {}
@@ -4709,8 +4714,10 @@ def api_checkout_card_payment_intent():
     if amount <= 0:
         return jsonify({"error": "Ugyldig beløp"}), 400
     customer = data.get("customer") or {}
+    requires_capture  = bool(data.get("requires_capture"))
+    reservation_items = data.get("reservation_items") or []
     try:
-        intent = _stripe.PaymentIntent.create(
+        intent_kwargs = dict(
             amount=amount,
             currency="nok",
             description=f"Havøyet ordre {ordrenr}",
@@ -4722,6 +4729,10 @@ def api_checkout_card_payment_intent():
                 "kunde_tlf":  str(customer.get("phoneNumber", ""))[:30],
             },
         )
+        if requires_capture:
+            intent_kwargs["capture_method"] = "manual"
+            intent_kwargs["metadata"]["reservation"] = "1"
+        intent = _stripe.PaymentIntent.create(**intent_kwargs)
     except Exception as e:
         return jsonify({"error": f"Kunne ikke opprette PaymentIntent: {e}"}), 502
 
@@ -4733,6 +4744,9 @@ def api_checkout_card_payment_intent():
         "kind":           "elements",
         "created_at":     time.time(),
         "payment_intent": intent.id,
+        # Lagre reservasjons-info så admin senere kan capture med faktisk vekt
+        "requires_capture":  requires_capture,
+        "reservation_items": reservation_items if requires_capture else None,
     }
     _stripe_save_payments(payments)
 
@@ -4741,7 +4755,120 @@ def api_checkout_card_payment_intent():
         "clientSecret": intent.client_secret,
         "paymentIntent": intent.id,
         "ordrenr":      ordrenr,
+        "requires_capture": requires_capture,
     })
+
+
+@app.route("/api/admin/orders/<ordrenr>/capture", methods=["POST"])
+def api_admin_order_capture(ordrenr):
+    """Capture en hel-fisk-reservasjon med faktisk vekt.
+
+    Body: { items: [{ slug, actualWeightKg }] }
+    Beregner totalt beløp = sum(item.pricePerKg × actualWeightKg × qty) for
+    reservasjons-linjer, og kaller stripe.PaymentIntent.capture(amount_to_capture=...).
+    Stripe frigjør differansen mellom autorisert og captured beløp automatisk.
+    """
+    if not _stripe_configured():
+        return jsonify({"error": "Stripe er ikke konfigurert"}), 503
+    # Beskytt mot uvedkommende — krever admin-cookie/token. Reuse eksisterende
+    # admin-auth hvis tilgjengelig; ellers minst basic-token-sjekk.
+    if not _require_admin(request):
+        return jsonify({"error": "Kun admin kan capture"}), 403
+    data = request.get_json(silent=True) or {}
+    items_in = data.get("items") or []
+    if not items_in:
+        return jsonify({"error": "Mangler items med faktisk vekt"}), 400
+
+    # Finn PaymentIntent for ordren
+    payments = _stripe_load_payments()
+    pi_record = None
+    pi_id = None
+    for k, v in payments.items():
+        if str(v.get("ordrenr")) == str(ordrenr) and v.get("requires_capture"):
+            pi_record = v
+            pi_id = k
+            break
+    if not pi_record:
+        return jsonify({"error": f"Fant ingen reservasjon for ordre {ordrenr}"}), 404
+    if pi_record.get("state") in ("CAPTURED", "REFUNDED", "CANCELED"):
+        return jsonify({"error": f"Reservasjonen er allerede {pi_record.get('state')}"}), 409
+
+    # Map slug → reservation item (pricePerKg, helVekt, qty)
+    res_items = pi_record.get("reservation_items") or []
+    by_slug = { (r.get("slug") or ""): r for r in res_items }
+
+    # Regn ut faktisk capture-beløp i øre (Stripe bruker minste valutaenhet)
+    total_ore = 0
+    breakdown = []
+    for it in items_in:
+        slug = it.get("slug")
+        kg   = float(it.get("actualWeightKg") or 0)
+        if kg <= 0:
+            return jsonify({"error": f"Ugyldig vekt for {slug}"}), 400
+        ref = by_slug.get(slug)
+        if not ref:
+            return jsonify({"error": f"Slug {slug} er ikke en reservasjons-linje"}), 400
+        price_per_kg = float(ref.get("pricePerKg") or 0)
+        qty = int(ref.get("qty") or 1)
+        line_total_kr = price_per_kg * kg * qty
+        line_total_ore = int(round(line_total_kr * 100))
+        total_ore += line_total_ore
+        breakdown.append({
+            "slug": slug,
+            "actualWeightKg": kg,
+            "qty": qty,
+            "pricePerKg": price_per_kg,
+            "lineTotalKr": round(line_total_kr, 2),
+        })
+
+    if total_ore <= 0:
+        return jsonify({"error": "Beregnet capture-beløp er 0"}), 400
+
+    # Stripe tillater ikke capture > autorisert beløp. Hvis fisken veier mer
+    # enn maks → cappes til autorisert beløp og restdifferansen må kreves separat.
+    authorized_ore = int(pi_record.get("amount") or 0)
+    if total_ore > authorized_ore:
+        capped_ore = authorized_ore
+        owed_extra_kr = round((total_ore - authorized_ore) / 100.0, 2)
+    else:
+        capped_ore = total_ore
+        owed_extra_kr = 0.0
+
+    try:
+        captured = _stripe.PaymentIntent.capture(pi_id, amount_to_capture=capped_ore)
+    except Exception as e:
+        return jsonify({"error": f"Stripe capture feilet: {e}"}), 502
+
+    # Persistér
+    pi_record["state"]            = "CAPTURED"
+    pi_record["captured_amount"]  = capped_ore
+    pi_record["captured_at"]      = time.time()
+    pi_record["actual_breakdown"] = breakdown
+    if owed_extra_kr > 0:
+        pi_record["owed_extra_kr"] = owed_extra_kr
+    payments[pi_id] = pi_record
+    _stripe_save_payments(payments)
+
+    return jsonify({
+        "ok": True,
+        "ordrenr": ordrenr,
+        "paymentIntent": pi_id,
+        "capturedAmountKr": round(capped_ore / 100.0, 2),
+        "reservedAmountKr": round(authorized_ore / 100.0, 2),
+        "owedExtraKr": owed_extra_kr,
+        "breakdown": breakdown,
+        "stripeStatus": getattr(captured, "status", None),
+    })
+
+
+def _require_admin(req):
+    """Admin-auth-sjekk. Bruker eksisterende _user_from_request()-mekanisme
+    (samme som /api/subscription/*-endepunktene). Returnerer True hvis OK."""
+    try:
+        user, _tok = _user_from_request()
+    except Exception:
+        user = None
+    return bool(user and user.get("role") == "admin")
 
 def _stripe_load_payments():
     if os.path.exists(STRIPE_PAYMENTS_FILE):
