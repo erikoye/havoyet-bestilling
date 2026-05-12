@@ -364,6 +364,7 @@ _PRETTY_PAGES = {
     "rute":             "rute.html",
     "sjafor":           "sjafor.html",
     "sjåfør":           "sjafor.html",
+    "varer":            "varer.html",
 }
 
 @app.route("/<page>")
