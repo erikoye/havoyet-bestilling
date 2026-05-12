@@ -4317,7 +4317,12 @@ def api_subscription_cancel(sub_id):
 def api_subscription_admin_test_create():
     """Admin-only: opprett et SYNTHETISK test-abonnement (ingen Stripe).
     Brukes kun for å se hvordan Min side rendrer aktive abonnement.
-    Subscription-id får prefiks 'test_' så det er enkelt å rydde opp."""
+    Subscription-id får prefiks 'test_' så det er enkelt å rydde opp.
+
+    Når `send_mail: true` sendes en kvitterings-mail til kunden via Resend slik
+    at admin kan inspisere hvordan en faktisk subscription-bekreftelse ser ut.
+    Mailen får tydelig TEST-merking i subject så ingen forveksler den med
+    en ekte transaksjon."""
     user, err = _subscription_admin_required()
     if err: return err
     data  = request.get_json(silent=True) or {}
@@ -4327,6 +4332,7 @@ def api_subscription_admin_test_create():
     amount   = int(data.get("amount", 1490_00))   # default: 1490 kr/mnd (i øre)
     kasse    = data.get("kasse") or {"name": "Sjømatkasse — 2 personer", "size": "2pers"}
     desc     = data.get("description") or "Sjømatkasse — månedlig abonnement (TEST)"
+    navn     = data.get("navn") or "Test Testesen"
     now      = int(time.time())
     sub_id   = f"test_{int(time.time()*1000)}"
     next_period = now + 30 * 24 * 60 * 60   # ~30 dager fram
@@ -4339,7 +4345,7 @@ def api_subscription_admin_test_create():
         "interval":           "month",
         "status":             "active",
         "current_period_end": next_period,
-        "kunde":              {"epost": email, "navn": data.get("navn") or "Test Testesen"},
+        "kunde":              {"epost": email, "navn": navn},
         "kasse":              kasse,
         "description":        desc,
         "created_at":         now,
@@ -4348,7 +4354,140 @@ def api_subscription_admin_test_create():
         "is_test":            True,
     }
     _save_subscriptions()
-    return jsonify({"ok": True, "subscription_id": sub_id, "row": _subscriptions[sub_id]})
+
+    mail_status = None
+    if data.get("send_mail"):
+        try:
+            ok, info = _send_subscription_receipt_mail(
+                to_email=email,
+                navn=navn,
+                amount_ore=amount,
+                kasse=kasse,
+                description=desc,
+                next_period_ts=next_period,
+                sub_id=sub_id,
+                is_test=True,
+            )
+            mail_status = {"ok": ok, "info": info}
+        except Exception as e:
+            mail_status = {"ok": False, "info": f"exception: {e}"}
+
+    return jsonify({
+        "ok": True,
+        "subscription_id": sub_id,
+        "row": _subscriptions[sub_id],
+        "mail": mail_status,
+    })
+
+
+def _send_subscription_receipt_mail(to_email, navn, amount_ore, kasse, description,
+                                     next_period_ts, sub_id, is_test=False):
+    """Sender en realistisk kvitterings-mail for et nyopprettet abonnement.
+    Brukes både fra admin-test-create (synthetisk) og kan kobles på den ekte
+    Stripe-flyten senere. Returnerer (ok, info)."""
+    if not RESEND_API_KEY:
+        return False, "RESEND_API_KEY ikke konfigurert"
+
+    amount_kr = (amount_ore or 0) / 100.0
+    amount_str = f"{amount_kr:,.2f}".replace(",", " ").replace(".", ",").rstrip("0").rstrip(",")
+    if "," not in amount_str:
+        amount_str = amount_str + ",00"
+
+    next_dt = datetime.fromtimestamp(next_period_ts).strftime("%d.%m.%Y")
+    kasse_name = (kasse or {}).get("name") or "Sjømatkasse"
+    kasse_size = (kasse or {}).get("size") or ""
+    meta = (kasse or {}).get("meta") or {}
+    voksne = meta.get("voksne")
+    barn = meta.get("barn")
+    leverdag = meta.get("leverdag")
+    portion_line = ""
+    if voksne or barn:
+        bits = []
+        if voksne: bits.append(f"{voksne} voksne")
+        if barn:   bits.append(f"{barn} barn")
+        portion_line = " · ".join(bits)
+
+    test_banner_html = ""
+    test_banner_text = ""
+    subject_prefix = ""
+    if is_test:
+        subject_prefix = "[TEST] "
+        test_banner_html = (
+            '<div style="background:#fff3cd;border:1px solid #ffe69c;color:#664d03;'
+            'padding:12px 16px;border-radius:8px;margin:0 0 24px;font-size:13px;'
+            'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;">'
+            '<strong>Dette er en test-bekreftelse</strong> — ingen kort er trukket, '
+            'ingen leveranse vil bli sendt. Generert fra admin for å vise hvordan '
+            'en ekte abonnement-bekreftelse ser ut for kunden.'
+            '</div>'
+        )
+        test_banner_text = (
+            "[TEST] Dette er en test-bekreftelse. Ingen kort er trukket, "
+            "ingen leveranse blir sendt.\n\n"
+        )
+
+    html_body = f"""
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1a1a1a;max-width:560px;margin:0 auto;">
+  {test_banner_html}
+  <div style="text-align:center;padding:32px 0 24px;">
+    <div style="width:64px;height:64px;border-radius:50%;background:#d6f0eb;color:#0a8674;display:inline-flex;align-items:center;justify-content:center;font-size:30px;border:2px solid #0a8674;line-height:1;">&#10003;</div>
+    <h1 style="font-size:28px;font-weight:600;letter-spacing:-0.01em;margin:18px 0 6px;">Velkommen som abonnent!</h1>
+    <p style="color:#5b6470;font-size:15px;margin:0;">Vi gleder oss til å sende fersk fisk hjem til deg.</p>
+  </div>
+
+  <div style="background:#fafafa;border:1px solid #e8e8e8;border-radius:12px;padding:20px 22px;margin:0 0 20px;">
+    <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:#7a8290;margin-bottom:10px;">Ditt abonnement</div>
+    <div style="font-size:18px;font-weight:600;margin-bottom:6px;">{kasse_name}</div>
+    {f'<div style="font-size:13px;color:#5b6470;margin-bottom:14px;">{portion_line}</div>' if portion_line else ''}
+    <table style="width:100%;font-size:14px;border-collapse:collapse;">
+      <tr><td style="padding:6px 0;color:#5b6470;">Beløp per måned</td><td style="padding:6px 0;text-align:right;font-weight:600;">{amount_str} kr</td></tr>
+      <tr><td style="padding:6px 0;color:#5b6470;">Neste trekk</td><td style="padding:6px 0;text-align:right;">{next_dt}</td></tr>
+      {f'<tr><td style="padding:6px 0;color:#5b6470;">Leveringsdag</td><td style="padding:6px 0;text-align:right;">{leverdag}</td></tr>' if leverdag else ''}
+      <tr><td style="padding:6px 0;color:#5b6470;">Frakt</td><td style="padding:6px 0;text-align:right;color:#0a8674;">Inkludert</td></tr>
+    </table>
+  </div>
+
+  <div style="font-size:14px;line-height:1.6;color:#2a2f38;margin:0 0 22px;">
+    <p style="margin:0 0 12px;">Hei {navn},</p>
+    <p style="margin:0 0 12px;">Takk for at du startet et abonnement på {kasse_name.lower()}. Vi pakker råvarene på is og kjører dem hjem til deg på leveringsdagen.</p>
+    <p style="margin:0 0 12px;">Du kan hoppe over en levering opptil <strong>2 uker</strong> før, eller si opp senest <strong>1 uke</strong> før neste trekk for å få full refusjon. Endre alt på <a href="https://havoyet.no/konto-dashbord" style="color:#0a8674;">Min side</a>.</p>
+  </div>
+
+  <div style="text-align:center;margin:0 0 28px;">
+    <a href="https://havoyet.no/konto-dashbord" style="display:inline-block;background:#0a8674;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:12px 22px;border-radius:999px;">Til Min side</a>
+  </div>
+
+  <div style="font-size:11px;color:#9aa1ac;text-align:center;border-top:1px solid #ececec;padding:14px 0 0;">
+    Abonnement-ID: {sub_id}<br/>
+    Spørsmål? Svar på denne e-posten eller skriv til <a href="mailto:erik@havoyet.no" style="color:#0a8674;">erik@havoyet.no</a>.
+  </div>
+</div>
+""".strip()
+
+    text_body = (
+        f"{test_banner_text}"
+        f"Hei {navn},\n\n"
+        f"Takk for at du startet et abonnement på {kasse_name}.\n\n"
+        f"Beløp per måned: {amount_str} kr\n"
+        f"Neste trekk: {next_dt}\n"
+        f"{('Leveringsdag: ' + leverdag + chr(10)) if leverdag else ''}"
+        f"Frakt: Inkludert\n\n"
+        f"Du kan hoppe over en levering opptil 2 uker før, eller si opp senest "
+        f"1 uke før neste trekk for å få full refusjon. Endre alt på "
+        f"https://havoyet.no/konto-dashbord.\n\n"
+        f"Abonnement-ID: {sub_id}\n"
+        f"Spørsmål? Svar på denne e-posten eller skriv til erik@havoyet.no."
+    )
+
+    subject = f"{subject_prefix}Velkommen som abonnent — {kasse_name}"
+    return _send_via_resend(
+        from_email=None,
+        from_name="Havøyet",
+        subject=subject,
+        body=text_body,
+        to_email=to_email,
+        html_body=html_body,
+    )
 
 @app.route("/api/subscription/admin-test/<sub_id>", methods=["DELETE"])
 def api_subscription_admin_test_delete(sub_id):
@@ -6898,6 +7037,139 @@ def api_newsletter_archive_delete(file_id):
         if removed:
             _save_newsletter_archive()
     return jsonify({"ok": True, "removed": removed})
+
+
+# ── NYHETSBREV-ÅRSHJUL (52-ukers redaksjonsplan) ──────────────────────────
+# Lagrer planlagte temaer per ISO-uke + defaults. Cron-jobben (Phase 2) leser
+# planen og lager Claude-utkast på planlagt dato. Nøkkelformat: "YYYY-Www".
+YEARPLAN_FILE = os.path.join(STATE_DIR, "havoyet_newsletter_yearplan.json")
+_yearplan = {"defaults": {}, "weeks": {}}
+_yearplan_lock = threading.Lock()
+
+_YEARPLAN_DEFAULTS = {
+    "weekday": 1,            # 0=mandag .. 6=søndag
+    "send_time": "09:00",
+    "def_tone": "Personlig og direkte",
+    "def_type": "Ukentlig fiskebrev",
+    "enabled": False,
+}
+
+
+def _load_yearplan():
+    global _yearplan
+    try:
+        if os.path.exists(YEARPLAN_FILE):
+            with open(YEARPLAN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+                _yearplan = {
+                    "defaults": {**_YEARPLAN_DEFAULTS, **(data.get("defaults") or {})},
+                    "weeks": data.get("weeks") or {},
+                }
+        else:
+            _yearplan = {"defaults": dict(_YEARPLAN_DEFAULTS), "weeks": {}}
+    except Exception as e:
+        print(f"[YEARPLAN] Kunne ikke laste: {e}")
+        _yearplan = {"defaults": dict(_YEARPLAN_DEFAULTS), "weeks": {}}
+
+
+def _save_yearplan():
+    try:
+        tmp = YEARPLAN_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_yearplan, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, YEARPLAN_FILE)
+    except Exception as e:
+        print(f"[YEARPLAN] save feilet: {e}")
+
+
+_load_yearplan()
+
+
+def _yp_week_key_valid(key):
+    # Format: "2026-W19"
+    try:
+        if not isinstance(key, str) or "-W" not in key:
+            return False
+        y, w = key.split("-W", 1)
+        yi, wi = int(y), int(w)
+        return 2020 <= yi <= 2099 and 1 <= wi <= 53
+    except Exception:
+        return False
+
+
+@app.route("/api/admin/newsletter-yearplan", methods=["GET", "PUT"])
+def api_yearplan_root():
+    if not _is_admin_request():
+        return jsonify({"error": "Forbidden"}), 403
+    if request.method == "GET":
+        year_q = request.args.get("year")
+        with _yearplan_lock:
+            defaults = dict(_yearplan.get("defaults") or {})
+            if year_q:
+                prefix = f"{year_q}-W"
+                weeks = {k: v for k, v in (_yearplan.get("weeks") or {}).items() if k.startswith(prefix)}
+            else:
+                weeks = dict(_yearplan.get("weeks") or {})
+        return jsonify({"ok": True, "defaults": {**_YEARPLAN_DEFAULTS, **defaults}, "weeks": weeks})
+    # PUT — oppdater defaults
+    data = request.get_json(silent=True) or {}
+    new_defaults = data.get("defaults") or {}
+    if not isinstance(new_defaults, dict):
+        return jsonify({"error": "'defaults' må være objekt"}), 400
+    cleaned = {}
+    for k, v in new_defaults.items():
+        if k not in _YEARPLAN_DEFAULTS:
+            continue
+        if k == "weekday":
+            try:
+                vi = int(v)
+                if 0 <= vi <= 6: cleaned[k] = vi
+            except Exception:
+                pass
+        elif k == "enabled":
+            cleaned[k] = bool(v)
+        elif k == "send_time":
+            if isinstance(v, str) and len(v) <= 5 and ":" in v:
+                cleaned[k] = v
+        else:
+            if isinstance(v, str) and v.strip():
+                cleaned[k] = v.strip()[:120]
+    with _yearplan_lock:
+        _yearplan["defaults"] = {**_YEARPLAN_DEFAULTS, **(_yearplan.get("defaults") or {}), **cleaned}
+        _save_yearplan()
+        return jsonify({"ok": True, "defaults": _yearplan["defaults"]})
+
+
+@app.route("/api/admin/newsletter-yearplan/week/<week_key>", methods=["PUT", "DELETE"])
+def api_yearplan_week(week_key):
+    if not _is_admin_request():
+        return jsonify({"error": "Forbidden"}), 403
+    if not _yp_week_key_valid(week_key):
+        return jsonify({"error": "Ugyldig uke-nøkkel (forventet YYYY-Www)"}), 400
+    if request.method == "DELETE":
+        with _yearplan_lock:
+            removed = (_yearplan.get("weeks") or {}).pop(week_key, None)
+            if removed is not None:
+                _save_yearplan()
+        return jsonify({"ok": True, "removed": removed is not None})
+    # PUT — opprett/oppdater uka
+    data = request.get_json(silent=True) or {}
+    week_entry = {
+        "tema": (data.get("tema") or "").strip()[:1000],
+        "tone": (data.get("tone") or None) if data.get("tone") else None,
+        "type": (data.get("type") or None) if data.get("type") else None,
+        "skip": bool(data.get("skip")),
+        "updated_at": int(time.time() * 1000),
+    }
+    # Bevar tidligere auto-gen-metadata hvis det finnes (settes av cron i Phase 2)
+    with _yearplan_lock:
+        prev = (_yearplan.get("weeks") or {}).get(week_key) or {}
+        for keep in ("auto_generated_at", "draft_id"):
+            if keep in prev:
+                week_entry[keep] = prev[keep]
+        _yearplan.setdefault("weeks", {})[week_key] = week_entry
+        _save_yearplan()
+    return jsonify({"ok": True, "week": week_entry})
 
 
 # ── NYHETSBREV-ABONNENTER (Flask = sannhetskilde, Resend = sender) ──────────
