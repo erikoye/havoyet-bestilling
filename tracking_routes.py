@@ -934,16 +934,62 @@ def _optimize_group_geographically(group: list[dict], start_point: tuple) -> lis
     return list(group)  # behold opprinnelig rekkefølge ved feil
 
 
-def _annotate_clock_times(stops: list[dict], start_clock: tuple[int, int] | None = None) -> None:
+def _parse_start_clock_hint(value: str | None) -> tuple[int, int] | None:
+    """Parser "HH:MM" til (h, m). Returnerer None ved feil eller tomt."""
+    if not isinstance(value, str) or ":" not in value:
+        return None
+    try:
+        h, m = value.split(":", 1)
+        return (int(h), int(m))
+    except ValueError:
+        return None
+
+
+def _compute_earliest_start(stops: list[dict]) -> tuple[int, int] | None:
+    """Finner tidligst mulige avreise som lar alle stopp ankomme etter sin
+    slot-start. Returnerer (h, m) eller None hvis ingen stopp har slot-info.
+
+    For hver stopp i: required_start = slot_start - cum_drive - prev_dwells
+    Tar maks slik at det "sneste" kravet styrer. Resultatet blir den tidligste
+    avreisen som unngår FOR TIDLIG-stopp.
+    """
+    if not stops:
+        return None
+    max_required: int | None = None
+    cum_drive = 0.0
+    for s in stops:
+        cum_drive += float(s.get("leg_min") or 0)
+        slot_start = _parse_slot_start_min(s.get("leveringstid", ""))
+        # Hopp over stopp uten slot-info (slot_start == 9999) eller 00:00-default
+        if slot_start == 9999 or slot_start == 0:
+            continue
+        prev_dwells = (int(s.get("stop_index", 1)) - 1) * _DWELL_MIN
+        required = int(round(slot_start - cum_drive - prev_dwells))
+        if max_required is None or required > max_required:
+            max_required = required
+    if max_required is None:
+        return None
+    # Klemt til [0..24h-1min] og runder NED til hele minuttet for å lande
+    # akkurat på slot-start (ikke ett minutt etter)
+    minutes = max(0, min(24 * 60 - 1, max_required))
+    return (minutes // 60, minutes % 60)
+
+
+def _annotate_clock_times(stops: list[dict], start_clock: tuple[int, int] | None = None) -> tuple[int, int]:
     """Setter `arrival_clock`, `departure_clock`, `late`-felter på hver stopp.
 
     arrival_clock = avreise + cum_min_from_depot (kjøretid)
     departure_clock = arrival + _DWELL_MIN
     late = True hvis arrival er etter slot-slutt
+
+    Hvis `start_clock` ikke er gitt, autoberegnes tidligst mulig avreise som
+    unngår FOR TIDLIG-stopp. Returnerer (h, m) brukt for avreise.
     """
     if not stops:
-        return
-    start_h, start_m = start_clock or _DEFAULT_START
+        return start_clock or _DEFAULT_START
+    if start_clock is None:
+        start_clock = _compute_earliest_start(stops) or _DEFAULT_START
+    start_h, start_m = start_clock
     start_total = start_h * 60 + start_m
     cum_drive = 0.0
     for s in stops:
@@ -958,6 +1004,7 @@ def _annotate_clock_times(stops: list[dict], start_clock: tuple[int, int] | None
         slot_start = _parse_slot_start_min(s.get("leveringstid", ""))
         s["late"] = (slot_end != 9999 and arrival_min > slot_end * 1)
         s["early"] = (slot_start != 9999 and slot_start != 0 and arrival_min + _DWELL_MIN < slot_start * 1)
+    return start_clock
 
 
 def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
@@ -1035,6 +1082,10 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
                 "cum_min_from_depot": round(cum_min, 1),
             })
             prev = (s["lat"], s["lon"])
+        # Auto-beregn tidligst mulig avreise + klokkeslett-annotering
+        start_clock_hint = day_state.get("start_clock") if isinstance(day_state, dict) else None
+        clock_override = _parse_start_clock_hint(start_clock_hint)
+        used_clock = _annotate_clock_times(ordered_stops, clock_override)
         return {
             "date": date_iso,
             "depot": {"lat": depot[0], "lon": depot[1]},
@@ -1045,6 +1096,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "optimizer": "custom",
             "approved": bool(day_state.get("approved")),
             "approved_at": day_state.get("approved_at"),
+            "start_clock": f"{used_clock[0]:02d}:{used_clock[1]:02d}",
+            "dwell_min": _DWELL_MIN,
             "unresolved": unresolved,
         }
 
@@ -1077,15 +1130,12 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             })
             prev = (s["lat"], s["lon"])
 
-        # Klokkeslett-annotering (default 14:00 hvis ingen er satt for dagen)
-        clock = None
-        if isinstance(start_clock_hint, str) and ":" in start_clock_hint:
-            try:
-                h, m = start_clock_hint.split(":", 1)
-                clock = (int(h), int(m))
-            except ValueError:
-                clock = None
-        _annotate_clock_times(slot_stops, clock)
+        # Klokkeslett-annotering: bruk admins eksplisitt satte start_clock
+        # hvis tilgjengelig, ellers auto-beregn tidligst mulig avreise som
+        # unngår FOR TIDLIG-stopp. Dette gjør at endringer på leveringstid i
+        # en bestilling automatisk gir ny avreisetid neste gang ruten hentes.
+        clock = _parse_start_clock_hint(start_clock_hint)
+        clock = _annotate_clock_times(slot_stops, clock)
 
         # Hent geometri i fast rekkefølge fra Google (én ekstra call, billig)
         geometry = None
@@ -1105,7 +1155,7 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "optimizer": "slot-aware",
             "approved": bool(day_state.get("approved")),
             "approved_at": day_state.get("approved_at"),
-            "start_clock": f"{(clock or _DEFAULT_START)[0]:02d}:{(clock or _DEFAULT_START)[1]:02d}",
+            "start_clock": f"{clock[0]:02d}:{clock[1]:02d}",
             "dwell_min": _DWELL_MIN,
             "unresolved": unresolved,
         }
@@ -1131,6 +1181,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
                 "cum_min_from_depot": round(cum_min, 1),
             }
             ordered_stops.append(stop)
+        clock_override = _parse_start_clock_hint(day_state.get("start_clock") if isinstance(day_state, dict) else None)
+        used_clock = _annotate_clock_times(ordered_stops, clock_override)
         return {
             "date": date_iso,
             "depot": {"lat": depot[0], "lon": depot[1]},
@@ -1141,6 +1193,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "optimizer": trip.get("source") or "osrm",
             "approved": bool(day_state.get("approved")),
             "approved_at": day_state.get("approved_at"),
+            "start_clock": f"{used_clock[0]:02d}:{used_clock[1]:02d}",
+            "dwell_min": _DWELL_MIN,
             "unresolved": unresolved,
         }
 
@@ -1159,6 +1213,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
             "cum_min_from_depot": round(cum_min, 1),
         })
         prev = (s["lat"], s["lon"])
+    clock_override = _parse_start_clock_hint(day_state.get("start_clock") if isinstance(day_state, dict) else None)
+    used_clock = _annotate_clock_times(fallback_stops, clock_override)
     return {
         "date": date_iso,
         "depot": {"lat": depot[0], "lon": depot[1]},
@@ -1169,6 +1225,8 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
         "optimizer": "fallback",
         "approved": bool(day_state.get("approved")),
         "approved_at": day_state.get("approved_at"),
+        "start_clock": f"{used_clock[0]:02d}:{used_clock[1]:02d}",
+        "dwell_min": _DWELL_MIN,
         "unresolved": unresolved,
     }
 
