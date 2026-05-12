@@ -586,6 +586,15 @@
       flex-shrink: 0; white-space: nowrap;
     }
     .btn-reset:hover { background: #fff; color: var(--dark); border-color: rgba(0,0,0,0.2); }
+    .opt-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      font-family: 'DM Mono', 'DM Sans', monospace; font-size: 10.5px; font-weight: 700;
+      letter-spacing: 0.04em; line-height: 1; padding: 3px 7px;
+      border-radius: 6px; margin-left: 6px; vertical-align: middle;
+      border: 1px solid transparent; white-space: nowrap;
+    }
+    .opt-badge.ub { background: rgba(245, 158, 11, 0.16); color: #b45309; border-color: rgba(245, 158, 11, 0.45); }
+    .opt-badge.us { background: rgba(59, 130, 246, 0.14); color: #1d4ed8; border-color: rgba(59, 130, 246, 0.4); }
     .repl-price {
       font-size: 11px; font-weight: 500; opacity: 0.75;
     }
@@ -1780,6 +1789,28 @@ function stripWeightSuffix(name) {
     .trim();
 }
 
+// Sjekker om kunden har valgt bort bein eller skinn. Returnerer HTML-streng
+// med UB/US-merker (tomt hvis ingen). Leser både selectedOpts (objekt) og
+// variantLabel/variantStr (tekst) — disse to har historisk vært i bruk på tvers
+// av kunde-checkout og admin manuelle ordre.
+function variantOptionBadges(item) {
+  if (!item) return '';
+  const tokens = [];
+  if (item.selectedOpts && typeof item.selectedOpts === 'object') {
+    Object.values(item.selectedOpts).forEach(v => { if (v) tokens.push(String(v)); });
+  }
+  [item.variantLabel, item.variantStr, item.variant].forEach(v => {
+    if (v) tokens.push(String(v));
+  });
+  const blob = tokens.join(' ').toLowerCase();
+  const utenBein  = /\buten\s*bein\b/.test(blob);
+  const utenSkinn = /\buten\s*skinn\b/.test(blob);
+  const out = [];
+  if (utenBein)  out.push('<span class="opt-badge ub" title="Uten bein">UB</span>');
+  if (utenSkinn) out.push('<span class="opt-badge us" title="Uten skinn">US</span>');
+  return out.join('');
+}
+
 function formatItemName(item) {
   const name = stripWeightSuffix(item.name || '');
   const unit = item.unit || '';
@@ -2014,7 +2045,7 @@ function renderItemCard(item, i, s) {
   return `
   <div class="item-card ${statusClass}" id="card-${i}">
     <div class="item-top">
-      <div class="item-name" id="item-name-${i}">${s.confirmedReplacement ? (() => { const f=FISH_DB.find(x=>x.id===s.confirmedReplacement); return f ? `<span class="item-name replaced">${formatItemName(item)}</span> <span class="item-name-replacement">${f.name}</span>` : formatItemName(item); })() : formatItemName(item)}</div>
+      <div class="item-name" id="item-name-${i}">${s.confirmedReplacement ? (() => { const f=FISH_DB.find(x=>x.id===s.confirmedReplacement); return f ? `<span class="item-name replaced">${formatItemName(item)}</span> <span class="item-name-replacement">${f.name}</span>` : formatItemName(item); })() : formatItemName(item)}${variantOptionBadges(item)}</div>
       ${renderItemQtyEditor(item, i)}
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setAvail('${currentOrderId}',${i},'ok')">Tilgjengelig</button>
@@ -2140,7 +2171,7 @@ function renderComponentCard(c, i, ci) {
   return `
   <div class="item-card ${statusClass}" id="card-${i}-${ci}">
     <div class="item-top">
-      <div class="item-name" id="comp-name-${i}-${ci}">${escHtml(c.name)}${expectedHint}</div>
+      <div class="item-name" id="comp-name-${i}-${ci}">${escHtml(c.name)}${expectedHint}${variantOptionBadges(c)}</div>
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'ok')">Tilgjengelig</button>
         <button class="${chipClass('unsure')}" onclick="setComponentAvail('${currentOrderId}',${i},${ci},'unsure')">Avventer fiskebåt</button>
@@ -2577,10 +2608,11 @@ function updateChips(orderId, i) {
     const order = ORDERS.find(x=>x.id===orderId);
     const originalItem = order ? order.items[i] : null;
     const originalName = originalItem ? formatItemName(originalItem) : '';
+    const badges = originalItem ? variantOptionBadges(originalItem) : '';
     if (confirmed) {
-      nameEl.innerHTML = `<span class="item-name replaced">${originalName}</span> <span class="item-name-replacement">${confirmed.name}</span>`;
+      nameEl.innerHTML = `<span class="item-name replaced">${originalName}</span> <span class="item-name-replacement">${confirmed.name}</span>${badges}`;
     } else {
-      nameEl.innerHTML = originalName;
+      nameEl.innerHTML = `${originalName}${badges}`;
     }
   }
 }
