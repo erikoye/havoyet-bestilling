@@ -486,8 +486,10 @@ function _itemToComponents(item) {
       return { productName: c.name };
     });
   }
-  // Vanlig fiskelinje: estimer gram fra variantStr / grams-felt / unit
-  const fromVariant = _parseGrams(item.variantStr) || _parseGrams(item.variantLabel);
+  // Vanlig fiskelinje: estimer gram fra variantStr / grams-felt / produktnavn / unit.
+  // Plukker også opp "Reker Ferske – 1 kg" der vekten ligger i navnet, slik at
+  // 2× "1 kg"-pakker ikke vises som "2 stk" men som "2 kg" i innkjøpslisten.
+  const fromVariant = _parseGrams(item.variantStr) || _parseGrams(item.variantLabel) || _parseGrams(name);
   if (Number.isFinite(item.grams) && item.grams > 0) {
     return [{ productName: name, grams: Number(item.grams) * qty }];
   }
