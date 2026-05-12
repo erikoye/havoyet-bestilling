@@ -502,6 +502,25 @@ function _itemToComponents(item) {
   // Default: 250 g antagelse for fisk (samme som PDP-default)
   return [{ productName: name, grams: 250 * qty }];
 }
+// Sjekker om en ordrelinje er valgt uten bein og/eller uten skinn.
+// Returnerer {ub, us} der true=valgt-uten. Leser selectedOpts (objekt),
+// variantLabel/variantStr (tekst) — case-insensitivt.
+function _detectBoneSkin(item) {
+  if (!item) return { ub: false, us: false };
+  const tokens = [];
+  if (item.selectedOpts && typeof item.selectedOpts === 'object') {
+    Object.values(item.selectedOpts).forEach(v => { if (v) tokens.push(String(v)); });
+  }
+  [item.variantLabel, item.variantStr, item.variant].forEach(v => {
+    if (v) tokens.push(String(v));
+  });
+  const blob = tokens.join(' ').toLowerCase();
+  return {
+    ub: /\buten\s*bein\b/.test(blob),
+    us: /\buten\s*skinn\b/.test(blob),
+  };
+}
+
 function _fmtGrams(g) {
   if (g >= 1000) return (g / 1000).toLocaleString('nb', { maximumFractionDigits: 2 }) + ' kg';
   return Math.round(g) + ' g';
@@ -542,13 +561,28 @@ async function _renderSalesCalendar() {
     dayMap.orderCount++;
     for (const item of (o.items || [])) {
       const components = _itemToComponents(item);
+      const isKasse = !!_detectKasse(item.productName || item.name || '');
+      // Bone/skinn-flagg arves kun for ikke-kasser (kasse-komponenter er
+      // skalldyr og har ikke disse valgene). Multipliser med qty slik at
+      // 3× "Lyr filet uten bein" teller som 3 UB.
+      const bs = isKasse ? { ub: false, us: false } : _detectBoneSkin(item);
+      const qty = Math.max(1, Number(item.qty || item.quantity || 1));
       for (const c of components) {
         const key = c.productName;
         if (!key) continue;
-        const cur = dayMap.products.get(key) || { grams: 0, stk: 0, orderRefs: new Set() };
+        const cur = dayMap.products.get(key) || {
+          grams: 0, stk: 0, orderRefs: new Set(),
+          ub: 0, us: 0, both: 0, none: 0,
+        };
         if (Number.isFinite(c.grams)) cur.grams += c.grams;
         if (Number.isFinite(c.stk))   cur.stk   += c.stk;
         cur.orderRefs.add(o.id);
+        if (!isKasse) {
+          if (bs.ub && bs.us)      cur.both += qty;
+          else if (bs.ub)          cur.ub   += qty;
+          else if (bs.us)          cur.us   += qty;
+          else                     cur.none += qty;
+        }
         dayMap.products.set(key, cur);
       }
     }
@@ -558,18 +592,32 @@ async function _renderSalesCalendar() {
     return;
   }
   const sortedDates = Array.from(byDate.keys()).sort();
+  const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
   body.innerHTML = sortedDates.map(iso => {
     const day = byDate.get(iso);
     const products = Array.from(day.products.entries()).sort(([a],[b]) => a.localeCompare(b, 'nb'));
-    const rows = products.map(([name, q]) => {
+    const rows = products.map(([name, q], idx) => {
       const parts = [];
       if (q.grams > 0) parts.push(_fmtGrams(q.grams));
       if (q.stk   > 0) parts.push(q.stk + ' stk');
       const qtyStr = parts.join(' + ') || '–';
+      const hasFlag = (q.ub + q.us + q.both) > 0;
+      const rowId = `scrow-${iso}-${idx}`;
+      const flagBtn = hasFlag
+        ? `<button type="button" class="sc-flag" data-target="${rowId}" title="Klikk for detaljer om bein/skinn" style="border:none;background:rgba(220, 38, 38, 0.12);color:#b91c1c;font-family:'DM Mono',monospace;font-weight:800;font-size:12px;width:20px;height:20px;border-radius:50%;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;line-height:1;padding:0;">!</button>`
+        : '';
+      const detailParts = [];
+      if (q.both > 0) detailParts.push(`<strong>${q.both}</strong> både UB & US`);
+      if (q.ub   > 0) detailParts.push(`<strong>${q.ub}</strong> kun UB <span style="color:var(--muted);">(uten bein)</span>`);
+      if (q.us   > 0) detailParts.push(`<strong>${q.us}</strong> kun US <span style="color:var(--muted);">(uten skinn)</span>`);
+      if (q.none > 0) detailParts.push(`<strong>${q.none}</strong> uten spesielle ønsker`);
+      const detailHtml = hasFlag
+        ? `<div id="${rowId}" class="sc-detail" style="display:none;padding:8px 12px;margin:4px 0 8px 28px;background:#fef2f2;border-left:3px solid #f87171;border-radius:6px;font-size:12.5px;color:var(--ink);line-height:1.7;">${detailParts.join(' · ')}</div>`
+        : '';
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">
-        <span style="color:var(--ink);">${name.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</span>
+        <span style="display:inline-flex;align-items:center;color:var(--ink);">${flagBtn}${esc(name)}</span>
         <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--primary);">${qtyStr}</span>
-      </div>`;
+      </div>${detailHtml}`;
     }).join('');
     const dShort = new Date(iso + 'T00:00:00').toLocaleDateString('nb-NO', { day: '2-digit', month: '2-digit' });
     return `<div style="margin-bottom:18px;">
@@ -580,6 +628,19 @@ async function _renderSalesCalendar() {
       ${rows || '<div style="padding:6px 0;font-size:12.5px;color:var(--muted);">Ingen varer</div>'}
     </div>`;
   }).join('');
+
+  // Bind klikk én gang for å toggle detaljer på "!"-merker
+  if (!body.dataset.flagBound) {
+    body.addEventListener('click', e => {
+      const btn = e.target.closest('.sc-flag');
+      if (!btn) return;
+      const id = btn.getAttribute('data-target');
+      const el = id ? document.getElementById(id) : null;
+      if (!el) return;
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    });
+    body.dataset.flagBound = '1';
+  }
 }
 
 // ── BOOT + POLL ────────────────────────────────────────
