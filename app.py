@@ -4357,6 +4357,11 @@ def api_subscription_admin_test_create():
 
     mail_status = None
     if data.get("send_mail"):
+        # `hide_test_markers=True` rendrer mailen som om det var en ekte
+        # bestilling — ingen [TEST]-prefix, ingen gult banner. Sub-en er
+        # fortsatt synthetisk internt (id med prefiks `test_`), men
+        # mailen ser identisk ut med en ekte Stripe-bekreftelse.
+        show_test = not bool(data.get("hide_test_markers"))
         try:
             ok, info = _send_subscription_receipt_mail(
                 to_email=email,
@@ -4366,7 +4371,7 @@ def api_subscription_admin_test_create():
                 description=desc,
                 next_period_ts=next_period,
                 sub_id=sub_id,
-                is_test=True,
+                is_test=show_test,
             )
             mail_status = {"ok": ok, "info": info}
         except Exception as e:
