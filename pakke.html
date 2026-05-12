@@ -2009,7 +2009,7 @@ function renderItemCard(item, i, s) {
       ${renderItemQtyEditor(item, i)}
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setAvail('${currentOrderId}',${i},'ok')">Tilgjengelig</button>
-        <button class="${chipClass('unsure')}" onclick="setAvail('${currentOrderId}',${i},'unsure')">Usikkert</button>
+        <button class="${chipClass('unsure')}" onclick="setAvail('${currentOrderId}',${i},'unsure')">Avventer fiskebåt</button>
         <button class="${chipClass('no')}"     onclick="setAvail('${currentOrderId}',${i},'no')">Ikke tilgjengelig</button>
       </div>
     </div>
@@ -2040,7 +2040,7 @@ function renderItemCard(item, i, s) {
     <div class="replacement-section ${replVisible}" id="repl-${i}">
       <div class="replacement-header">
         <span class="replacement-title">
-          ${s.avail==='no'?'🔴 Ikke tilgjengelig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
+          ${s.avail==='no'?'🔴 Ikke tilgjengelig – velg erstatning':'🟡 Avventer fiskebåt – søk etter alternativ'}
         </span>
       </div>
       <div class="search-row">
@@ -2133,7 +2133,7 @@ function renderComponentCard(c, i, ci) {
       <div class="item-name" id="comp-name-${i}-${ci}">${escHtml(c.name)}${expectedHint}</div>
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'ok')">Tilgjengelig</button>
-        <button class="${chipClass('unsure')}" onclick="setComponentAvail('${currentOrderId}',${i},${ci},'unsure')">Usikkert</button>
+        <button class="${chipClass('unsure')}" onclick="setComponentAvail('${currentOrderId}',${i},${ci},'unsure')">Avventer fiskebåt</button>
         <button class="${chipClass('no')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'no')">Ikke tilgjengelig</button>
       </div>
     </div>
@@ -2156,7 +2156,7 @@ function renderComponentCard(c, i, ci) {
     <div class="replacement-section ${replVisible}" id="comp-repl-${i}-${ci}">
       <div class="replacement-header">
         <span class="replacement-title">
-          ${c.avail==='no'?'🔴 Ikke tilgjengelig – velg erstatning':'🟡 Usikkert – søk etter alternativ'}
+          ${c.avail==='no'?'🔴 Ikke tilgjengelig – velg erstatning':'🟡 Avventer fiskebåt – søk etter alternativ'}
         </span>
       </div>
       <div class="search-row">
