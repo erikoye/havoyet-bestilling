@@ -500,7 +500,17 @@ function _itemToComponents(item) {
   const unit = String(item.unit || '').toLowerCase();
   if (unit === 'kg') return [{ productName: name, grams: qty * 1000 }];
   if (unit === 'g')  return [{ productName: name, grams: qty }];
-  if (unit === 'stk' || item.kind === 'unit') return [{ productName: name, stk: qty }];
+  if (unit === 'stk' || item.kind === 'unit') {
+    // Slå opp havoyet.no-katalogen — hvis produktet har en kjent pakke-vekt
+    // (f.eks. "1 kg" for fersk reker/torsk), bruk den. Ellers fall til stk.
+    const canon = _canonicalProductKey(name);
+    const matched = (_products || []).find(p => _canonicalProductKey(p.name) === canon);
+    if (matched && matched.weight) {
+      const stkGrams = _parseGrams(matched.weight);
+      if (stkGrams) return [{ productName: name, grams: stkGrams * qty }];
+    }
+    return [{ productName: name, stk: qty }];
+  }
   // Default: 250 g antagelse for fisk (samme som PDP-default)
   return [{ productName: name, grams: 250 * qty }];
 }
@@ -642,10 +652,21 @@ async function _renderSalesCalendar() {
       if (q.grams > 0) parts.push(_fmtGrams(q.grams));
       if (q.stk   > 0) parts.push(q.stk + ' stk');
       const qtyStr = parts.join(' + ') || '–';
+      // Total "uten"-antall: viser UB-merke om noen rader har uten bein
+      // (alene eller "begge"), tilsvarende for US. Detalj-radens telling er
+      // detaljert: kun UB / kun US / både UB & US / uten spesielle ønsker.
+      const ubTotal = q.ub + q.both;
+      const usTotal = q.us + q.both;
       const hasFlag = (q.ub + q.us + q.both) > 0;
       const rowId = `scrow-${iso}-${idx}`;
       const flagBtn = hasFlag
         ? `<button type="button" class="sc-flag" data-target="${rowId}" title="Klikk for detaljer om bein/skinn" style="border:none;background:rgba(220, 38, 38, 0.12);color:#b91c1c;font-family:'DM Mono',monospace;font-weight:800;font-size:12px;width:20px;height:20px;border-radius:50%;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;line-height:1;padding:0;">!</button>`
+        : '';
+      const ubBadge = ubTotal > 0
+        ? `<span class="sc-badge ub" style="display:inline-flex;align-items:center;font-family:'DM Mono',monospace;font-size:10.5px;font-weight:800;letter-spacing:0.04em;padding:2px 7px;border-radius:6px;margin-left:6px;background:rgba(245, 158, 11, 0.16);color:#b45309;border:1px solid rgba(245, 158, 11, 0.45);">UB ${ubTotal}</span>`
+        : '';
+      const usBadge = usTotal > 0
+        ? `<span class="sc-badge us" style="display:inline-flex;align-items:center;font-family:'DM Mono',monospace;font-size:10.5px;font-weight:800;letter-spacing:0.04em;padding:2px 7px;border-radius:6px;margin-left:6px;background:rgba(59, 130, 246, 0.14);color:#1d4ed8;border:1px solid rgba(59, 130, 246, 0.4);">US ${usTotal}</span>`
         : '';
       const detailParts = [];
       if (q.both > 0) detailParts.push(`<strong>${q.both}</strong> både UB & US`);
@@ -655,9 +676,9 @@ async function _renderSalesCalendar() {
       const detailHtml = hasFlag
         ? `<div id="${rowId}" class="sc-detail" style="display:none;padding:8px 12px;margin:4px 0 8px 28px;background:#fef2f2;border-left:3px solid #f87171;border-radius:6px;font-size:12.5px;color:var(--ink);line-height:1.7;">${detailParts.join(' · ')}</div>`
         : '';
-      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;">
-        <span style="display:inline-flex;align-items:center;color:var(--ink);">${flagBtn}${esc(name)}</span>
-        <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--primary);">${qtyStr}</span>
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px;gap:8px;">
+        <span style="display:inline-flex;align-items:center;color:var(--ink);flex-wrap:wrap;">${flagBtn}${esc(name)}${ubBadge}${usBadge}</span>
+        <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--primary);white-space:nowrap;">${qtyStr}</span>
       </div>${detailHtml}`;
     }).join('');
     const dShort = new Date(iso + 'T00:00:00').toLocaleDateString('nb-NO', { day: '2-digit', month: '2-digit' });
