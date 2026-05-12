@@ -552,6 +552,17 @@ async function _renderSalesCalendar() {
   body.innerHTML = '<div class="loading" style="padding:14px 0;color:var(--muted);font-size:13px;">Henter ordrer…</div>';
   const daysSel = document.getElementById('salesCalDays');
   const days = daysSel ? parseInt(daysSel.value, 10) || 14 : 14;
+  // Bygg oppslag fra kanonisk nøkkel → produkt-navn på havoyet.no, slik at
+  // raden i innkjøpslisten viser samme navn som kunden ser i butikken.
+  // Foretrekker korteste navn ved kollisjoner (uten "– 1 kg"-suffikser).
+  const websiteName = new Map();
+  for (const p of (_products || [])) {
+    if (!p || !p.name) continue;
+    const k = _canonicalProductKey(p.name);
+    if (!k) continue;
+    const existing = websiteName.get(k);
+    if (!existing || p.name.length < existing.length) websiteName.set(k, p.name);
+  }
   let orders = [];
   try {
     const r = await fetch(`${API_BASE}/api/orders`, { cache: 'no-store' });
@@ -587,14 +598,20 @@ async function _renderSalesCalendar() {
         if (!rawName) continue;
         const key = _canonicalProductKey(rawName);
         if (!key) continue;
+        // Foretrekk navn fra havoyet.no-katalogen (samme som kunden ser).
+        // Faller tilbake til korteste rå-navn dersom produktet ikke finnes
+        // i katalogen (f.eks. interne kasse-komponenter som "Krabbeklør").
+        const preferredName = websiteName.get(key) || rawName;
         const cur = dayMap.products.get(key) || {
-          displayName: rawName,
+          displayName: preferredName,
           grams: 0, stk: 0, orderRefs: new Set(),
           ub: 0, us: 0, both: 0, none: 0,
         };
-        // Foretrekk det korteste navnet som visning ("Reker" framfor
-        // "Reker Ferske – 1 kg") — gir reneste rad i innkjøpslisten.
-        if (rawName.length < cur.displayName.length) cur.displayName = rawName;
+        if (websiteName.has(key)) {
+          cur.displayName = websiteName.get(key);
+        } else if (rawName.length < cur.displayName.length) {
+          cur.displayName = rawName;
+        }
         if (Number.isFinite(c.grams)) cur.grams += c.grams;
         if (Number.isFinite(c.stk))   cur.stk   += c.stk;
         cur.orderRefs.add(o.id);
