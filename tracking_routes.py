@@ -1561,6 +1561,10 @@ def driver_route_today():
     kan forhåndsvise dagens leveringer før admin godkjenner. Når ruten
     ikke er godkjent settes 'awaiting_approval' = True så app-en kan vise
     et tydelig "venter på godkjenning"-banner.
+
+    Stopp som sjåføren har markert som "passert" returneres i et eget
+    `passed_stops`-felt så app-en kan tilby "Vis passerte"-toggle, mens
+    `stops` kun inneholder de gjenstående.
     """
     _, err = _driver_only()
     if err:
@@ -1569,7 +1573,47 @@ def driver_route_today():
     route = _build_route(date_iso, optimize=True)
     route["vehicle"] = _current_vehicle_position()
     route["awaiting_approval"] = not bool(route.get("approved"))
+
+    passed_ids = set(str(x) for x in
+                     (_get_day_state(date_iso).get("passed_orders") or []))
+    all_stops = route.get("stops") or []
+    if passed_ids:
+        active = [s for s in all_stops if str(s.get("order_id")) not in passed_ids]
+        passed = [s for s in all_stops if str(s.get("order_id")) in passed_ids]
+        route["stops"] = active
+        route["passed_stops"] = passed
+    else:
+        route["passed_stops"] = []
     return jsonify(route)
+
+
+@bp.post("/api/driver/route/mark-passed")
+def driver_mark_passed():
+    """Sjåfør markerer/avmarkerer et stopp som passert (ferdig levert).
+
+    Body: { date?: "YYYY-MM-DD", order_id: str, passed: bool }
+    Default action: passed=True. Bruk passed=False for å angre.
+    """
+    _, err = _driver_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    order_id = str(data.get("order_id") or "").strip()
+    if not order_id:
+        return jsonify({"error": "order_id mangler"}), 400
+    passed = bool(data.get("passed", True))
+
+    day_state = _get_day_state(date_iso)
+    current = [str(x) for x in (day_state.get("passed_orders") or [])]
+    cur_set = set(current)
+    if passed:
+        if order_id not in cur_set:
+            current.append(order_id)
+    else:
+        current = [x for x in current if x != order_id]
+    _set_day_state(date_iso, {"passed_orders": current})
+    return jsonify({"ok": True, "date": date_iso, "passed_orders": current})
 
 
 @bp.get("/api/driver/route/live")

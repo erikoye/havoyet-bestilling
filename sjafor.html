@@ -201,11 +201,31 @@
     .tl-card .badge.slot{background:rgba(13,148,136,.1);color:var(--primary-dk)}
     .tl-card .badge.live{background:rgba(13,148,136,.18);color:var(--primary-dk);font-weight:700}
     .tl-card .badge.last{background:var(--dark);color:#fff}
-    .tl-card .nav-btn{flex-shrink:0;background:var(--primary);color:#fff;border:none;
+    .tl-card .actions{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+    .tl-card .nav-btn{background:var(--primary);color:#fff;border:none;
                       border-radius:10px;padding:8px 10px;font-size:18px;cursor:pointer;
                       text-decoration:none;line-height:1;display:flex;align-items:center;
-                      justify-content:center;min-width:38px;min-height:38px}
+                      justify-content:center;min-width:42px;min-height:38px}
     .tl-card .nav-btn:active{filter:brightness(.92)}
+    .tl-card .pass-btn{background:#fff;color:var(--ok);border:1.5px solid var(--ok);
+                       border-radius:10px;padding:6px 10px;font-size:11.5px;cursor:pointer;
+                       font-weight:700;text-transform:uppercase;letter-spacing:.4px;
+                       line-height:1;display:flex;align-items:center;justify-content:center;
+                       min-width:42px;min-height:34px;font-family:inherit;gap:4px}
+    .tl-card .pass-btn:active{background:var(--ok);color:#fff;transform:scale(.96)}
+
+    /* Toggle for å vise passerte stopp */
+    .passed-toggle{display:flex;align-items:center;justify-content:center;gap:6px;
+                   margin:14px 0 4px;padding:8px 14px;background:#fff;
+                   border:1px dashed var(--line);border-radius:10px;color:var(--soft);
+                   font-size:12px;cursor:pointer;font-family:inherit;font-weight:600;
+                   width:100%}
+    .passed-toggle:hover{border-color:var(--ok);color:var(--ok)}
+
+    /* Undo-knapp for passert stopp */
+    .tl-card .undo-btn{background:#fff;color:var(--soft);border:1px solid var(--line);
+                       border-radius:10px;padding:6px 10px;font-size:11px;cursor:pointer;
+                       font-weight:600;font-family:inherit;line-height:1}
 
     /* Variant: depot (start fra butikken) — kompakt mørkt kort */
     .tl-depot .tl-card{background:linear-gradient(135deg,var(--dark),#1e293b);
@@ -412,6 +432,47 @@ function navLink(lat, lon, label){
   return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving`;
 }
 
+async function markPassed(orderId, passed, btn){
+  if (btn) { btn.disabled = true; const prev = btn.textContent; btn.dataset.prev = prev; btn.textContent = passed ? 'Lagrer…' : 'Angrer…'; }
+  try {
+    const r = await fetch(`/api/driver/route/mark-passed?pin=${encodeURIComponent(getPin())}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: activeDate, order_id: String(orderId), passed }),
+    });
+    if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp."); return; }
+    if (!r.ok) {
+      const v = await r.json().catch(() => ({}));
+      alert("Klarte ikke å lagre: " + (v.error || r.status));
+      if (btn) { btn.disabled = false; btn.textContent = btn.dataset.prev || ''; }
+      return;
+    }
+    await loadRoute();
+  } catch(e) {
+    alert("Feilet: " + (e.message || e));
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.prev || ''; }
+  }
+}
+
+function togglePassed(){
+  const sec = document.getElementById('passedSection');
+  const btn = document.getElementById('passedToggle');
+  if (!sec || !btn) return;
+  const expanded = btn.dataset.expanded === 'true';
+  const n = (currentRoute && Array.isArray(currentRoute.passed_stops))
+    ? currentRoute.passed_stops.length : 0;
+  const plural = n === 1 ? '' : 'e';
+  if (expanded) {
+    sec.style.display = 'none';
+    btn.dataset.expanded = 'false';
+    btn.textContent = `✓ Vis ${n} passert${plural} stopp`;
+  } else {
+    sec.style.display = '';
+    btn.dataset.expanded = 'true';
+    btn.textContent = `Skjul ${n} passert${plural} stopp`;
+  }
+}
+
 async function fetchRoute(){
   const r = await fetch(`/api/driver/route/today?date=${activeDate}&pin=${encodeURIComponent(getPin())}`);
   if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp. Logg inn på nytt."); return null; }
@@ -607,33 +668,76 @@ async function loadRoute(){
               <div class="addr">${[s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ")}</div>
               <div class="badges">${badges}</div>
             </div>
-            <a class="nav-btn" href="${navLink(s.lat, s.lon)}" target="_blank" title="Naviger" aria-label="Naviger til ${(s.navn||'').replace(/"/g,'&quot;')}">🧭</a>
+            <div class="actions">
+              <a class="nav-btn" href="${navLink(s.lat, s.lon)}" target="_blank" title="Naviger" aria-label="Naviger til ${(s.navn||'').replace(/"/g,'&quot;')}">🧭</a>
+              <button class="pass-btn" data-pass="${s.order_id}" title="Marker som passert / ferdig levert">✓ Passert</button>
+            </div>
           </div>
         </div>
       </div>${breaksAfter}`;
   }).join('');
 
   // Slutt-rad: estimert ferdig-tid
-  const lastStop = stops[stops.length - 1];
-  const lastMin = clockToMin(lastStop.departure_clock || lastStop.arrival_clock);
-  if (lastMin != null) {
-    const endH = String(Math.floor(lastMin/60) % 24).padStart(2,'0');
-    const endM = String(lastMin % 60).padStart(2,'0');
-    timelineHtml += `
-      <div class="tl tl-end" data-time="${endH}:${endM}">
+  if (stops.length) {
+    const lastStop = stops[stops.length - 1];
+    const lastMin = clockToMin(lastStop.departure_clock || lastStop.arrival_clock);
+    if (lastMin != null) {
+      const endH = String(Math.floor(lastMin/60) % 24).padStart(2,'0');
+      const endM = String(lastMin % 60).padStart(2,'0');
+      timelineHtml += `
+        <div class="tl tl-end" data-time="${endH}:${endM}">
+          <div class="tl-card">
+            <div class="name">Ferdig med ruten</div>
+          </div>
+        </div>`;
+    }
+  }
+
+  // Passerte stopp — vises under en collapsable toggle
+  const passedStops = Array.isArray(data.passed_stops) ? data.passed_stops : [];
+  let passedHtml = '';
+  if (passedStops.length) {
+    const passedItems = passedStops.map(s => `
+      <div class="tl tl-past" data-time="${s.arrival_clock || '—'}" data-id="${s.order_id}">
         <div class="tl-card">
-          <div class="name">Ferdig med ruten</div>
+          <div class="head">
+            <div style="flex:1;min-width:0">
+              <div class="name">#${s.stop_index} · ${s.navn || ('Bestilling #'+s.order_id)}</div>
+              <div class="addr">${[s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ")}</div>
+            </div>
+            <button class="undo-btn" data-unpass="${s.order_id}" title="Angre passert">↶ Angre</button>
+          </div>
         </div>
+      </div>`).join('');
+    passedHtml = `
+      <button class="passed-toggle" id="passedToggle" type="button"
+              data-expanded="false" onclick="togglePassed()">
+        ✓ Vis ${passedStops.length} passert${passedStops.length === 1 ? '' : 'e'} stopp
+      </button>
+      <div id="passedSection" style="display:none;margin-top:8px;">
+        <div class="timeline" style="opacity:.85">${passedItems}</div>
       </div>`;
   }
 
-  $("stops").innerHTML = `<div class="timeline">${timelineHtml}</div>`;
+  $("stops").innerHTML = `<div class="timeline">${timelineHtml}</div>${passedHtml}`;
 
   document.querySelectorAll(".tl[data-id]").forEach(el => {
     el.addEventListener("click", e => {
-      if (e.target.closest("a")) return;
+      if (e.target.closest("a") || e.target.closest("button")) return;
       const m = stopMarkers[el.dataset.id];
       if (m) { map.setView(m.getLatLng(), 15); m.openPopup && m.openPopup(); }
+    });
+  });
+  document.querySelectorAll("[data-pass]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      markPassed(btn.dataset.pass, true, btn);
+    });
+  });
+  document.querySelectorAll("[data-unpass]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      markPassed(btn.dataset.unpass, false, btn);
     });
   });
 
