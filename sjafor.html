@@ -72,77 +72,116 @@
     .approval-banner b{display:block;font-size:13px}
     .approval-banner small{display:block;font-size:11px;color:#92400e;margin-top:1px}
 
-    #map{flex:0 0 38vh;width:100%;background:#dde}
-    @media (min-height:800px){ #map{flex-basis:42vh} }
+    #map{flex:0 0 32vh;width:100%;background:#dde}
+    @media (min-height:800px){ #map{flex-basis:36vh} }
 
-    .stops-panel{flex:1;overflow-y:auto;padding:10px 12px 24px;
+    .stops-panel{flex:1;overflow-y:auto;padding:14px 14px 24px;
                  padding-bottom:max(env(safe-area-inset-bottom),24px)}
 
+    /* "Neste stopp"-kort — primær fokus, alltid på toppen */
     .next-card{background:linear-gradient(135deg,var(--dark),#1e293b);color:#fff;
-               border-radius:14px;padding:16px 16px 14px;margin-bottom:14px;
-               box-shadow:0 6px 18px rgba(15,23,42,.25)}
-    .next-card .label{color:var(--gold);font-size:11px;letter-spacing:.8px;
+               border-radius:18px;padding:18px;margin-bottom:18px;
+               box-shadow:0 10px 28px rgba(15,23,42,.22)}
+    .next-card .label{color:var(--gold);font-size:11px;letter-spacing:1px;
                       text-transform:uppercase;font-weight:700}
-    .next-card .name{font-size:20px;font-weight:700;margin:4px 0 2px;line-height:1.2}
+    .next-card .name{font-size:22px;font-weight:700;margin:6px 0 4px;line-height:1.15}
     .next-card .addr{font-size:13px;color:rgba(255,255,255,.85);line-height:1.4}
-    .next-card .meta{display:flex;gap:14px;margin-top:12px;font-size:13px;
+    .next-card .meta{display:flex;gap:18px;margin-top:14px;font-size:13px;
                      color:rgba(255,255,255,.95)}
-    .next-card .meta .val{font-weight:700;font-size:18px;color:#fff;
-                          font-variant-numeric:tabular-nums}
+    .next-card .meta>div{flex:1;min-width:0}
+    .next-card .meta .lbl{opacity:.65;font-size:10px;text-transform:uppercase;
+                          letter-spacing:.6px;font-weight:600}
+    .next-card .meta .val{font-weight:700;font-size:20px;color:#fff;
+                          font-variant-numeric:tabular-nums;display:block;margin-top:2px}
     .next-card .nav-btn{display:flex;align-items:center;justify-content:center;
                         gap:8px;width:100%;background:var(--gold);color:var(--blue);
-                        border:none;border-radius:10px;padding:14px;font-weight:700;
-                        font-size:15px;margin-top:14px;cursor:pointer;
-                        text-decoration:none}
-    .next-card .nav-btn:active{filter:brightness(.92)}
+                        border:none;border-radius:12px;padding:16px;font-weight:700;
+                        font-size:16px;margin-top:16px;cursor:pointer;
+                        text-decoration:none;letter-spacing:.2px}
+    .next-card .nav-btn:active{transform:scale(.98);filter:brightness(.94)}
 
-    .stop{background:#fff;border:1px solid var(--line);border-radius:10px;
-          padding:12px;margin-bottom:8px;display:flex;align-items:center;gap:12px;
-          min-height:64px}
-    .stop.done{opacity:.5}
-    .stop-num{background:var(--blue);color:#fff;width:32px;height:32px;
-              border-radius:50%;display:flex;align-items:center;justify-content:center;
-              font-weight:700;font-size:14px;flex:0 0 32px}
-    .stop.done .stop-num{background:var(--ok)}
-    .stop-info{flex:1;min-width:0}
-    .stop-info .name{font-weight:600;font-size:15px;line-height:1.3;
-                     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .stop-info .addr{font-size:12px;color:var(--soft);line-height:1.3;margin-top:2px;
-                     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .stop-info .clock{display:inline-block;background:rgba(13,148,136,.12);
-                      color:var(--primary-dk);font-weight:700;font-size:12px;
-                      padding:2px 8px;border-radius:5px;margin-top:4px;
-                      font-variant-numeric:tabular-nums}
-    .stop-info .slot{display:inline-block;color:var(--soft);font-size:11px;
-                     margin-left:6px}
-    .stop-eta{flex:0 0 auto;text-align:right;font-weight:700;color:var(--blue);
-              font-variant-numeric:tabular-nums;font-size:14px}
-    .stop-eta small{display:block;color:var(--soft);font-weight:500;font-size:10px;
-                    text-transform:uppercase;letter-spacing:.5px}
+    /* ── Vertikal timeline med klokkeslett-skinne ─────────────────── */
+    .timeline{position:relative;padding-left:64px}
+    .timeline::before{
+      content:"";position:absolute;left:62px;top:14px;bottom:14px;width:2px;
+      background:linear-gradient(180deg,var(--gold) 0%,var(--primary) 60%,var(--line) 100%);
+      border-radius:2px;
+    }
+    /* Alle timeline-elementer plasseres med klokkeslett-felt + dot på rad-aksen */
+    .tl{position:relative;margin-bottom:14px;display:block}
+    .tl::before{
+      /* Klokkeslett-tekst */
+      content:attr(data-time);
+      position:absolute;left:-64px;top:14px;width:50px;text-align:right;
+      font-weight:700;font-variant-numeric:tabular-nums;font-size:15px;
+      color:var(--ink);letter-spacing:-.2px;
+    }
+    .tl::after{
+      /* Sirkel-prikk på skinnen */
+      content:"";position:absolute;left:-7px;top:18px;width:14px;height:14px;
+      border-radius:50%;background:#fff;border:3px solid var(--primary);
+      box-shadow:0 0 0 3px rgba(13,148,136,.12);box-sizing:border-box;
+    }
+    .tl.tl-depot::after{background:var(--gold);border-color:var(--dark);
+                       box-shadow:0 0 0 3px rgba(13,148,136,.0)}
+    .tl.tl-break::after{background:#fef3c7;border-color:#ca8a04;
+                       box-shadow:0 0 0 3px rgba(202,138,4,.12)}
+    .tl.tl-past::after{background:var(--ok);border-color:var(--ok)}
+    .tl.tl-end::after{background:var(--dark);border-color:var(--dark)}
+    .tl.tl-next::after{
+      width:18px;height:18px;left:-9px;top:16px;
+      box-shadow:0 0 0 4px rgba(13,148,136,.25);
+      animation:nextPulse 1.8s ease-in-out infinite;
+    }
+    @keyframes nextPulse{
+      50%{box-shadow:0 0 0 10px rgba(13,148,136,0)}
+    }
 
-    /* Pause-rad mellom stopp */
-    .break-row{background:#fef9c3;border:1px solid #fde68a;border-radius:10px;
-               padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;
-               gap:10px;color:#854d0e;font-size:13px}
-    .break-row .icon{font-size:18px;flex-shrink:0}
-    .break-row b{font-variant-numeric:tabular-nums}
+    /* Innholds-kort for hvert event */
+    .tl-card{background:#fff;border:1px solid var(--line);border-radius:14px;
+             padding:12px 14px;box-shadow:0 1px 2px rgba(15,23,42,.04);
+             transition:border-color .15s,transform .15s}
+    .tl-card:active{transform:scale(.99)}
+    .tl-card .head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+    .tl-card .name{font-weight:700;font-size:15px;color:var(--ink);line-height:1.3}
+    .tl-card .addr{font-size:12px;color:var(--soft);line-height:1.35;margin-top:3px}
+    .tl-card .badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    .tl-card .badge{font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;
+                    background:var(--bg);color:var(--soft);font-variant-numeric:tabular-nums}
+    .tl-card .badge.slot{background:rgba(13,148,136,.1);color:var(--primary-dk)}
+    .tl-card .badge.live{background:rgba(13,148,136,.18);color:var(--primary-dk);font-weight:700}
+    .tl-card .badge.last{background:var(--dark);color:#fff}
+    .tl-card .nav-btn{flex-shrink:0;background:var(--primary);color:#fff;border:none;
+                      border-radius:10px;padding:8px 10px;font-size:18px;cursor:pointer;
+                      text-decoration:none;line-height:1;display:flex;align-items:center;
+                      justify-content:center;min-width:38px;min-height:38px}
+    .tl-card .nav-btn:active{filter:brightness(.92)}
 
-    /* Depot-rad — start fra butikken */
-    .depot-row{background:linear-gradient(135deg,var(--dark),#1e293b);color:#fff;
-               border-radius:10px;padding:12px;margin-bottom:8px;display:flex;
-               align-items:center;gap:12px}
-    .depot-row .icon{background:var(--gold);color:var(--blue);width:32px;height:32px;
-                     border-radius:8px;display:flex;align-items:center;justify-content:center;
-                     font-weight:700;flex:0 0 32px;font-size:16px}
-    .depot-row .info{flex:1}
-    .depot-row .info b{font-size:15px}
-    .depot-row .info small{display:block;font-size:11px;color:rgba(255,255,255,.7);
-                           margin-top:2px}
-    .depot-row .clock{font-weight:700;font-size:14px;color:var(--gold);
-                      font-variant-numeric:tabular-nums}
+    /* Variant: depot (start fra butikken) — kompakt mørkt kort */
+    .tl-depot .tl-card{background:linear-gradient(135deg,var(--dark),#1e293b);
+                       color:#fff;border:none;padding:12px 14px}
+    .tl-depot .tl-card .name{color:#fff;font-size:14px}
+    .tl-depot .tl-card .addr{color:rgba(255,255,255,.7)}
+    .tl-depot::before{color:var(--gold)}
 
-    .nav-small{background:none;border:none;color:var(--blue);font-size:18px;
-               cursor:pointer;padding:6px 8px}
+    /* Variant: pause — diskret gult kort */
+    .tl-break .tl-card{background:#fffbeb;border-color:#fde68a;padding:10px 14px}
+    .tl-break .tl-card .name{color:#854d0e;font-size:13px;font-weight:600}
+    .tl-break .tl-card .name b{font-variant-numeric:tabular-nums}
+    .tl-break::before{color:#854d0e;font-size:13px}
+
+    /* Variant: avsluttet — gråtonet */
+    .tl-past .tl-card{opacity:.55}
+    .tl-past::before{color:var(--soft)}
+
+    /* Variant: aktivt neste stopp — solid kant */
+    .tl-next .tl-card{border-color:var(--primary);border-width:2px;
+                      box-shadow:0 4px 14px rgba(13,148,136,.18)}
+
+    /* Slutt-rad — total ferdig-tid */
+    .tl-end .tl-card{background:#f1f5f9;border-color:var(--line);padding:10px 14px}
+    .tl-end .tl-card .name{font-size:13px;color:var(--soft);font-weight:600}
+
     .empty{text-align:center;padding:48px 18px;color:var(--soft);font-size:14px}
     .pulse-dot{display:inline-block;width:7px;height:7px;border-radius:50%;
                background:var(--ok);margin-right:4px;animation:p 1.4s ease-in-out infinite}
@@ -388,6 +427,7 @@ async function loadRoute(){
   }
 
   // Neste stopp = første som ikke er levert
+  // (Driver-API returnerer kun ikke-leverte stopp; stops[0] er neste)
   const next = stops[0];
   $("nextCard").innerHTML = `
     <div class="next-card">
@@ -395,58 +435,105 @@ async function loadRoute(){
       <div class="name">${next.navn || ('Bestilling #'+next.order_id)}</div>
       <div class="addr">${[next.adresse, next.postnr, next.poststed].filter(Boolean).join(", ") || "(adresse mangler)"}</div>
       <div class="meta">
-        ${next.arrival_clock ? `<div><div style="opacity:.7;font-size:11px">Planlagt</div><span class="val">${next.arrival_clock}</span></div>` : ""}
-        <div><div style="opacity:.7;font-size:11px">ETA</div><span class="val" data-next-eta>—</span> min</div>
-        ${next.leveringstid ? `<div><div style="opacity:.7;font-size:11px">Vindu</div><span class="val">${next.leveringstid}</span></div>` : ""}
-        ${next.tlf ? `<div><div style="opacity:.7;font-size:11px">Telefon</div><a href="tel:${next.tlf}" style="color:#fff;text-decoration:underline">${next.tlf}</a></div>` : ""}
+        ${next.arrival_clock ? `<div><div class="lbl">Planlagt</div><span class="val">${next.arrival_clock}</span></div>` : ""}
+        <div><div class="lbl">Live ETA</div><span class="val"><span data-next-eta>—</span> <span style="font-size:13px;opacity:.7">min</span></span></div>
+        ${next.leveringstid ? `<div><div class="lbl">Vindu</div><span class="val" style="font-size:14px">${next.leveringstid}</span></div>` : ""}
       </div>
       <a class="nav-btn" href="${navLink(next.lat, next.lon, next.navn)}" target="_blank">
         🧭 Naviger hit
       </a>
     </div>`;
 
-  // Hjelpere for å plassere pause-rader i listen
+  // ── Bygg vertikal timeline ────────────────────────────────────────
   const breaks = Array.isArray(data.breaks) ? data.breaks : [];
-  const breaksForAnchor = (anchorId) => breaks.filter(b => String(b.after_order_id) === String(anchorId));
-  const breakRowHtml = (b) => `
-    <div class="break-row">
-      <span class="icon">☕</span>
-      <div>Pause <b>${b.minutes} min</b>${b.label ? ` — ${b.label}` : ''}</div>
-    </div>`;
+  const breaksForAnchor = (anchorId) =>
+    breaks.filter(b => String(b.after_order_id) === String(anchorId));
 
-  // Depot-rad øverst + stoppene med eventuelle pauser før hver
-  const depotHtml = `
-    <div class="depot-row">
-      <span class="icon">⌂</span>
-      <div class="info"><b>Start fra butikken</b><small>Nesttunvegen 96, 5221 Nesttun</small></div>
-      <div class="clock">${startClock}</div>
-    </div>` + breaksForAnchor('depot').map(breakRowHtml).join('');
+  // "Nå" som minutter siden midnatt — brukes til å markere passerte stopp
+  // (bare når sjåføren ser på dagens dato — ellers ingen passert-merking)
+  const now = new Date();
+  const nowMin = (activeDate === today())
+    ? now.getHours() * 60 + now.getMinutes()
+    : null;
+  const clockToMin = (hhmm) => {
+    const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})$/);
+    return m ? parseInt(m[1],10)*60 + parseInt(m[2],10) : null;
+  };
 
-  const stopsHtml = stops.map((s, i) => {
-    const breaksBefore = i === 0 ? '' : breaksForAnchor(String(stops[i-1].order_id)).map(breakRowHtml).join('');
-    return `${breaksBefore}
-    <div class="stop" data-id="${s.order_id}">
-      <span class="stop-num">${s.stop_index}</span>
-      <div class="stop-info">
-        <div class="name">${s.navn || ('Bestilling #'+s.order_id)}</div>
-        <div class="addr">${[s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ")}</div>
-        ${s.arrival_clock ? `<span class="clock">${s.arrival_clock}</span>` : ''}
-        ${s.leveringstid ? `<span class="slot">${s.leveringstid}</span>` : ''}
+  const tlBreaks = (anchorId) => breaksForAnchor(anchorId).map(b => {
+    // Pause-rad har ikke eget klokkeslett — vises som relativ "+15 min"
+    return `<div class="tl tl-break" data-time="+${b.minutes}m">
+      <div class="tl-card">
+        <div class="name">☕ Pause <b>${b.minutes} min</b>${b.label ? ` · ${b.label}` : ''}</div>
       </div>
-      <div class="stop-eta">
-        <span data-eta="${s.order_id}">—</span><small>min</small>
-      </div>
-      <a class="nav-small" href="${navLink(s.lat, s.lon)}" target="_blank" title="Naviger">🧭</a>
     </div>`;
   }).join('');
 
-  $("stops").innerHTML = depotHtml + stopsHtml;
+  // Depot-rad
+  let timelineHtml = `
+    <div class="tl tl-depot" data-time="${startClock}">
+      <div class="tl-card">
+        <div class="head">
+          <div>
+            <div class="name">Start fra butikken</div>
+            <div class="addr">Nesttunvegen 96, 5221 Nesttun</div>
+          </div>
+        </div>
+      </div>
+    </div>` + tlBreaks('depot');
 
-  document.querySelectorAll(".stop").forEach(el => {
+  // Stopp-rader
+  timelineHtml += stops.map((s, i) => {
+    const time = s.arrival_clock || '—';
+    const stopMin = clockToMin(time);
+    const past = nowMin != null && stopMin != null && stopMin + 5 < nowMin; // 5 min slack
+    const isNext = i === 0 && !past;
+    const isLast = i === stops.length - 1;
+    const cls = ['tl', past ? 'tl-past' : '', isNext ? 'tl-next' : ''].filter(Boolean).join(' ');
+    const badges = [
+      s.leveringstid ? `<span class="badge slot">${s.leveringstid}</span>` : '',
+      `<span class="badge live"><span data-eta="${s.order_id}">—</span> min</span>`,
+      isLast ? `<span class="badge last">Siste</span>` : '',
+    ].filter(Boolean).join('');
+    const breaksAfter = i < stops.length - 1
+      ? tlBreaks(String(s.order_id))
+      : '';
+    return `
+      <div class="${cls}" data-time="${time}" data-id="${s.order_id}">
+        <div class="tl-card">
+          <div class="head">
+            <div style="flex:1;min-width:0">
+              <div class="name">#${s.stop_index} · ${s.navn || ('Bestilling #'+s.order_id)}</div>
+              <div class="addr">${[s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ")}</div>
+              <div class="badges">${badges}</div>
+            </div>
+            <a class="nav-btn" href="${navLink(s.lat, s.lon)}" target="_blank" title="Naviger" aria-label="Naviger til ${(s.navn||'').replace(/"/g,'&quot;')}">🧭</a>
+          </div>
+        </div>
+      </div>${breaksAfter}`;
+  }).join('');
+
+  // Slutt-rad: estimert ferdig-tid
+  const lastStop = stops[stops.length - 1];
+  const lastMin = clockToMin(lastStop.departure_clock || lastStop.arrival_clock);
+  if (lastMin != null) {
+    const endH = String(Math.floor(lastMin/60) % 24).padStart(2,'0');
+    const endM = String(lastMin % 60).padStart(2,'0');
+    timelineHtml += `
+      <div class="tl tl-end" data-time="${endH}:${endM}">
+        <div class="tl-card">
+          <div class="name">Ferdig med ruten</div>
+        </div>
+      </div>`;
+  }
+
+  $("stops").innerHTML = `<div class="timeline">${timelineHtml}</div>`;
+
+  document.querySelectorAll(".tl[data-id]").forEach(el => {
     el.addEventListener("click", e => {
       if (e.target.closest("a")) return;
       const m = stopMarkers[el.dataset.id];
-      if (m) map.setView(m.getLatLng(), 15);
+      if (m) { map.setView(m.getLatLng(), 15); m.openPopup && m.openPopup(); }
     });
   });
 
