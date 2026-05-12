@@ -220,10 +220,20 @@ async function loadRoute(){
       .addTo(map).bindPopup("<b>Havøyet</b><br>Nesttunvegen 96<br>Startpunkt for ruten");
   }
 
-  // Geometry
-  if (data.geometry && data.geometry.coordinates) {
+  // Geometry — bruk Google/OSRM-trase hvis tilgjengelig, ellers en rett-linje
+  // gjennom depot + stopp så ruten ALLTID vises som linje (også uten Google-key).
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+  if (data.geometry && data.geometry.coordinates && data.geometry.coordinates.length > 1) {
     const latlngs = data.geometry.coordinates.map(([lon,lat]) => [lat,lon]);
     routeLine = L.polyline(latlngs, {color:"#1A3A5C", weight:4, opacity:.65}).addTo(map);
+  } else if (data.depot && Array.isArray(data.stops) && data.stops.length) {
+    const fallback = [[data.depot.lat, data.depot.lon]]
+      .concat(data.stops.filter(s => s.lat != null && s.lon != null).map(s => [s.lat, s.lon]));
+    if (fallback.length > 1) {
+      routeLine = L.polyline(fallback, {
+        color: "#1A3A5C", weight: 3, opacity: .55, dashArray: "6 6",
+      }).addTo(map);
+    }
   }
 
   // Stops

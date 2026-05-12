@@ -1143,11 +1143,19 @@ def _build_route(date_iso: str, *, optimize: bool = True) -> dict:
         clock_override = _parse_start_clock_hint(start_clock_hint)
         breaks_list = _normalize_breaks(day_state.get("breaks"))
         used_clock = _annotate_clock_times(ordered_stops, clock_override, breaks_list)
+        # Hent geometri for admin-rekkefølgen fra Google (samme call som slot-aware).
+        # Hvis Google ikke er konfigurert, tegner frontend en rettlinje-fallback.
+        geometry = None
+        if ordered_stops:
+            fixed_coords = [depot] + [(s["lat"], s["lon"]) for s in ordered_stops]
+            fixed = google_directions_fixed_order(fixed_coords)
+            if fixed and fixed.get("geometry"):
+                geometry = fixed["geometry"]
         return {
             "date": date_iso,
             "depot": {"lat": depot[0], "lon": depot[1]},
             "stops": ordered_stops,
-            "geometry": None,
+            "geometry": geometry,
             "total_distance_km": round(sum(s["leg_km"] for s in ordered_stops), 2),
             "total_duration_min": round(cum_min, 1),
             "optimizer": "custom",
