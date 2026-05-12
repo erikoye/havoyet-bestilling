@@ -521,6 +521,21 @@ function _detectBoneSkin(item) {
   };
 }
 
+// Kanonisk nøkkel for produktnavn som kommer fra ulike kilder (kasse-recipe,
+// kunde-checkout med variant-suffix, manuelle ordre med ulik kasus). Sikrer
+// at "Reker", "Reker ferske" og "Reker Ferske – 1 kg" havner i samme rad.
+function _canonicalProductKey(name) {
+  if (!name) return '';
+  let s = String(name).toLowerCase();
+  // Strip variant-suffix etter " - " / " – " / " — "
+  s = s.replace(/\s*[–—-]\s*.*$/, '');
+  // Fjern vanlige tilstand-adjektiv som ikke endrer hva som må kjøpes inn
+  s = s.replace(/\b(ferske?|nykokt|nykokte|kokt|kokte|rå|rått|fryste?|frossen|frosne?)\b/g, '');
+  // Squash whitespace
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
 function _fmtGrams(g) {
   if (g >= 1000) return (g / 1000).toLocaleString('nb', { maximumFractionDigits: 2 }) + ' kg';
   return Math.round(g) + ' g';
@@ -568,12 +583,18 @@ async function _renderSalesCalendar() {
       const bs = isKasse ? { ub: false, us: false } : _detectBoneSkin(item);
       const qty = Math.max(1, Number(item.qty || item.quantity || 1));
       for (const c of components) {
-        const key = c.productName;
+        const rawName = c.productName;
+        if (!rawName) continue;
+        const key = _canonicalProductKey(rawName);
         if (!key) continue;
         const cur = dayMap.products.get(key) || {
+          displayName: rawName,
           grams: 0, stk: 0, orderRefs: new Set(),
           ub: 0, us: 0, both: 0, none: 0,
         };
+        // Foretrekk det korteste navnet som visning ("Reker" framfor
+        // "Reker Ferske – 1 kg") — gir reneste rad i innkjøpslisten.
+        if (rawName.length < cur.displayName.length) cur.displayName = rawName;
         if (Number.isFinite(c.grams)) cur.grams += c.grams;
         if (Number.isFinite(c.stk))   cur.stk   += c.stk;
         cur.orderRefs.add(o.id);
@@ -595,8 +616,9 @@ async function _renderSalesCalendar() {
   const esc = s => String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
   body.innerHTML = sortedDates.map(iso => {
     const day = byDate.get(iso);
-    const products = Array.from(day.products.entries()).sort(([a],[b]) => a.localeCompare(b, 'nb'));
-    const rows = products.map(([name, q], idx) => {
+    const products = Array.from(day.products.values()).sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '', 'nb'));
+    const rows = products.map((q, idx) => {
+      const name = q.displayName || '';
       const parts = [];
       if (q.grams > 0) parts.push(_fmtGrams(q.grams));
       if (q.stk   > 0) parts.push(q.stk + ' stk');
