@@ -17,6 +17,11 @@ import json
 import os
 import secrets
 from datetime import datetime, timedelta, date, timezone
+try:
+    from zoneinfo import ZoneInfo
+    _OSLO_TZ = ZoneInfo("Europe/Oslo")
+except Exception:
+    _OSLO_TZ = timezone(timedelta(hours=1))  # vinter-fallback, ikke perfekt men trygt
 
 
 def _now_iso_utc():
@@ -6203,6 +6208,120 @@ def api_analytics_summary():
         "last_24h": {"pageviews": pv_24h, "sessions": sess_24h},
         "last_7d":  {"pageviews": pv_7d},
     })
+
+@app.route("/api/analytics/timeseries", methods=["GET"])
+def api_analytics_timeseries():
+    """Antall besøkende per dag (eller time for 'today') i valgt periode.
+
+    Query:
+      range = today | week | month | quarter | halfyear | year | custom
+      from  = YYYY-MM-DD (kun for custom)
+      to    = YYYY-MM-DD (kun for custom, inklusiv)
+    """
+    user, err = _analytics_admin_required()
+    if err: return err
+
+    rng = (request.args.get("range") or "week").lower().strip()
+    now_oslo = datetime.now(_OSLO_TZ)
+    granularity = "day"
+
+    if rng == "today":
+        start_dt = now_oslo.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt   = start_dt + timedelta(days=1)
+        granularity = "hour"
+    elif rng == "week":
+        end_dt   = (now_oslo + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = end_dt - timedelta(days=7)
+    elif rng == "month":
+        end_dt   = (now_oslo + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = end_dt - timedelta(days=30)
+    elif rng == "quarter":
+        end_dt   = (now_oslo + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = end_dt - timedelta(days=90)
+    elif rng == "halfyear":
+        end_dt   = (now_oslo + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = end_dt - timedelta(days=182)
+    elif rng == "year":
+        end_dt   = (now_oslo + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_dt = end_dt - timedelta(days=365)
+    elif rng == "custom":
+        try:
+            f = (request.args.get("from") or "").strip()
+            t = (request.args.get("to") or "").strip()
+            start_dt = datetime.strptime(f, "%Y-%m-%d").replace(tzinfo=_OSLO_TZ)
+            end_dt   = datetime.strptime(t, "%Y-%m-%d").replace(tzinfo=_OSLO_TZ) + timedelta(days=1)
+            if end_dt <= start_dt:
+                return jsonify({"ok": False, "error": "to må være etter from"}), 400
+            # cap maks 2 år for å unngå overload
+            if (end_dt - start_dt).days > 730:
+                return jsonify({"ok": False, "error": "maks 2 år"}), 400
+        except Exception:
+            return jsonify({"ok": False, "error": "ugyldig from/to (forventet YYYY-MM-DD)"}), 400
+    else:
+        return jsonify({"ok": False, "error": "ukjent range"}), 400
+
+    start_ms = int(start_dt.timestamp() * 1000)
+    end_ms   = int(end_dt.timestamp() * 1000)
+
+    # Initier alle buckets (slik at tomme dager også vises)
+    buckets = {}  # key -> {"sessions": set, "pageviews": int}
+    keys_order = []
+    if granularity == "hour":
+        for h in range(24):
+            key = f"{h:02d}:00"
+            buckets[key] = {"sessions": set(), "pageviews": 0}
+            keys_order.append(key)
+    else:
+        cur = start_dt
+        while cur < end_dt:
+            key = cur.strftime("%Y-%m-%d")
+            buckets[key] = {"sessions": set(), "pageviews": 0}
+            keys_order.append(key)
+            cur = cur + timedelta(days=1)
+
+    def _bucket_key(ts_ms):
+        d = datetime.fromtimestamp(ts_ms / 1000, tz=_OSLO_TZ)
+        if granularity == "hour":
+            return f"{d.hour:02d}:00"
+        return d.strftime("%Y-%m-%d")
+
+    # Sesjoner = unike besøkende (basert på started_at)
+    for sid, s in (_analytics.get("sessions", {}) or {}).items():
+        ts = s.get("started_at") or 0
+        if ts < start_ms or ts >= end_ms:
+            continue
+        key = _bucket_key(ts)
+        if key in buckets:
+            buckets[key]["sessions"].add(sid)
+
+    # Pageviews per bucket
+    for ev in (_analytics.get("events", []) or []):
+        if ev.get("type") != "pageview":
+            continue
+        ts = ev.get("ts") or 0
+        if ts < start_ms or ts >= end_ms:
+            continue
+        key = _bucket_key(ts)
+        if key in buckets:
+            buckets[key]["pageviews"] += 1
+
+    rows = [{
+        "label":     k,
+        "sessions":  len(buckets[k]["sessions"]),
+        "pageviews": buckets[k]["pageviews"],
+    } for k in keys_order]
+
+    return jsonify({
+        "ok": True,
+        "range": rng,
+        "granularity": granularity,
+        "from": start_dt.isoformat(),
+        "to":   end_dt.isoformat(),
+        "buckets": rows,
+        "total_sessions":  sum(r["sessions"]  for r in rows),
+        "total_pageviews": sum(r["pageviews"] for r in rows),
+    })
+
 
 @app.route("/api/analytics/funnel", methods=["GET"])
 def api_analytics_funnel():
