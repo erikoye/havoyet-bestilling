@@ -6152,7 +6152,17 @@ def api_analytics_event():
         if not isinstance(raw, dict):
             continue
         t = raw.get("type")
-        if t not in ("pageview", "click", "scroll", "exit", "funnel_step"):
+        if t not in ("pageview", "click", "scroll", "exit", "funnel_step", "heartbeat"):
+            continue
+        # Heartbeat: oppdater bare last_event_at på sesjonen, ikke lagre eventet
+        if t == "heartbeat":
+            sid = str(raw.get("sid") or "")[:64]
+            if sid:
+                with ANALYTICS_LOCK:
+                    sess = _analytics["sessions"].get(sid)
+                    if sess:
+                        sess["last_event_at"] = int(raw.get("ts") or time.time() * 1000)
+            accepted += 1
             continue
         ev = {
             "type": t,
