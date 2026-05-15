@@ -670,6 +670,9 @@ _overrides = {}
 _packing_state = {}
 _order_notes = {}
 _product_overrides = {}
+# Kategori-konfigurasjon styrt fra admin: hidden=skjul fra filter,
+# custom=admin-opprettede ekstra-kategorier (utover de hardkodede i admin.html)
+_category_config = {"hidden": [], "custom": []}
 _reviews = []  # [{id, slug, name, rating, text, date}]
 _customer_favorites = {}  # email → [slug, slug, ...]
 _admin_notifiers = []  # [{id, name, email, events:[...], created_at}]
@@ -826,6 +829,7 @@ def _save_sync_state():
             "packing_state":     _packing_state,
             "order_notes":       _order_notes,
             "product_overrides":   _product_overrides,
+            "category_config":     _category_config,
             "reviews":             _reviews,
             "customer_favorites":  _customer_favorites,
             "admin_notifiers":     _admin_notifiers,
@@ -909,7 +913,7 @@ def _restore_vipps_baseline():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts, _abandoned_carts, _order_tombstones
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _category_config, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts, _abandoned_carts, _order_tombstones
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         _restore_vipps_baseline()
@@ -923,6 +927,11 @@ def _load_sync_state():
         _packing_state     = d.get("packing_state", {})
         _order_notes       = d.get("order_notes", {})
         _product_overrides = d.get("product_overrides", {})
+        _category_config   = d.get("category_config") or {"hidden": [], "custom": []}
+        if not isinstance(_category_config, dict):
+            _category_config = {"hidden": [], "custom": []}
+        _category_config.setdefault("hidden", [])
+        _category_config.setdefault("custom", [])
         _reviews            = d.get("reviews", [])
         _customer_favorites = d.get("customer_favorites", {})
         _admin_notifiers    = d.get("admin_notifiers", [])
@@ -1236,6 +1245,34 @@ def api_product_override(slug):
     _product_overrides[slug] = existing
     _save_sync_state()
     return jsonify({"ok": True, "slug": slug, "override": existing})
+
+
+@app.route("/api/categories/config", methods=["GET", "PUT"])
+def api_categories_config():
+    """Admin-styrt kategori-konfig: skjulte + ekstra-egendefinerte kategorier.
+    Brukt av admin-produktfilteret og produkt-redigeringsdroppen."""
+    global _category_config
+    if request.method == "GET":
+        return jsonify(_category_config or {"hidden": [], "custom": []})
+    payload = request.get_json(force=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Forventer JSON-objekt"}), 400
+    def _clean_list(v):
+        if not isinstance(v, list):
+            return []
+        out, seen = [], set()
+        for x in v:
+            s = str(x or "").strip()
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
+    _category_config = {
+        "hidden": _clean_list(payload.get("hidden")),
+        "custom": _clean_list(payload.get("custom")),
+    }
+    _save_sync_state()
+    return jsonify({"ok": True, "config": _category_config})
 
 
 # ── PRODUKTLISTE (baseline + overrides) ────────────────────────────────────────
@@ -7906,6 +7943,7 @@ def _full_state_dict():
         "packing_state":          _packing_state,
         "order_notes":            _order_notes,
         "product_overrides":      _product_overrides,
+        "category_config":        _category_config,
         "reviews":                _reviews,
         "customer_favorites":     _customer_favorites,
         "admin_notifiers":        _admin_notifiers,
@@ -7938,7 +7976,7 @@ def api_admin_restore():
     """Gjenoppretter sync-state fra et backup-JSON. Body = output fra /api/admin/backup.
     Skriver bare felter som faktisk finnes i body (delvis-restore støttes)."""
     global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes
-    global _product_overrides, _reviews, _customer_favorites, _admin_notifiers
+    global _product_overrides, _category_config, _reviews, _customer_favorites, _admin_notifiers
     global _customers, _vipps_imported_payments, _card_payments_imported
     global _auth_users, _auth_sessions
 
@@ -7961,6 +7999,7 @@ def api_admin_restore():
     _packing_state         = _maybe("packing_state",          _packing_state)
     _order_notes           = _maybe("order_notes",            _order_notes)
     _product_overrides     = _maybe("product_overrides",      _product_overrides)
+    _category_config       = _maybe("category_config",        _category_config)
     _reviews               = _maybe("reviews",                _reviews)
     _customer_favorites    = _maybe("customer_favorites",     _customer_favorites)
     _admin_notifiers       = _maybe("admin_notifiers",        _admin_notifiers)
