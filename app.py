@@ -1442,6 +1442,35 @@ def api_review_delete(review_id):
     return jsonify({"ok": True, "removed": before - len(_reviews)})
 
 
+@app.route("/api/reviews/<review_id>", methods=["PATCH"])
+def api_review_patch(review_id):
+    """Admin-redigering av anmeldelse. Tillater å nulle ut produkt-lenken
+    (slug="") for generelle service-anmeldelser, eller rette tekst/navn."""
+    global _reviews
+    data = request.get_json(force=True) or {}
+    updated = None
+    for r in _reviews:
+        if r.get("id") == review_id:
+            if "slug" in data:
+                r["slug"] = (data.get("slug") or "").strip()
+            if "name" in data:
+                r["name"] = (data.get("name") or "Anonym").strip()[:80] or "Anonym"
+            if "text" in data:
+                r["text"] = (data.get("text") or "").strip()[:2000]
+            if "rating" in data:
+                try:
+                    rating = int(data.get("rating", 5))
+                except (TypeError, ValueError):
+                    rating = 5
+                r["rating"] = max(1, min(5, rating))
+            updated = r
+            break
+    if not updated:
+        return jsonify({"ok": False, "error": "Ikke funnet"}), 404
+    _save_sync_state()
+    return jsonify({"ok": True, "review": updated})
+
+
 # ── KONTAKT-MAIL (sendes til erik@havoyet.no) ───────────────────────────────
 import smtplib as _smtplib
 from email.mime.text import MIMEText as _MIMEText
