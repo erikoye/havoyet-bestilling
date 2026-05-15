@@ -850,6 +850,28 @@ def _orders_for_date(date_iso: str) -> list[dict]:
     return out
 
 
+def _stop_items(order: dict) -> list[dict]:
+    """Returnerer varelinjer som sjåføren skal verifisere før utkjøring.
+    Hver linje har et stabilt 'line_id' = indeks i ordrens varer-liste,
+    slik at checklist-state kan persisteres uten å trenge et unikt linje-felt."""
+    varer = order.get("varer") or order.get("items") or []
+    out = []
+    for idx, v in enumerate(varer):
+        variant = v.get("variant") or v.get("variantStr") or v.get("variantLabel") or ""
+        if not variant:
+            sel = v.get("selectedOpts")
+            if isinstance(sel, dict) and sel:
+                variant = " · ".join(str(x) for x in sel.values() if x)
+        out.append({
+            "line_id": str(idx),
+            "name": v.get("name") or v.get("navn") or v.get("title") or v.get("productName") or "",
+            "qty": v.get("qty") or v.get("quantity") or 1,
+            "variant": variant,
+            "unit": v.get("unit") or "",
+        })
+    return out
+
+
 def _stop_payload(order: dict) -> dict:
     kunde = order.get("kunde") or {}
     levering = order.get("levering") or {}
@@ -878,6 +900,7 @@ def _stop_payload(order: dict) -> dict:
         "leveringstid": kunde.get("leveringstid") or order.get("slot") or "",
         "status": order.get("status") or "",
         "track_token": bool(order.get("track_token")),
+        "items": _stop_items(order),
     }
 
 
@@ -1694,6 +1717,72 @@ def driver_mark_passed():
             print(f"[driver_mark_passed] status_hook feilet for #{order_id}: {e}")
 
     return jsonify({"ok": True, "date": date_iso, "passed_orders": current})
+
+
+@bp.get("/api/driver/route/checklist")
+def driver_checklist_get():
+    """Returnerer pre-flight sjekkliste-state for en dato.
+    Sjåføren må huke av alle varelinjer før appen viser ruten — så vi unngår
+    å kjøre ut med feil/manglende varer. State lagres per dato i route_state."""
+    driver, err = _driver_only()
+    if err:
+        return err
+    date_iso = (request.args.get("date") or _today_iso()).strip()
+    if not _driver_assigned_to_day(driver.get("id") or "", date_iso):
+        return jsonify({"date": date_iso, "not_assigned": True, "checked": {}})
+    checked = (_get_day_state(date_iso).get("checklist") or {})
+    return jsonify({"date": date_iso, "checked": checked})
+
+
+@bp.post("/api/driver/route/checklist")
+def driver_checklist_set():
+    """Oppdaterer sjekkliste-state for én linje (eller hele ordren).
+
+    Body: {
+      date?: "YYYY-MM-DD",
+      order_id: str,
+      line_id?: str,        # hvis utelatt → toggler alle linjer for ordren
+      line_ids?: [str],     # eller eksplisitt sett med linjer (for 'Marker alt')
+      checked: bool
+    }
+    """
+    driver, err = _driver_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    order_id = str(data.get("order_id") or "").strip()
+    if not order_id:
+        return jsonify({"error": "order_id mangler"}), 400
+    if not _driver_assigned_to_day(driver.get("id") or "", date_iso):
+        return jsonify({"error": "not_assigned"}), 403
+    checked_flag = bool(data.get("checked", True))
+
+    state = _get_day_state(date_iso).get("checklist") or {}
+    order_state = set(str(x) for x in (state.get(order_id) or []))
+
+    if "line_ids" in data and isinstance(data["line_ids"], list):
+        # Bulk: erstatt med en eksplisitt liste (brukes ved 'Marker alt' / 'Fjern alt')
+        if checked_flag:
+            order_state = set(str(x) for x in data["line_ids"])
+        else:
+            for lid in data["line_ids"]:
+                order_state.discard(str(lid))
+    elif "line_id" in data:
+        lid = str(data["line_id"])
+        if checked_flag:
+            order_state.add(lid)
+        else:
+            order_state.discard(lid)
+    else:
+        return jsonify({"error": "line_id eller line_ids mangler"}), 400
+
+    if order_state:
+        state[order_id] = sorted(order_state, key=lambda s: (len(s), s))
+    else:
+        state.pop(order_id, None)
+    _set_day_state(date_iso, {"checklist": state})
+    return jsonify({"ok": True, "date": date_iso, "checklist": state})
 
 
 @bp.get("/api/driver/route/live")

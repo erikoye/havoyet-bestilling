@@ -256,6 +256,94 @@
     .pulse-dot{display:inline-block;width:7px;height:7px;border-radius:50%;
                background:var(--ok);margin-right:4px;animation:p 1.4s ease-in-out infinite}
     @keyframes p{50%{opacity:.35}}
+
+    /* ── Sjekkliste-kort (inline i nextCard-slot) ───────────────────
+       Sjåfør ser kart + timeline, men den grønne "Neste stopp"-boksen er
+       erstattet av denne sjekklisten inntil alle varelinjer er huket av.
+       Når sjekklisten er ferdig (eller bekreftet for tom dag), erstattes
+       kortet av den vanlige Naviger-CTA. */
+    .cl-wrap{background:linear-gradient(135deg,var(--dark),#1e293b);color:#fff;
+             border-radius:18px;padding:16px 14px 14px;margin-bottom:18px;
+             box-shadow:0 10px 28px rgba(15,23,42,.22)}
+    .cl-wrap .cl-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
+    .cl-wrap .cl-head .icon{font-size:22px;flex-shrink:0;line-height:1}
+    .cl-wrap .cl-head .meta{flex:1;min-width:0}
+    .cl-wrap .cl-head .label{color:var(--gold);font-size:11px;letter-spacing:1px;
+                             text-transform:uppercase;font-weight:700}
+    .cl-wrap .cl-head .title{font-size:17px;font-weight:700;line-height:1.25;margin-top:2px}
+    .cl-wrap .cl-head .sub{font-size:12px;color:rgba(255,255,255,.7);margin-top:3px;line-height:1.4}
+    .cl-progress{margin-bottom:12px}
+    .cl-progress-bar{height:7px;background:rgba(255,255,255,.14);border-radius:99px;overflow:hidden}
+    .cl-progress-fill{height:100%;background:var(--gold);border-radius:99px;
+                      width:0%;transition:width .25s ease}
+    .cl-progress-text{font-size:11.5px;color:rgba(255,255,255,.78);margin-top:5px;
+                      font-variant-numeric:tabular-nums}
+    .cl-progress-text b{color:#fff}
+
+    .cl-stops-list{background:#fff;color:var(--ink);border-radius:12px;overflow:hidden;
+                   margin-bottom:12px;max-height:42vh;overflow-y:auto;
+                   -webkit-overflow-scrolling:touch}
+
+    .cl-card{background:#fff;border-bottom:1px solid var(--line)}
+    .cl-card:last-child{border-bottom:none}
+    .cl-card.done{background:#f0fdf4}
+    .cl-card.done .cl-card-head{background:rgba(34,197,94,.06)}
+
+    .cl-card-head{padding:12px 14px;display:flex;align-items:flex-start;gap:10px;
+                  border-bottom:1px solid var(--line)}
+    .cl-card.done .cl-card-head{border-bottom-color:rgba(34,197,94,.25)}
+    .cl-card-head .num{flex:0 0 auto;background:var(--blue);color:#fff;width:30px;height:30px;
+                       border-radius:50%;display:flex;align-items:center;justify-content:center;
+                       font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
+    .cl-card.done .cl-card-head .num{background:var(--ok)}
+    .cl-card-head .info{flex:1;min-width:0}
+    .cl-card-head .name{font-weight:700;font-size:14.5px;color:var(--ink);
+                        line-height:1.25}
+    .cl-card-head .addr{font-size:12px;color:var(--soft);margin-top:2px;line-height:1.35}
+    .cl-card-head .slot-tag{display:inline-block;font-size:11px;font-weight:600;
+                            padding:2px 8px;border-radius:999px;
+                            background:rgba(13,148,136,.12);color:var(--primary-dk);
+                            margin-top:5px}
+    .cl-mark-all{flex:0 0 auto;background:#fff;color:var(--primary);
+                 border:1.5px solid var(--primary);border-radius:9px;
+                 padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer;
+                 font-family:inherit;line-height:1;text-transform:uppercase;
+                 letter-spacing:.3px;white-space:nowrap}
+    .cl-mark-all:active{background:var(--primary);color:#fff;transform:scale(.96)}
+    .cl-card.done .cl-mark-all{background:transparent;color:var(--ok);
+                               border-color:var(--ok)}
+
+    .cl-line{padding:11px 14px;display:flex;align-items:center;gap:12px;
+             border-bottom:1px solid var(--line);cursor:pointer;
+             transition:background .12s}
+    .cl-line:last-child{border-bottom:none}
+    .cl-line:active{background:var(--bg)}
+    .cl-line.checked{background:rgba(34,197,94,.06)}
+    .cl-line.checked .cl-line-name{color:var(--soft);text-decoration:line-through;
+                                    text-decoration-color:rgba(100,116,139,.5)}
+    .cl-checkbox{flex:0 0 auto;width:24px;height:24px;border:2px solid var(--line);
+                 border-radius:7px;background:#fff;display:flex;align-items:center;
+                 justify-content:center;font-size:14px;color:#fff;
+                 transition:background .15s,border-color .15s}
+    .cl-line.checked .cl-checkbox{background:var(--ok);border-color:var(--ok)}
+    .cl-line-text{flex:1;min-width:0}
+    .cl-line-name{font-weight:600;font-size:14px;color:var(--ink);line-height:1.3}
+    .cl-line-name .qty{color:var(--primary-dk);margin-right:6px;
+                       font-variant-numeric:tabular-nums}
+    .cl-line-variant{font-size:11.5px;color:var(--soft);margin-top:2px;line-height:1.35}
+    .cl-card .cl-empty-items{padding:12px 14px;font-size:12px;color:var(--soft);
+                             font-style:italic;line-height:1.4}
+
+    .cl-start{width:100%;background:var(--gold);color:var(--blue);border:none;
+              border-radius:12px;padding:14px;font-size:15.5px;font-weight:700;
+              cursor:pointer;font-family:inherit;letter-spacing:.2px;
+              display:flex;align-items:center;justify-content:center;gap:8px;
+              transition:opacity .15s}
+    .cl-start:disabled{background:rgba(255,255,255,.15);color:rgba(255,255,255,.55);
+                       cursor:not-allowed}
+    .cl-start:not(:disabled):active{filter:brightness(.94);transform:scale(.99)}
+    .cl-start-hint{font-size:11px;color:rgba(255,255,255,.6);text-align:center;
+                   margin-top:8px;line-height:1.4}
   </style>
 </head>
 <body>
@@ -337,6 +425,7 @@ function shiftDate(delta) {
   dt.setDate(dt.getDate() + delta);
   activeDate = _dateToIso(dt);
   updateDateLabel();
+  // Hver dag har egen sjekkliste-state — re-fetcher rute + checklist
   loadRoute();
 }
 
@@ -375,6 +464,9 @@ async function showPinScreen(msg){
   setTimeout(() => $("pin").focus(), 100);
 }
 
+// Driver-app: kart + timeline er alltid synlig. Sjekkliste rendres inline i
+// nextCard-slot (der den grønne Neste-stopp-boksen ellers står) inntil
+// sjåføren har huket av alle varelinjer.
 async function showApp(){
   $("pinScreen").style.display = "none";
   $("app").style.display = "flex";
@@ -509,8 +601,30 @@ async function loadRoute(){
   stopLayer.clearLayers();
   if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
 
-  const data = await fetchRoute();
+  // Hent rute + sjekkliste-state parallelt — vi trenger begge for å avgjøre
+  // om nextCard skal vise sjekklisten eller Naviger-CTA.
+  const [data, checklist] = await Promise.all([
+    fetchRoute(),
+    fetchChecklist(activeDate),
+  ]);
   if (!data) return;
+  currentChecklist = checklist || {};
+  await renderRoute(data);
+}
+
+// DOM-rendering av ruten (kart, timeline, neste-stopp/sjekkliste-boks).
+// Splittet ut fra loadRoute() så _renderNextCard() kan gjenbruke cached data
+// uten å fetche på nytt når sjåføren krysser av i sjekklisten.
+async function renderRoute(data){
+  // Idempotent: nullstill DOM/lag før vi tegner. loadRoute gjør dette tidlig
+  // for å vise 'Laster…', men når vi rendrer fra cached data direkte må vi
+  // rense her også.
+  $("stops").innerHTML = "";
+  $("nextCard").innerHTML = "";
+  $("approvalBanner").style.display = "none";
+  if (stopLayer) stopLayer.clearLayers();
+  if (routeLine && map) { map.removeLayer(routeLine); routeLine = null; }
+
   currentRoute = data;
 
   if (data.error === "no_depot") {
@@ -589,21 +703,9 @@ async function loadRoute(){
 
   // Neste stopp = første som ikke er levert
   // (Driver-API returnerer kun ikke-leverte stopp; stops[0] er neste)
-  const next = stops[0];
-  $("nextCard").innerHTML = `
-    <div class="next-card">
-      <div class="label">Neste stopp · ${next.stop_index} av ${stops.length}${data.awaiting_approval ? ' · FORHÅNDSVISNING' : ''}</div>
-      <div class="name">${next.navn || ('Bestilling #'+next.order_id)}</div>
-      <div class="addr">${[next.adresse, next.postnr, next.poststed].filter(Boolean).join(", ") || "(adresse mangler)"}</div>
-      <div class="meta">
-        ${next.arrival_clock ? `<div><div class="lbl">Planlagt</div><span class="val">${next.arrival_clock}</span></div>` : ""}
-        <div><div class="lbl">Live ETA</div><span class="val"><span data-next-eta>—</span> <span style="font-size:13px;opacity:.7">min</span></span></div>
-        ${next.leveringstid ? `<div><div class="lbl">Vindu</div><span class="val" style="font-size:14px">${next.leveringstid}</span></div>` : ""}
-      </div>
-      <a class="nav-btn" href="${navLink(next.lat, next.lon, next.navn)}" target="_blank">
-        🧭 Naviger hit
-      </a>
-    </div>`;
+  // _renderNextCard avgjør om vi viser sjekklisten eller Naviger-CTA — sjekklisten
+  // gates kun den grønne "Neste stopp"-boksen. Kart og timeline er alltid synlig.
+  _renderNextCard(data);
 
   // ── Bygg vertikal timeline ────────────────────────────────────────
   const breaks = Array.isArray(data.breaks) ? data.breaks : [];
@@ -790,6 +892,269 @@ async function pollLive(){
   } catch(e) {}
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Sjekkliste (pre-flight): sjåfør må krysse av alle varelinjer før ruten
+// vises. State lagres per dato på server så fremgangen overlever reload.
+// ─────────────────────────────────────────────────────────────────────
+let currentChecklist = {};  // { order_id: [line_id, ...] }
+
+function _countTotalItems(route){
+  const stops = (route && route.stops) || [];
+  return stops.reduce((sum, s) => sum + ((s.items || []).length), 0);
+}
+function _countCheckedItems(route, checklist){
+  const stops = (route && route.stops) || [];
+  let n = 0;
+  for (const s of stops) {
+    const set = new Set((checklist[s.order_id] || []).map(String));
+    for (const it of (s.items || [])) {
+      if (set.has(String(it.line_id))) n++;
+    }
+  }
+  return n;
+}
+function _isChecklistComplete(route, checklist){
+  const stops = (route && route.stops) || [];
+  for (const s of stops) {
+    const items = s.items || [];
+    if (!items.length) continue;  // ingen linjer å krysse av → auto-ok
+    const set = new Set((checklist[s.order_id] || []).map(String));
+    for (const it of items) {
+      if (!set.has(String(it.line_id))) return false;
+    }
+  }
+  return true;
+}
+
+async function fetchChecklist(date){
+  try {
+    const r = await fetch(`/api/driver/route/checklist?date=${date}&pin=${encodeURIComponent(getPin())}`);
+    if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp."); return null; }
+    if (!r.ok) return {};
+    const data = await r.json();
+    return data.checked || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+// Lagrer én enkelt linje (eller en bulk-liste når line_ids settes). Optimistisk
+// oppdatering på klientsiden — hvis serveren feiler, ruller vi tilbake og varsler.
+async function saveChecklistChange(body, optimisticApply, optimisticRollback){
+  optimisticApply && optimisticApply();
+  try {
+    const r = await fetch(`/api/driver/route/checklist?pin=${encodeURIComponent(getPin())}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: activeDate, ...body }),
+    });
+    if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp."); return false; }
+    if (!r.ok) throw new Error("server " + r.status);
+    const data = await r.json();
+    // Server er sannhet — synk lokal state hvis vi fikk full checklist tilbake
+    if (data.checklist) currentChecklist = data.checklist;
+    return true;
+  } catch (e) {
+    optimisticRollback && optimisticRollback();
+    alert("Klarte ikke å lagre avkrysning. Prøv igjen.");
+    if (currentRoute) _renderNextCard(currentRoute);
+    return false;
+  }
+}
+
+function _escapeHtml(s){
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+// Tom-dag ack-flagg per dato. Sjåfør må aktivt trykke "Bekreft og start rute"
+// første gang en dag uten varelinjer åpnes — flagget lagres lokalt så
+// neste reload samme dag hopper rett til Naviger-CTA.
+const _ackKey = (date) => `havoyet_route_ack_${date}`;
+function _isDayAcked(date){ return localStorage.getItem(_ackKey(date)) === "1"; }
+function _ackDay(date){ localStorage.setItem(_ackKey(date), "1"); }
+
+// Renderer enten sjekklisten eller den vanlige Neste-stopp-boksen i #nextCard.
+// Kart + timeline er alltid synlig — kun den grønne CTA-boksen gates.
+function _renderNextCard(data){
+  const stops = data.stops || [];
+  if (!stops.length) {
+    $("nextCard").innerHTML = "";
+    return;
+  }
+  const next = stops[0];
+  const total = _countTotalItems(data);
+  const complete = _isChecklistComplete(data, currentChecklist);
+  const gateOpen = total > 0 ? complete : _isDayAcked(activeDate);
+
+  if (gateOpen) {
+    _renderNextStopCTA(data, next);
+  } else {
+    _renderChecklistCard(data, stops);
+  }
+}
+
+function _renderNextStopCTA(data, next){
+  const stops = data.stops || [];
+  $("nextCard").innerHTML = `
+    <div class="next-card">
+      <div class="label">Neste stopp · ${next.stop_index} av ${stops.length}${data.awaiting_approval ? ' · FORHÅNDSVISNING' : ''}</div>
+      <div class="name">${_escapeHtml(next.navn || ('Bestilling #'+next.order_id))}</div>
+      <div class="addr">${_escapeHtml([next.adresse, next.postnr, next.poststed].filter(Boolean).join(", ")) || "(adresse mangler)"}</div>
+      <div class="meta">
+        ${next.arrival_clock ? `<div><div class="lbl">Planlagt</div><span class="val">${_escapeHtml(next.arrival_clock)}</span></div>` : ""}
+        <div><div class="lbl">Live ETA</div><span class="val"><span data-next-eta>—</span> <span style="font-size:13px;opacity:.7">min</span></span></div>
+        ${next.leveringstid ? `<div><div class="lbl">Vindu</div><span class="val" style="font-size:14px">${_escapeHtml(next.leveringstid)}</span></div>` : ""}
+      </div>
+      <a class="nav-btn" href="${navLink(next.lat, next.lon, next.navn)}" target="_blank">
+        🧭 Naviger hit
+      </a>
+    </div>`;
+}
+
+function _renderChecklistCard(data, stops){
+  const total = _countTotalItems(data);
+  const done = _countCheckedItems(data, currentChecklist);
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  const stopsHtml = stops.map(s => {
+    const items = s.items || [];
+    const checkedSet = new Set((currentChecklist[s.order_id] || []).map(String));
+    const stopChecked = items.length > 0 && items.every(it => checkedSet.has(String(it.line_id)));
+    const addrLine = [s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ");
+    const slotTag = s.leveringstid
+      ? `<div class="slot-tag">${_escapeHtml(s.leveringstid)}</div>` : "";
+    const markAllLabel = stopChecked ? "Fjern alle" : "Marker alle";
+
+    const linesHtml = items.length
+      ? items.map(it => {
+          const isChecked = checkedSet.has(String(it.line_id));
+          const variant = it.variant ? `<div class="cl-line-variant">${_escapeHtml(it.variant)}</div>` : "";
+          const unit = it.unit ? ` ${_escapeHtml(it.unit)}` : "";
+          return `
+            <div class="cl-line${isChecked ? ' checked' : ''}"
+                 data-order="${_escapeHtml(s.order_id)}"
+                 data-line="${_escapeHtml(it.line_id)}"
+                 role="checkbox" aria-checked="${isChecked}" tabindex="0">
+              <div class="cl-checkbox" aria-hidden="true">${isChecked ? '✓' : ''}</div>
+              <div class="cl-line-text">
+                <div class="cl-line-name"><span class="qty">${_escapeHtml(it.qty)}×${unit}</span>${_escapeHtml(it.name || '(uten navn)')}</div>
+                ${variant}
+              </div>
+            </div>`;
+        }).join("")
+      : `<div class="cl-empty-items">Ingen varelinjer registrert på denne ordren.</div>`;
+
+    return `
+      <div class="cl-card${stopChecked ? ' done' : ''}" data-stop="${_escapeHtml(s.order_id)}">
+        <div class="cl-card-head">
+          <div class="num">${_escapeHtml(s.stop_index)}</div>
+          <div class="info">
+            <div class="name">${_escapeHtml(s.navn || ('Bestilling #' + s.order_id))}</div>
+            <div class="addr">${_escapeHtml(addrLine || '(adresse mangler)')}</div>
+            ${slotTag}
+          </div>
+          ${items.length ? `<button class="cl-mark-all" type="button"
+                                   data-mark-all="${_escapeHtml(s.order_id)}">${markAllLabel}</button>` : ""}
+        </div>
+        ${linesHtml}
+      </div>`;
+  }).join("");
+
+  const startEnabled = total > 0 ? _isChecklistComplete(data, currentChecklist) : true;
+  const startLabel = total === 0
+    ? "Bekreft og start rute"
+    : (startEnabled
+        ? "✓ Alt er pakket — Start rute"
+        : `Pakk ferdig først (${total - done} igjen)`);
+
+  $("nextCard").innerHTML = `
+    <div class="cl-wrap">
+      <div class="cl-head">
+        <div class="icon">📦</div>
+        <div class="meta">
+          <div class="label">Sjekkliste · før første kunde</div>
+          <div class="title">Pakk ferdig før du starter</div>
+          <div class="sub">Hak av hver vare etter hvert som den legges i bilen. Først når alt er huket av, kommer Naviger-knappen opp.</div>
+        </div>
+      </div>
+      ${total > 0 ? `
+        <div class="cl-progress">
+          <div class="cl-progress-bar"><div class="cl-progress-fill" style="width:${pct}%"></div></div>
+          <div class="cl-progress-text"><b>${done}</b> av <b>${total}</b> varer pakket</div>
+        </div>` : ''}
+      <div class="cl-stops-list">${stopsHtml}</div>
+      <button class="cl-start" id="clStartBtn" ${startEnabled ? '' : 'disabled'}>${_escapeHtml(startLabel)}</button>
+      ${total === 0
+        ? `<div class="cl-start-hint">Ingen varelinjer er registrert på dagens ordrer. Bekreft at alt er klart for utkjøring.</div>`
+        : ''}
+    </div>`;
+
+  // Linje-toggling
+  $("nextCard").querySelectorAll(".cl-line").forEach(el => {
+    const toggle = async () => {
+      const orderId = el.dataset.order;
+      const lineId = el.dataset.line;
+      const wasChecked = el.classList.contains("checked");
+      const newChecked = !wasChecked;
+      const ok = await saveChecklistChange(
+        { order_id: orderId, line_id: lineId, checked: newChecked },
+        () => {
+          const arr = currentChecklist[orderId] ? [...currentChecklist[orderId]] : [];
+          if (newChecked && !arr.includes(lineId)) arr.push(lineId);
+          if (!newChecked) {
+            const i = arr.indexOf(lineId);
+            if (i >= 0) arr.splice(i, 1);
+          }
+          if (arr.length) currentChecklist[orderId] = arr;
+          else delete currentChecklist[orderId];
+        }
+      );
+      if (ok) _renderNextCard(currentRoute);
+    };
+    el.addEventListener("click", toggle);
+    el.addEventListener("keydown", e => {
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggle(); }
+    });
+  });
+
+  // Marker-alle-knapp per kunde
+  $("nextCard").querySelectorAll("[data-mark-all]").forEach(btn => {
+    btn.addEventListener("click", async e => {
+      e.stopPropagation();
+      const orderId = btn.dataset.markAll;
+      const stop = stops.find(s => String(s.order_id) === String(orderId));
+      if (!stop) return;
+      const items = stop.items || [];
+      const allLineIds = items.map(it => String(it.line_id));
+      const currentSet = new Set((currentChecklist[orderId] || []).map(String));
+      const isAllChecked = allLineIds.every(id => currentSet.has(id));
+      const targetChecked = !isAllChecked;
+      const ok = await saveChecklistChange(
+        { order_id: orderId, line_ids: allLineIds, checked: targetChecked },
+        () => {
+          if (targetChecked) currentChecklist[orderId] = [...allLineIds];
+          else delete currentChecklist[orderId];
+        }
+      );
+      if (ok) _renderNextCard(currentRoute);
+    });
+  });
+
+  // Start rute-knapp: enten flytter den oss til Naviger-CTA (når sjekkliste er
+  // ferdig), eller bekrefter manuelt at en tom-vareliste-dag er klar for kjøring.
+  const startBtn = document.getElementById("clStartBtn");
+  if (startBtn) {
+    startBtn.addEventListener("click", () => {
+      if (startBtn.disabled) return;
+      if (total === 0) _ackDay(activeDate);
+      _renderNextCard(currentRoute);
+      // Live-ETA hopper inn så snart neste-stopp-kortet er rendret
+      pollLive();
+    });
+  }
+}
+
 async function handleLogin(){
   const pin = $("pin").value.trim();
   if (!pin) return;
@@ -819,6 +1184,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     clearPin();
     showPinScreen("");
   });
+
   $("datePrev").addEventListener("click", () => shiftDate(-1));
   $("dateNext").addEventListener("click", () => shiftDate(1));
   $("recenterBtn").addEventListener("click", () => {
