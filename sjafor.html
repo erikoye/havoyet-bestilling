@@ -149,6 +149,16 @@
                         font-size:16px;margin-top:16px;cursor:pointer;
                         text-decoration:none;letter-spacing:.2px}
     .next-card .nav-btn:active{transform:scale(.98);filter:brightness(.94)}
+    /* Sekundær lenke under Naviger-CTA: lar sjåfør åpne sjekklisten igjen
+       for å dobbeltsjekke eller angre en hake. Bevisst diskret styling så
+       den ikke konkurrerer med den primære Naviger-knappen. */
+    .next-card .show-checklist-btn{margin-top:10px;width:100%;background:transparent;
+                                   color:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.18);
+                                   border-radius:10px;padding:9px;font-size:12.5px;font-weight:600;
+                                   cursor:pointer;font-family:inherit;letter-spacing:.2px;
+                                   display:flex;align-items:center;justify-content:center;gap:6px}
+    .next-card .show-checklist-btn:active{background:rgba(255,255,255,.06);
+                                          color:#fff;border-color:rgba(255,255,255,.32)}
 
     /* ── Vertikal timeline med klokkeslett-skinne ─────────────────── */
     .timeline{position:relative;padding-left:64px}
@@ -426,6 +436,8 @@ function shiftDate(delta) {
   dt.setDate(dt.getDate() + delta);
   activeDate = _dateToIso(dt);
   updateDateLabel();
+  // Peek-modus er kun gyldig for én dato — reset ved datoskift
+  _peekChecklist = false;
   // Hver dag har egen sjekkliste-state — re-fetcher rute + checklist
   loadRoute();
 }
@@ -1170,13 +1182,16 @@ function _renderChecklistCard(data, stops){
     });
   });
 
-  // Start rute-knapp: enten flytter den oss til Naviger-CTA (når sjekkliste er
-  // ferdig), eller bekrefter manuelt at en tom-vareliste-dag er klar for kjøring.
+  // Start/Tilbake-knapp: lukker peek-modus (hvis aktiv) eller åpner gaten.
+  //   - Peek + komplett → "Tilbake til ruten": slå av peek, vis Naviger-CTA
+  //   - Ikke peek + komplett → "Start rute": vanlig åpning av gaten
+  //   - Ikke peek + tom dag → "Bekreft og start rute": ack-flagg + åpne gate
   const startBtn = document.getElementById("clStartBtn");
   if (startBtn) {
     startBtn.addEventListener("click", () => {
       if (startBtn.disabled) return;
-      if (total === 0) _ackDay(activeDate);
+      if (total === 0 && !_peekChecklist) _ackDay(activeDate);
+      _peekChecklist = false;
       _renderNextCard(currentRoute);
       // Live-ETA hopper inn så snart neste-stopp-kortet er rendret
       pollLive();
