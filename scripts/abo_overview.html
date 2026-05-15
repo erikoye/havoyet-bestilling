@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8"/>
+<title>Mitt abonnement — Havøyet</title>
+<style>
+  :root {
+    --hv-bg: #f7f5f0;
+    --hv-card: #ffffff;
+    --hv-ink: #1a1a1a;
+    --hv-fg-2: #3a3f48;
+    --hv-fg-3: #5b6470;
+    --hv-fg-4: #9aa1ac;
+    --hv-line: #ececec;
+    --hv-line-2: #e1e4e8;
+    --hv-teal: #0a8674;
+    --hv-teal-2: #07695b;
+    --hv-teal-wash: #d6f0eb;
+    --hv-teal-wash-2: #e8f7f4;
+    --hv-ok: #0a8674;
+    --hv-red: #c33;
+    --hv-warn: #b07b00;
+    --hv-warn-wash: #fff7e0;
+    --hv-warn-line: #f0dca0;
+    --hv-display: "Playfair Display", Georgia, "Times New Roman", serif;
+    --hv-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&display=swap');
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    background: var(--hv-bg); color: var(--hv-ink);
+    font-family: var(--hv-sans);
+    font-size: 14px; line-height: 1.55;
+  }
+
+  /* Top nav strip — matches site chrome */
+  .topnav {
+    background: #fff; border-bottom: 1px solid var(--hv-line);
+    padding: 14px 0;
+  }
+  .topnav .row {
+    max-width: 1180px; margin: 0 auto; padding: 0 28px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .topnav .brand {
+    font-family: var(--hv-display); font-size: 22px; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .topnav .user {
+    font-size: 12.5px; color: var(--hv-fg-3);
+  }
+  .topnav .user strong { color: var(--hv-ink); font-weight: 600; }
+
+  .wrap {
+    max-width: 1180px; margin: 0 auto; padding: 36px 28px 90px;
+  }
+
+  /* Hero header for the subscription */
+  .hero {
+    background: linear-gradient(160deg, var(--hv-teal-wash-2) 0%, var(--hv-teal-wash) 100%);
+    border: 1px solid var(--hv-teal-wash);
+    border-radius: 18px;
+    padding: 30px 32px;
+    margin-bottom: 24px;
+    display: grid;
+    grid-template-columns: 1fr auto; gap: 30px;
+    align-items: center;
+  }
+  .hero .crumb {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: .14em;
+    color: var(--hv-teal-2); font-weight: 600; margin-bottom: 8px;
+  }
+  .hero h1 {
+    font-family: var(--hv-display); font-size: 42px; font-weight: 600;
+    letter-spacing: -0.02em; margin: 0 0 6px; line-height: 1.05;
+  }
+  .hero h1 em { font-style: italic; color: var(--hv-teal-2); }
+  .hero .meta {
+    color: var(--hv-fg-2); font-size: 14px;
+  }
+  .hero .meta strong { font-weight: 600; }
+  .hero .badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 12px; border-radius: 999px;
+    background: rgba(255,255,255,.7); color: var(--hv-teal-2);
+    font-size: 12px; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .hero .badge .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--hv-ok);
+    box-shadow: 0 0 0 3px rgba(10,134,116,.18);
+  }
+  .hero .pricecard {
+    background: #fff; border-radius: 14px; padding: 22px 26px;
+    text-align: center; min-width: 220px;
+    box-shadow: 0 4px 18px rgba(7,105,91,.08);
+  }
+  .hero .pricecard .lbl {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--hv-fg-3); margin-bottom: 6px;
+  }
+  .hero .pricecard .big {
+    font-family: var(--hv-display); font-size: 38px; font-weight: 600;
+    line-height: 1; letter-spacing: -0.02em;
+  }
+  .hero .pricecard .unit {
+    font-size: 13px; color: var(--hv-fg-3); margin-top: 6px;
+  }
+  .hero .pricecard .month {
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--hv-line); font-size: 12.5px;
+    color: var(--hv-fg-3);
+  }
+  .hero .pricecard .month strong { color: var(--hv-ink); font-weight: 600; }
+
+  /* Section grid */
+  .grid {
+    display: grid; grid-template-columns: 1.4fr 1fr; gap: 22px;
+  }
+  .col { display: flex; flex-direction: column; gap: 22px; }
+
+  .card {
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 16px;
+    overflow: hidden;
+  }
+  .card-head {
+    padding: 18px 22px; display: flex; justify-content: space-between;
+    align-items: baseline; border-bottom: 1px solid var(--hv-line);
+  }
+  .card-head h2 {
+    font-family: var(--hv-display); font-size: 20px; font-weight: 600;
+    letter-spacing: -0.01em; margin: 0;
+  }
+  .card-head .desc { font-size: 12.5px; color: var(--hv-fg-3); }
+  .card-body { padding: 20px 22px; }
+
+  /* Products */
+  .prods { margin: 0; padding: 0; list-style: none; }
+  .prods li {
+    display: grid; grid-template-columns: 44px 1fr auto;
+    align-items: center; gap: 14px;
+    padding: 12px 0; border-top: 1px solid var(--hv-line);
+  }
+  .prods li:first-child { border-top: none; }
+  .prods .thumb {
+    width: 44px; height: 44px; border-radius: 10px;
+    background: linear-gradient(135deg, #e8f0f3 0%, #d8e3e9 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; color: var(--hv-teal-2);
+  }
+  .prods .name {
+    font-weight: 600; font-size: 14.5px; color: var(--hv-ink);
+  }
+  .prods .cat {
+    font-size: 11px; color: var(--hv-fg-3); text-transform: uppercase;
+    letter-spacing: .04em; margin-top: 2px;
+  }
+  .prods .qty {
+    font-size: 13px; color: var(--hv-fg-3); text-align: right;
+  }
+  .prods-foot {
+    margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--hv-line);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px;
+  }
+  .prods-foot .lbl { color: var(--hv-fg-3); }
+  .prods-foot .val { font-weight: 600; }
+
+  /* Calendar — skip dates */
+  .cal-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px;
+  }
+  .cal-month {
+    font-family: var(--hv-display); font-size: 17px; font-weight: 600;
+  }
+  .cal-nav { display: flex; gap: 4px; }
+  .cal-nav button {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: #fff; border: 1px solid var(--hv-line); color: var(--hv-fg-3);
+    cursor: pointer; font-size: 14px;
+  }
+  .deliveries {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+  }
+  .deliv {
+    border: 1.5px solid var(--hv-line); border-radius: 12px;
+    padding: 12px 14px; background: #fff; cursor: pointer;
+    transition: all .15s ease;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+  }
+  .deliv:hover { border-color: var(--hv-line-2); }
+  .deliv .date {
+    font-weight: 600; font-size: 13.5px;
+  }
+  .deliv .meta {
+    font-size: 11.5px; color: var(--hv-fg-3); margin-top: 2px;
+  }
+  .deliv .pill {
+    font-size: 11px; padding: 4px 10px; border-radius: 999px;
+    background: var(--hv-bg); color: var(--hv-fg-3); font-weight: 600;
+  }
+  .deliv.delivered {
+    border-color: var(--hv-teal-wash); background: var(--hv-teal-wash-2);
+  }
+  .deliv.delivered .pill { background: var(--hv-teal); color: #fff; }
+  .deliv.skipped {
+    border-color: var(--hv-warn-line); background: var(--hv-warn-wash);
+  }
+  .deliv.skipped .date, .deliv.skipped .meta { color: var(--hv-warn); }
+  .deliv.skipped .pill { background: var(--hv-warn); color: #fff; }
+  .deliv.next {
+    border-color: var(--hv-teal); background: #fff;
+    box-shadow: 0 0 0 3px rgba(10,134,116,.08);
+  }
+  .deliv.next .pill { background: var(--hv-teal); color: #fff; }
+
+  .cal-help {
+    margin-top: 12px; padding: 10px 12px;
+    background: var(--hv-bg); border-radius: 8px;
+    font-size: 11.5px; color: var(--hv-fg-3);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .cal-help .icon {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--hv-teal); color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; flex-shrink: 0;
+  }
+
+  /* Billing summary */
+  .bill { font-size: 13.5px; }
+  .bill .row {
+    display: flex; justify-content: space-between; padding: 8px 0;
+  }
+  .bill .row.muted { color: var(--hv-fg-3); }
+  .bill .row.warn { color: var(--hv-warn); }
+  .bill .row.tot {
+    border-top: 1px solid var(--hv-line);
+    margin-top: 8px; padding-top: 14px;
+    font-size: 16px; font-weight: 600;
+  }
+  .bill .row.tot .v {
+    font-family: var(--hv-display); font-size: 22px;
+    letter-spacing: -0.01em;
+  }
+  .bill-note {
+    margin-top: 14px; font-size: 11.5px; color: var(--hv-fg-3);
+    line-height: 1.5;
+  }
+
+  /* Facts strip */
+  .facts {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+    margin-bottom: 22px;
+  }
+  .fact {
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .fact .lbl {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--hv-fg-3); margin-bottom: 4px;
+  }
+  .fact .val {
+    font-family: var(--hv-display); font-size: 19px; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .fact .sub { font-size: 11.5px; color: var(--hv-fg-3); margin-top: 2px; }
+
+  /* Actions */
+  .actions {
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 22px;
+    background: #fafafa; border-top: 1px solid var(--hv-line);
+  }
+  .btn {
+    padding: 9px 18px; font-size: 13px; border-radius: 999px;
+    cursor: pointer; font-weight: 500; transition: all .15s ease;
+    border: 1px solid var(--hv-line); background: #fff; color: var(--hv-ink);
+  }
+  .btn:hover { background: var(--hv-bg); }
+  .btn.primary {
+    background: var(--hv-teal); color: #fff; border-color: var(--hv-teal);
+  }
+  .btn.primary:hover { background: var(--hv-teal-2); border-color: var(--hv-teal-2); }
+  .btn.danger { color: var(--hv-red); border-color: #f1c5c5; }
+  .btn.danger:hover { background: #fdf2f2; }
+
+  /* Side: actions card */
+  .side-actions { padding: 18px 22px; }
+  .side-actions .row {
+    display: flex; gap: 10px; padding: 12px 0;
+    border-top: 1px solid var(--hv-line);
+    align-items: center; justify-content: space-between;
+  }
+  .side-actions .row:first-child { border-top: none; padding-top: 0; }
+  .side-actions .row:last-child { padding-bottom: 0; }
+  .side-actions .row .info {
+    font-size: 13px; font-weight: 600;
+  }
+  .side-actions .row .info .desc {
+    font-size: 11.5px; color: var(--hv-fg-3); margin-top: 2px;
+    font-weight: 400;
+  }
+  .side-actions .row a {
+    font-size: 12.5px; color: var(--hv-teal); text-decoration: none;
+    font-weight: 600; white-space: nowrap;
+  }
+
+  /* History */
+  .hist { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+  .hist li {
+    padding: 10px 0; border-top: 1px solid var(--hv-line);
+    display: grid; grid-template-columns: 90px 1fr auto; gap: 14px;
+    align-items: center;
+  }
+  .hist li:first-child { border-top: none; }
+  .hist .date {
+    font-size: 11.5px; color: var(--hv-fg-3);
+  }
+  .hist .what { font-weight: 500; }
+  .hist .what .em {
+    font-size: 11.5px; color: var(--hv-fg-3); font-weight: 400;
+    margin-top: 2px;
+  }
+  .hist .am {
+    font-weight: 600; text-align: right;
+    font-feature-settings: "tnum";
+  }
+  .hist .am.minus { color: var(--hv-warn); }
+
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+    .hero { grid-template-columns: 1fr; }
+    .deliveries { grid-template-columns: 1fr; }
+    .facts { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<!-- Top nav -->
+<div class="topnav">
+  <div class="row">
+    <div class="brand">Havøyet</div>
+    <div class="user">Logget inn som <strong>erik@havoyet.no</strong></div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- Hero -->
+  <div class="hero">
+    <div>
+      <div class="crumb">Mitt abonnement</div>
+      <h1>Sjømatkasse for <em>2 personer</em></h1>
+      <div class="badge"><span class="dot"></span>Aktiv siden 12.05.2026</div>
+      <div class="meta">
+        Leveres <strong>hver torsdag</strong> til Bønesveien 24, 5152 Bønes.<br/>
+        Du betaler per faktisk levering — hopp over uker som ikke passer i kalenderen under.
+      </div>
+    </div>
+    <div class="pricecard">
+      <div class="lbl">Pris per levering</div>
+      <div class="big">372,50</div>
+      <div class="unit">kr — frakt inkludert</div>
+      <div class="month">Mai 2026: <strong>1 117,50 kr</strong><br/>(3 av 4 leveringer)</div>
+    </div>
+  </div>
+
+  <!-- Facts -->
+  <div class="facts">
+    <div class="fact">
+      <div class="lbl">Neste levering</div>
+      <div class="val">Tor 15.05</div>
+      <div class="sub">om 3 dager · 13–15</div>
+    </div>
+    <div class="fact">
+      <div class="lbl">Leveringer mai</div>
+      <div class="val">3 av 4</div>
+      <div class="sub">1 hoppet over (22.05)</div>
+    </div>
+    <div class="fact">
+      <div class="lbl">Neste trekk</div>
+      <div class="val">31.05.2026</div>
+      <div class="sub">1 117,50 kr</div>
+    </div>
+    <div class="fact">
+      <div class="lbl">Spart hittil</div>
+      <div class="val">298,00 kr</div>
+      <div class="sub">15 % abonnent-rabatt</div>
+    </div>
+  </div>
+
+  <!-- Two-column main -->
+  <div class="grid">
+
+    <!-- Left: Calendar -->
+    <div class="col">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Leveringer</h2>
+            <div class="desc">Klikk en uke for å hoppe over — minst 14 dager før.</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="cal-head">
+            <div class="cal-month">Mai 2026</div>
+            <div class="cal-nav">
+              <button>‹</button>
+              <button>›</button>
+            </div>
+          </div>
+          <div class="deliveries">
+            <div class="deliv delivered">
+              <div>
+                <div class="date">Tor 01.05.2026</div>
+                <div class="meta">Levert · 372,50 kr</div>
+              </div>
+              <span class="pill">✓ Levert</span>
+            </div>
+            <div class="deliv delivered">
+              <div>
+                <div class="date">Tor 08.05.2026</div>
+                <div class="meta">Levert · 372,50 kr</div>
+              </div>
+              <span class="pill">✓ Levert</span>
+            </div>
+            <div class="deliv next">
+              <div>
+                <div class="date">Tor 15.05.2026</div>
+                <div class="meta">Neste levering · 13–15</div>
+              </div>
+              <span class="pill">Planlagt</span>
+            </div>
+            <div class="deliv skipped">
+              <div>
+                <div class="date">Tor 22.05.2026</div>
+                <div class="meta">Du hoppet over · ikke trukket</div>
+              </div>
+              <span class="pill">Hoppet over</span>
+            </div>
+            <div class="deliv">
+              <div>
+                <div class="date">Tor 29.05.2026</div>
+                <div class="meta">372,50 kr · klikk for å hoppe over</div>
+              </div>
+              <span class="pill">Hopp over</span>
+            </div>
+            <div class="deliv">
+              <div>
+                <div class="date">Tor 05.06.2026</div>
+                <div class="meta">372,50 kr · klikk for å hoppe over</div>
+              </div>
+              <span class="pill">Hopp over</span>
+            </div>
+          </div>
+          <div class="cal-help">
+            <span class="icon">i</span>
+            Skip-frist er 14 dager før leveringsdagen. Etter det fryser leveransen og må refunderes manuelt.
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn">Vis hele året</button>
+          <button class="btn">Endre leveringsdag</button>
+          <button class="btn">Pause hele abonnementet</button>
+        </div>
+      </div>
+
+      <!-- Products -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Dette får du i hver kasse</h2>
+            <div class="desc">3 måltider for 2 personer · 1,3 kg fersk fisk + tilbehør</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <ul class="prods">
+            <li>
+              <span class="thumb">🐟</span>
+              <div>
+                <div class="cat">Hvitfisk</div>
+                <div class="name">Skrei-filet</div>
+              </div>
+              <div class="qty">2 × 250 g</div>
+            </li>
+            <li>
+              <span class="thumb">🐟</span>
+              <div>
+                <div class="cat">Hvitfisk</div>
+                <div class="name">Laksefilet</div>
+              </div>
+              <div class="qty">2 × 250 g</div>
+            </li>
+            <li>
+              <span class="thumb">🍣</span>
+              <div>
+                <div class="cat">Røyk &amp; spek</div>
+                <div class="name">Røkelaks i skiver</div>
+              </div>
+              <div class="qty">1 × 150 g</div>
+            </li>
+            <li>
+              <span class="thumb">🦐</span>
+              <div>
+                <div class="cat">Skalldyr</div>
+                <div class="name">Pillede reker</div>
+              </div>
+              <div class="qty">1 × 200 g</div>
+            </li>
+            <li>
+              <span class="thumb">🥫</span>
+              <div>
+                <div class="cat">Hermetikk</div>
+                <div class="name">Sildefilet i tomat</div>
+              </div>
+              <div class="qty">1 × 200 g</div>
+            </li>
+          </ul>
+          <div class="prods-foot">
+            <span class="lbl">Total vekt</span>
+            <span class="val">1,55 kg</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn primary">Endre utvalg</button>
+          <button class="btn">Bytt en enkelt vare for neste kasse</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Billing + actions -->
+    <div class="col">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Trekk for mai</h2>
+            <div class="desc">Trekkes 31.05 fra **** 4242</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="bill">
+            <div class="row muted"><span>Planlagte leveringer</span><span>4 stk</span></div>
+            <div class="row"><span>4 × 372,50 kr</span><span>1 490,00 kr</span></div>
+            <div class="row warn"><span>− Hoppet over (22.05)</span><span>− 372,50 kr</span></div>
+            <div class="row tot"><span>Faktisk trekk</span><span class="v">1 117,50 kr</span></div>
+          </div>
+          <div class="bill-note">
+            Stripe trekker det faktiske antallet leveringer × pris per levering når måneden er ferdig. Du får varsel 3 dager før.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Innstillinger</h2>
+            <div class="desc">Endre adresse, kort eller leveringsdag</div>
+          </div>
+        </div>
+        <div class="side-actions">
+          <div class="row">
+            <div class="info">Leveringsadresse<div class="desc">Bønesveien 24, 5152 Bønes</div></div>
+            <a href="#">Endre</a>
+          </div>
+          <div class="row">
+            <div class="info">Betalingsmetode<div class="desc">Visa ending in 4242 · utgår 09/2028</div></div>
+            <a href="#">Bytt kort</a>
+          </div>
+          <div class="row">
+            <div class="info">Leveringsdag<div class="desc">Torsdag · 13–15</div></div>
+            <a href="#">Endre</a>
+          </div>
+          <div class="row">
+            <div class="info">Kommentar til sjåfør<div class="desc">«Sett gjerne kassen i carporten»</div></div>
+            <a href="#">Rediger</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Historikk</h2>
+            <div class="desc">Siste trekk og leveringer</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <ul class="hist">
+            <li>
+              <span class="date">08.05.2026</span>
+              <span class="what">Levering torsdag<span class="em">Skrei, laks, reker, røkelaks, sild</span></span>
+              <span class="am">372,50</span>
+            </li>
+            <li>
+              <span class="date">01.05.2026</span>
+              <span class="what">Levering torsdag<span class="em">Skrei, laks, reker, røkelaks, sild</span></span>
+              <span class="am">372,50</span>
+            </li>
+            <li>
+              <span class="date">30.04.2026</span>
+              <span class="what">Trekk april<span class="em">4 av 4 leveringer</span></span>
+              <span class="am">1 490,00</span>
+            </li>
+            <li>
+              <span class="date">24.04.2026</span>
+              <span class="what">Levering torsdag<span class="em">Skrei, laks, reker, røkelaks, sild</span></span>
+              <span class="am">372,50</span>
+            </li>
+            <li>
+              <span class="date">17.04.2026</span>
+              <span class="what">Levering torsdag<span class="em">Skrei, laks, reker, røkelaks, sild</span></span>
+              <span class="am">372,50</span>
+            </li>
+          </ul>
+        </div>
+        <div class="actions">
+          <button class="btn">Last ned alle kvitteringer</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Avslutt abonnement</h2>
+        </div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--hv-fg-3);margin:0 0 12px;">
+            Si opp senest <strong>1 uke</strong> før neste trekk for full refusjon av siste betaling.
+            Etter det fullføres siste trekk, og abonnementet stoppes.
+          </p>
+          <button class="btn danger">Si opp abonnement</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+</body>
+</html>

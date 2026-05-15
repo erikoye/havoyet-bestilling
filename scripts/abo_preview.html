@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8"/>
+<title>Abonnement-bestilling — forhåndsvisning</title>
+<style>
+  :root {
+    --hv-bg: #f7f5f0;
+    --hv-card: #ffffff;
+    --hv-ink: #1a1a1a;
+    --hv-fg-3: #5b6470;
+    --hv-line: #ececec;
+    --hv-teal: #0a8674;
+    --hv-teal-wash: #d6f0eb;
+    --hv-ok: #0a8674;
+    --hv-red: #c33;
+    --hv-warn: #b07b00;
+    --hv-warn-wash: #fff3cd;
+    --hv-display: Georgia, "Times New Roman", serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px 80px;
+    background: var(--hv-bg); color: var(--hv-ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.55;
+  }
+  .wrap { max-width: 1300px; margin: 0 auto; }
+  .top-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 18px 22px; margin-bottom: 28px;
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 12px;
+  }
+  .top-bar h1 {
+    font-family: var(--hv-display); font-size: 22px; font-weight: 600;
+    margin: 0; letter-spacing: -0.01em;
+  }
+  .top-bar .lead { color: var(--hv-fg-3); font-size: 13px; margin-top: 4px; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .layout-full { grid-column: 1 / -1; }
+  .panel {
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 14px;
+    overflow: hidden;
+  }
+  .panel-head {
+    padding: 14px 18px; border-bottom: 1px solid var(--hv-line);
+    display: flex; align-items: baseline; justify-content: space-between;
+    background: #fafafa;
+  }
+  .panel-head h2 {
+    font-family: var(--hv-display); font-size: 17px; font-weight: 600; margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .panel-head .sub {
+    font-size: 12px; color: var(--hv-fg-3); letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .panel-body { padding: 18px; }
+
+  /* ─── Mail ─── */
+  .mail-frame { background: #f0f0f0; border-radius: 10px; padding: 18px; }
+  .mail-card {
+    background: #fff; border-radius: 6px; padding: 22px;
+    max-width: 540px; margin: 0 auto;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .mail-hdr {
+    border-bottom: 1px solid #ececec; padding-bottom: 10px; margin-bottom: 14px;
+    font-size: 12px; color: var(--hv-fg-3);
+  }
+  .mail-hdr .from { color: var(--hv-ink); font-weight: 600; }
+  .mail-subj { font-size: 15px; color: var(--hv-ink); margin-top: 4px; }
+  .mail-tick {
+    width: 56px; height: 56px; border-radius: 50%; background: var(--hv-teal-wash);
+    color: var(--hv-teal); display: inline-flex; align-items: center;
+    justify-content: center; font-size: 26px; border: 2px solid var(--hv-teal);
+    line-height: 1;
+  }
+  .mail-center { text-align: center; padding: 18px 0 14px; }
+  .mail-h1 { font-size: 23px; font-weight: 600; letter-spacing: -0.01em; margin: 14px 0 6px; }
+  .mail-lead { color: var(--hv-fg-3); font-size: 13.5px; margin: 0; }
+  .mail-box {
+    background: #fafafa; border: 1px solid var(--hv-line); border-radius: 10px;
+    padding: 16px 18px; margin: 0 0 14px;
+  }
+  .mail-box .lbl-up {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--hv-fg-3); margin-bottom: 6px;
+  }
+  .mail-box .kasse-name { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .mail-box .portion { font-size: 12.5px; color: var(--hv-fg-3); margin-bottom: 10px; }
+  .mail-box table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .mail-box td { padding: 4px 0; }
+  .mail-box td.lbl { color: var(--hv-fg-3); }
+  .mail-box td.val { text-align: right; }
+  .mail-box td.val.bold { font-weight: 600; }
+  .mail-box td.val.ok { color: var(--hv-ok); }
+  .mail-prods {
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 10px;
+    padding: 14px 16px; margin: 0 0 14px;
+  }
+  .mail-prods .lbl-up {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--hv-fg-3); margin-bottom: 8px;
+  }
+  .mail-prods ul { margin: 0; padding: 0; list-style: none; }
+  .mail-prods li {
+    display: flex; justify-content: space-between; padding: 5px 0;
+    border-bottom: 1px dashed #f0f0f0; font-size: 13px;
+  }
+  .mail-prods li:last-child { border-bottom: none; }
+  .mail-prods li .pname { color: var(--hv-ink); }
+  .mail-prods li .pqty { color: var(--hv-fg-3); font-size: 12px; }
+  .mail-body { font-size: 13px; line-height: 1.55; color: #2a2f38; margin: 0 0 14px; }
+  .mail-body p { margin: 0 0 8px; }
+  .mail-body a { color: var(--hv-teal); }
+  .mail-cta { text-align: center; margin: 0 0 16px; }
+  .mail-cta a {
+    display: inline-block; background: var(--hv-teal); color: #fff !important;
+    text-decoration: none; font-weight: 600; font-size: 13px;
+    padding: 10px 20px; border-radius: 999px;
+  }
+  .mail-footer {
+    font-size: 10.5px; color: #9aa1ac; text-align: center;
+    border-top: 1px solid #ececec; padding-top: 10px;
+  }
+
+  /* ─── Min side ─── */
+  .ms-frame { background: #f7f5f0; border-radius: 10px; padding: 20px; }
+  .ms-tabs {
+    display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .ms-tab {
+    padding: 7px 14px; font-size: 12.5px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--hv-line); color: var(--hv-fg-3);
+  }
+  .ms-tab.active { background: var(--hv-ink); color: #fff; border-color: var(--hv-ink); }
+  .ms-tab .count { opacity: .55; margin-left: 6px; }
+  .ms-eyebrow {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--hv-teal); margin-bottom: 8px;
+  }
+  .ms-h {
+    font-family: var(--hv-display); font-size: 24px; font-weight: 600;
+    margin: 0 0 16px; letter-spacing: -0.02em;
+  }
+  .ms-card {
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 14px;
+    padding: 20px; margin-bottom: 14px;
+  }
+  .ms-card-top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 14px;
+  }
+  .ms-card-title { font-family: var(--hv-display); font-size: 18px; font-weight: 600; }
+  .ms-status {
+    font-size: 11px; padding: 3px 10px; border-radius: 999px;
+    background: var(--hv-teal-wash); color: var(--hv-teal); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .05em;
+  }
+  .ms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; font-size: 13px; }
+  .ms-grid .lbl { color: var(--hv-fg-3); }
+  .ms-grid .val { text-align: right; font-weight: 600; }
+  .ms-divider { border-top: 1px solid var(--hv-line); margin: 14px 0; }
+  .ms-section-h {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--hv-fg-3); margin: 0 0 10px;
+  }
+  .ms-prods { margin: 0; padding: 0; list-style: none; }
+  .ms-prods li {
+    display: flex; justify-content: space-between; padding: 8px 0;
+    border-top: 1px solid var(--hv-line); font-size: 13px;
+  }
+  .ms-prods li:first-child { border-top: none; }
+  .ms-prods .pcat {
+    font-size: 11px; color: var(--hv-fg-3); text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .ms-cal {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+    margin-bottom: 10px;
+  }
+  .ms-slot {
+    border: 1px solid var(--hv-line); border-radius: 10px; padding: 10px 12px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: #fff; font-size: 12.5px; cursor: pointer;
+  }
+  .ms-slot.skipped {
+    background: var(--hv-warn-wash); border-color: #e6d09c;
+    color: var(--hv-warn);
+  }
+  .ms-slot .when { font-weight: 600; }
+  .ms-slot .meta { font-size: 11px; opacity: .7; margin-top: 2px; }
+  .ms-slot .toggle {
+    font-size: 11px; padding: 3px 8px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--hv-line); color: var(--hv-fg-3);
+  }
+  .ms-slot.skipped .toggle {
+    background: var(--hv-warn); color: #fff; border-color: var(--hv-warn);
+  }
+  .ms-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .ms-btn {
+    padding: 7px 14px; font-size: 12px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--hv-line); color: var(--hv-ink);
+    cursor: pointer;
+  }
+  .ms-btn.ghost-red { color: var(--hv-red); border-color: #f1c5c5; }
+  .ms-month-totals {
+    background: var(--hv-teal-wash); border-radius: 10px; padding: 12px 14px;
+    margin-top: 14px; font-size: 13px;
+  }
+  .ms-month-totals .row {
+    display: flex; justify-content: space-between; padding: 3px 0;
+  }
+  .ms-month-totals .row.tot {
+    border-top: 1px solid #b3dcd2; margin-top: 5px; padding-top: 8px;
+    font-weight: 600; font-size: 15px;
+  }
+
+  /* ─── Admin ─── */
+  .admin-frame { background: #f7f5f0; border-radius: 10px; padding: 20px; }
+  .admin-eyebrow {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--hv-teal); margin-bottom: 8px;
+  }
+  .admin-h {
+    font-family: var(--hv-display); font-size: 26px; font-weight: 600;
+    margin: 0 0 6px; letter-spacing: -0.02em;
+  }
+  .admin-lead { color: var(--hv-fg-3); font-size: 13px; margin: 0 0 18px; }
+  .admin-stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+    margin-bottom: 18px;
+  }
+  .admin-stat {
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 12px;
+    padding: 14px 16px; border-left: 4px solid var(--hv-teal);
+  }
+  .admin-stat:nth-child(2) { border-left-color: #5cb85c; }
+  .admin-stat:nth-child(3) { border-left-color: #f0a02e; }
+  .admin-stat:nth-child(4) { border-left-color: var(--hv-warn); }
+  .admin-stat .lbl {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--hv-fg-3); margin-bottom: 4px;
+  }
+  .admin-stat .val {
+    font-family: var(--hv-display); font-size: 26px; font-weight: 600;
+    line-height: 1.1; letter-spacing: -0.01em;
+  }
+  .admin-stat .sub { font-size: 11px; color: var(--hv-fg-3); margin-top: 2px; }
+  .admin-card {
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 12px;
+    padding: 14px; overflow-x: auto;
+  }
+  .admin-card table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+  .admin-card th {
+    text-align: left; color: var(--hv-fg-3); font-weight: 600;
+    padding: 8px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .admin-card td { padding: 10px 6px; border-top: 1px solid var(--hv-line); vertical-align: top; }
+  .admin-card td.right { text-align: right; }
+  .admin-card td.bold { font-weight: 600; }
+  .admin-card .em { color: var(--hv-fg-3); font-size: 11px; }
+  .admin-tag {
+    display: inline-block; padding: 3px 8px; font-size: 11px;
+    background: var(--hv-teal-wash); color: var(--hv-teal); font-weight: 600;
+    border-radius: 4px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .admin-expand {
+    padding: 4px 10px; font-size: 11px; color: var(--hv-fg-3);
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 6px;
+    cursor: pointer;
+  }
+  .admin-detail {
+    background: #fafafa; border-radius: 10px; padding: 16px; margin-top: 10px;
+    display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 20px;
+  }
+  .admin-detail .det-h {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--hv-fg-3); margin: 0 0 8px;
+  }
+  .admin-detail ul { margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
+  .admin-detail ul li {
+    display: flex; justify-content: space-between; padding: 4px 0;
+    border-top: 1px dashed #e6e6e6;
+  }
+  .admin-detail ul li:first-child { border-top: none; }
+  .admin-detail .pqty { color: var(--hv-fg-3); font-size: 11.5px; }
+  .admin-deliv li.skipped { color: var(--hv-warn); }
+  .admin-deliv li.skipped .pqty { color: var(--hv-warn); }
+  .admin-charge {
+    background: #fff; border: 1px solid var(--hv-line); border-radius: 8px;
+    padding: 12px 14px; font-size: 13px;
+  }
+  .admin-charge .row {
+    display: flex; justify-content: space-between; padding: 3px 0;
+  }
+  .admin-charge .row.tot {
+    border-top: 1px solid var(--hv-line); margin-top: 6px; padding-top: 8px;
+    font-weight: 600;
+  }
+
+  .legend {
+    margin-top: 24px; padding: 16px 18px; background: #fffbe6;
+    border: 1px solid #f7e7a0; border-radius: 10px; font-size: 12.5px;
+    color: #6c5a0a;
+  }
+  .legend strong { color: #4d3e00; }
+  .legend code {
+    background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 3px; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="top-bar">
+    <div>
+      <h1>Abonnement-bestilling — forhåndsvisning v2</h1>
+      <div class="lead">Med produkt-liste, skip-kalender og pris-justering per måned. Ingen data lagres.</div>
+    </div>
+  </div>
+
+  <div class="layout">
+
+    <!-- ─── KUNDE-MAIL ─── -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Kunde-kvittering</h2>
+        <span class="sub">Resend → erik@havoyet.no</span>
+      </div>
+      <div class="panel-body">
+        <div class="mail-frame">
+          <div class="mail-card">
+            <div class="mail-hdr">
+              <div><span class="from">Havøyet</span> &lt;nyhetsbrev@havoyet.no&gt;</div>
+              <div>til erik@havoyet.no</div>
+              <div class="mail-subj">Velkommen som abonnent — Sjømatkasse — 2 personer</div>
+            </div>
+
+            <div class="mail-center">
+              <div class="mail-tick">&#10003;</div>
+              <h1 class="mail-h1">Velkommen som abonnent!</h1>
+              <p class="mail-lead">Vi gleder oss til å sende fersk fisk hjem til deg.</p>
+            </div>
+
+            <div class="mail-box">
+              <div class="lbl-up">Ditt abonnement</div>
+              <div class="kasse-name">Sjømatkasse — 2 personer</div>
+              <div class="portion">2 voksne · 3 måltider/uke · Leveringsdag torsdag</div>
+              <table>
+                <tr><td class="lbl">Pris per levering</td><td class="val bold">372,50 kr</td></tr>
+                <tr><td class="lbl">Estimert per måned</td><td class="val">1 490,00 kr <span style="font-weight:400;color:var(--hv-fg-3);">(4 lev.)</span></td></tr>
+                <tr><td class="lbl">Frakt</td><td class="val ok">Inkludert</td></tr>
+              </table>
+              <div style="font-size:11.5px;color:var(--hv-fg-3);margin-top:8px;line-height:1.4;">
+                Du trekkes for det faktiske antallet leveringer hver måned. Hopper du over en levering, betaler du mindre den måneden.
+              </div>
+            </div>
+
+            <div class="mail-prods">
+              <div class="lbl-up">I din neste kasse</div>
+              <ul>
+                <li><span class="pname">Skrei-filet</span> <span class="pqty">2 × 250 g</span></li>
+                <li><span class="pname">Laksefilet</span> <span class="pqty">2 × 250 g</span></li>
+                <li><span class="pname">Røkelaks</span> <span class="pqty">1 × 150 g</span></li>
+                <li><span class="pname">Pillede reker</span> <span class="pqty">1 × 200 g</span></li>
+                <li><span class="pname">Sildefilet i tomat</span> <span class="pqty">1 × 200 g</span></li>
+              </ul>
+              <div style="font-size:11.5px;color:var(--hv-fg-3);margin-top:10px;line-height:1.4;">
+                Du får beskjed dagen før — bytt enkeltprodukter i Min side om du vil noe annet.
+              </div>
+            </div>
+
+            <div class="mail-body">
+              <p>Hei Erik Øye,</p>
+              <p>Takk for at du startet et abonnement. Vi pakker råvarene på is og kjører dem hjem på leveringsdagen.</p>
+              <p>Hopp over en levering opptil <strong>2 uker</strong> før — eller si opp senest <strong>1 uke</strong> før neste trekk for full refusjon. Endre alt på <a href="#">Min side</a>.</p>
+            </div>
+
+            <div class="mail-cta"><a href="#">Til Min side</a></div>
+
+            <div class="mail-footer">
+              Abonnement-ID: sub_1A2B3c4D5e6F<br/>
+              Spørsmål? Svar på denne e-posten eller skriv til <a href="mailto:erik@havoyet.no">erik@havoyet.no</a>.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── MIN SIDE ─── -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Kunde — "Min side"</h2>
+        <span class="sub">havoyet.no/konto-dashbord</span>
+      </div>
+      <div class="panel-body">
+        <div class="ms-frame">
+          <div class="ms-tabs">
+            <div class="ms-tab">Oversikt</div>
+            <div class="ms-tab">Ordre <span class="count">3</span></div>
+            <div class="ms-tab active">Abonnement <span class="count">1</span></div>
+            <div class="ms-tab">Adresser</div>
+            <div class="ms-tab">Profil</div>
+          </div>
+
+          <div class="ms-eyebrow">Abonnement</div>
+          <h2 class="ms-h">Sjømatkasse — 2 personer</h2>
+
+          <div class="ms-card">
+            <div class="ms-card-top">
+              <div class="ms-card-title">Oversikt</div>
+              <div class="ms-status">Aktiv</div>
+            </div>
+
+            <div class="ms-grid">
+              <div class="lbl">Pris per levering</div><div class="val">372,50 kr</div>
+              <div class="lbl">Leveringsdag</div><div class="val">Torsdag</div>
+              <div class="lbl">Frakt</div><div class="val" style="color:var(--hv-ok);">Inkludert</div>
+              <div class="lbl">Startet</div><div class="val">12.05.2026</div>
+            </div>
+
+            <div class="ms-divider"></div>
+
+            <h4 class="ms-section-h">Velg datoer det ikke passer</h4>
+            <div class="ms-cal">
+              <div class="ms-slot">
+                <div>
+                  <div class="when">Tor 15.05.2026</div>
+                  <div class="meta">Neste levering · 372,50 kr</div>
+                </div>
+                <span class="toggle">Hopp over</span>
+              </div>
+              <div class="ms-slot skipped">
+                <div>
+                  <div class="when">Tor 22.05.2026</div>
+                  <div class="meta">Hoppet over · ikke trukket</div>
+                </div>
+                <span class="toggle">✓ Skip aktiv</span>
+              </div>
+              <div class="ms-slot">
+                <div>
+                  <div class="when">Tor 29.05.2026</div>
+                  <div class="meta">372,50 kr</div>
+                </div>
+                <span class="toggle">Hopp over</span>
+              </div>
+              <div class="ms-slot">
+                <div>
+                  <div class="when">Tor 05.06.2026</div>
+                  <div class="meta">372,50 kr</div>
+                </div>
+                <span class="toggle">Hopp over</span>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--hv-fg-3);">
+              Du kan hoppe over en levering senest <strong>14 dager</strong> før leveringsdagen.
+            </div>
+
+            <div class="ms-month-totals">
+              <div class="row"><span>Mai 2026 — 4 planlagte leveringer</span><span>1 490,00 kr</span></div>
+              <div class="row"><span>− 1 hoppet over (22.05)</span><span style="color:var(--hv-warn);">− 372,50 kr</span></div>
+              <div class="row tot"><span>Faktisk trekk i mai</span><span>1 117,50 kr</span></div>
+            </div>
+          </div>
+
+          <div class="ms-card">
+            <div class="ms-card-top">
+              <div class="ms-card-title" style="font-size: 16px;">Produkter i kassen</div>
+              <button class="ms-btn">Endre utvalg</button>
+            </div>
+            <ul class="ms-prods">
+              <li><div><div class="pcat">Hvitfisk</div>Skrei-filet</div><div style="text-align:right;">2 × 250 g</div></li>
+              <li><div><div class="pcat">Hvitfisk</div>Laksefilet</div><div style="text-align:right;">2 × 250 g</div></li>
+              <li><div><div class="pcat">Røyk/spek</div>Røkelaks</div><div style="text-align:right;">1 × 150 g</div></li>
+              <li><div><div class="pcat">Skalldyr</div>Pillede reker</div><div style="text-align:right;">1 × 200 g</div></li>
+              <li><div><div class="pcat">Hermetikk</div>Sildefilet i tomat</div><div style="text-align:right;">1 × 200 g</div></li>
+            </ul>
+            <div class="ms-actions">
+              <button class="ms-btn">Synk pris til dagens nettside-pris</button>
+              <button class="ms-btn ghost-red">Si opp abonnement</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── ADMIN ─── -->
+    <div class="panel layout-full">
+      <div class="panel-head">
+        <h2>Admin — Abonnementer</h2>
+        <span class="sub">admin.havoyet.no</span>
+      </div>
+      <div class="panel-body">
+        <div class="admin-frame">
+          <div class="admin-eyebrow">Innsikt</div>
+          <h2 class="admin-h">Abonnementer</h2>
+          <p class="admin-lead">Aktive månedlige sjømatkasse-abonnementer. Klikk en rad for produkter og leveringsplan.</p>
+
+          <div class="admin-stats">
+            <div class="admin-stat">
+              <div class="lbl">Totalt</div>
+              <div class="val">1</div>
+              <div class="sub">abonnementer</div>
+            </div>
+            <div class="admin-stat">
+              <div class="lbl">Aktive</div>
+              <div class="val">1</div>
+              <div class="sub">trekkes månedlig</div>
+            </div>
+            <div class="admin-stat">
+              <div class="lbl">Forventet MRR</div>
+              <div class="val">1 490,00</div>
+              <div class="sub">kr ved full månedlig levering</div>
+            </div>
+            <div class="admin-stat">
+              <div class="lbl">Skip denne mnd</div>
+              <div class="val">1</div>
+              <div class="sub">−372,50 kr i trekk</div>
+            </div>
+          </div>
+
+          <div class="admin-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>Opprettet</th>
+                  <th>Kunde</th>
+                  <th>Kasse</th>
+                  <th class="right">Per lev.</th>
+                  <th class="right">Lev. mai</th>
+                  <th class="right">Trekk mai</th>
+                  <th>Neste lev.</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>12.05.2026 11:53</td>
+                  <td>
+                    <div style="font-weight:600;">Erik Øye</div>
+                    <div class="em">erik@havoyet.no</div>
+                  </td>
+                  <td>
+                    Sjømatkasse — 2 personer
+                    <div class="em">3 måltider/uke · Torsdag</div>
+                  </td>
+                  <td class="right bold">372,50</td>
+                  <td class="right">3 av 4</td>
+                  <td class="right bold">1 117,50</td>
+                  <td>15.05.2026</td>
+                  <td><span class="admin-tag">Aktiv</span></td>
+                  <td class="right">
+                    <button class="admin-expand">Lukk ▴</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="admin-detail">
+              <div>
+                <div class="det-h">Produkter i kassen</div>
+                <ul>
+                  <li><div><div class="pcat" style="font-size:10.5px;color:var(--hv-fg-3);text-transform:uppercase;">Hvitfisk</div>Skrei-filet</div><span class="pqty">2 × 250 g</span></li>
+                  <li><div><div class="pcat" style="font-size:10.5px;color:var(--hv-fg-3);text-transform:uppercase;">Hvitfisk</div>Laksefilet</div><span class="pqty">2 × 250 g</span></li>
+                  <li><div><div class="pcat" style="font-size:10.5px;color:var(--hv-fg-3);text-transform:uppercase;">Røyk/spek</div>Røkelaks</div><span class="pqty">1 × 150 g</span></li>
+                  <li><div><div class="pcat" style="font-size:10.5px;color:var(--hv-fg-3);text-transform:uppercase;">Skalldyr</div>Pillede reker</div><span class="pqty">1 × 200 g</span></li>
+                  <li><div><div class="pcat" style="font-size:10.5px;color:var(--hv-fg-3);text-transform:uppercase;">Hermetikk</div>Sildefilet i tomat</div><span class="pqty">1 × 200 g</span></li>
+                </ul>
+              </div>
+
+              <div>
+                <div class="det-h">Leveringsplan mai 2026</div>
+                <ul class="admin-deliv">
+                  <li><span>Tor 01.05</span><span class="pqty">Levert ✓</span></li>
+                  <li><span>Tor 08.05</span><span class="pqty">Levert ✓</span></li>
+                  <li><span>Tor 15.05</span><span class="pqty">Planlagt</span></li>
+                  <li class="skipped"><span>Tor 22.05</span><span class="pqty">Hoppet over (kunde)</span></li>
+                  <li><span>Tor 29.05</span><span class="pqty">Planlagt</span></li>
+                </ul>
+              </div>
+
+              <div>
+                <div class="det-h">Trekk for mai</div>
+                <div class="admin-charge">
+                  <div class="row"><span>4 leveringer × 372,50</span><span>1 490,00</span></div>
+                  <div class="row" style="color:var(--hv-warn);"><span>− 1 hoppet over</span><span>− 372,50</span></div>
+                  <div class="row tot"><span>Faktisk trekk</span><span>1 117,50 kr</span></div>
+                </div>
+                <div style="font-size:11px;color:var(--hv-fg-3);margin-top:8px;line-height:1.4;">
+                  Stripe trekker faktisk antall × pris per levering ved månedens slutt.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="legend">
+    <strong>Nye konsepter i denne v2:</strong>
+    <ul style="margin: 8px 0 0; padding-left: 20px;">
+      <li><strong>Per-levering pris</strong> — abonnementet lagrer <code>price_per_delivery</code> (372,50 kr) istedenfor fast månedsbeløp. <code>amount</code>-feltet rekomputerteres ved hvert månedsslutt.</li>
+      <li><strong>Skip-datoer</strong> — kunden velger datoer det ikke passer i "Min side". Backend lagrer en liste <code>skipped_dates</code> per sub, og Stripe trekker bare faktiske leveringer.</li>
+      <li><strong>Produkter</strong> — kassen-snapshotet (<code>kasse.meta.arterSnapshot</code>) finnes allerede i sub-data; admin og Min side viser bare det som allerede er der.</li>
+      <li><strong>Variabel månedstrekk</strong> — Stripe må byttes fra fast "recurring price" til "metered billing" eller én-PaymentIntent-per-måned generert av cron-jobb basert på leveringsplan.</li>
+    </ul>
+    <p style="margin: 10px 0 0;"><strong>Status:</strong> Nåværende kode (<code>app.py</code>) støtter allerede <code>arterSnapshot</code> + et <code>/api/subscription/&lt;id&gt;/skip</code>-endpoint. Det som mangler er metered billing i Stripe og UI-en du ser her. Si fra om du vil at jeg skal lage en plan for å bygge dette ferdig.</p>
+  </div>
+
+</div>
+
+</body>
+</html>
