@@ -364,6 +364,7 @@
     <span class="brand">Havøyet</span>
     <div class="summary" id="summary">Laster …</div>
     <button class="menu-btn" id="refreshBtn" title="Last på nytt">⟳</button>
+    <button class="menu-btn" id="calBtn" title="Legg dagens rute i kalenderen" aria-label="Legg rute i kalender">📅</button>
     <button class="menu-btn" id="logoutBtn" title="Logg ut">⏻</button>
   </div>
   <div class="date-bar">
@@ -974,6 +975,12 @@ const _ackKey = (date) => `havoyet_route_ack_${date}`;
 function _isDayAcked(date){ return localStorage.getItem(_ackKey(date)) === "1"; }
 function _ackDay(date){ localStorage.setItem(_ackKey(date), "1"); }
 
+// Peek-modus: sjåfør har klikket "Vis sjekkliste" fra Naviger-CTA og ser
+// listen igjen. Hvis ingenting endres, kan han trykke "Tilbake" for å komme
+// tilbake til Naviger. Hvis han fjerner en hake, gates Naviger-CTA på nytt
+// inntil alle er huket av igjen. In-memory (reset ved datoskift/reload).
+let _peekChecklist = false;
+
 // Renderer enten sjekklisten eller den vanlige Neste-stopp-boksen i #nextCard.
 // Kart + timeline er alltid synlig — kun den grønne CTA-boksen gates.
 function _renderNextCard(data){
@@ -987,7 +994,11 @@ function _renderNextCard(data){
   const complete = _isChecklistComplete(data, currentChecklist);
   const gateOpen = total > 0 ? complete : _isDayAcked(activeDate);
 
-  if (gateOpen) {
+  // Peek-modus: sjåfør har trykket "Vis sjekkliste" på Naviger-kortet — vis
+  // listen igjen selv om alt er huket av, så han kan dobbeltsjekke eller
+  // angre en hake. Når gaten lukkes (avhaket linje) eller han trykker
+  // "Tilbake til ruten", bytter visningen tilbake.
+  if (gateOpen && !_peekChecklist) {
     _renderNextStopCTA(data, next);
   } else {
     _renderChecklistCard(data, stops);
@@ -1009,7 +1020,14 @@ function _renderNextStopCTA(data, next){
       <a class="nav-btn" href="${navLink(next.lat, next.lon, next.navn)}" target="_blank">
         🧭 Naviger hit
       </a>
+      <button class="show-checklist-btn" id="showChecklistBtn" type="button">
+        📋 Vis sjekkliste
+      </button>
     </div>`;
+  document.getElementById("showChecklistBtn")?.addEventListener("click", () => {
+    _peekChecklist = true;
+    if (currentRoute) _renderNextCard(currentRoute);
+  });
 }
 
 function _renderChecklistCard(data, stops){
@@ -1062,20 +1080,31 @@ function _renderChecklistCard(data, stops){
   }).join("");
 
   const startEnabled = total > 0 ? _isChecklistComplete(data, currentChecklist) : true;
-  const startLabel = total === 0
-    ? "Bekreft og start rute"
-    : (startEnabled
-        ? "✓ Alt er pakket — Start rute"
-        : `Pakk ferdig først (${total - done} igjen)`);
+  // I peek-modus er knapp-teksten "Tilbake til ruten" så lenge gaten er åpen
+  // (alle huket av). Hvis sjåfør angrer en hake og det ikke lenger er komplett,
+  // faller knappen tilbake til standard "Pakk ferdig først"-tekst.
+  const startLabel = _peekChecklist && startEnabled
+    ? "← Tilbake til ruten"
+    : (total === 0
+        ? "Bekreft og start rute"
+        : (startEnabled
+            ? "✓ Alt er pakket — Start rute"
+            : `Pakk ferdig først (${total - done} igjen)`));
+  const headTitle = _peekChecklist
+    ? "Sjekk eller endre liste"
+    : "Pakk ferdig før du starter";
+  const headSub = _peekChecklist
+    ? "Trykk på en linje for å fjerne haken hvis noe ikke stemmer. Trykk Tilbake når du er ferdig."
+    : "Hak av hver vare etter hvert som den legges i bilen. Først når alt er huket av, kommer Naviger-knappen opp.";
 
   $("nextCard").innerHTML = `
     <div class="cl-wrap">
       <div class="cl-head">
-        <div class="icon">📦</div>
+        <div class="icon">${_peekChecklist ? '🔍' : '📦'}</div>
         <div class="meta">
-          <div class="label">Sjekkliste · før første kunde</div>
-          <div class="title">Pakk ferdig før du starter</div>
-          <div class="sub">Hak av hver vare etter hvert som den legges i bilen. Først når alt er huket av, kommer Naviger-knappen opp.</div>
+          <div class="label">Sjekkliste · ${_peekChecklist ? 'gjennomgang' : 'før første kunde'}</div>
+          <div class="title">${_escapeHtml(headTitle)}</div>
+          <div class="sub">${_escapeHtml(headSub)}</div>
         </div>
       </div>
       ${total > 0 ? `
@@ -1085,7 +1114,7 @@ function _renderChecklistCard(data, stops){
         </div>` : ''}
       <div class="cl-stops-list">${stopsHtml}</div>
       <button class="cl-start" id="clStartBtn" ${startEnabled ? '' : 'disabled'}>${_escapeHtml(startLabel)}</button>
-      ${total === 0
+      ${total === 0 && !_peekChecklist
         ? `<div class="cl-start-hint">Ingen varelinjer er registrert på dagens ordrer. Bekreft at alt er klart for utkjøring.</div>`
         : ''}
     </div>`;
@@ -1155,6 +1184,122 @@ function _renderChecklistCard(data, stops){
   }
 }
 
+// ── KALENDER-EKSPORT ────────────────────────────────────────────────────────
+// Lager en .ics-fil med ett event som dekker hele arbeidsøkten:
+//   Start = avgang fra Nesttun-depotet (route.start_clock)
+//   Slutt = siste leverings tidspunkt (siste stops departure_clock || arrival_clock)
+// Sjåføren trykker på 📅-knappen → mobilen tilbyr å legge eventet inn i
+// standardkalenderen (iOS Kalender / Google Kalender). Ingen subscription —
+// hver dag må trykkes inn for seg (men det er kun ett trykk per dag, og det
+// er det brukeren har bedt om).
+function _icsEsc(s){
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g,  '\\;')
+    .replace(/,/g,  '\\,')
+    .replace(/\r?\n/g, '\\n');
+}
+function _icsLocalStamp(dateIso, hhmm){
+  // YYYYMMDDTHHMMSS — uten Z, kombineres med TZID=Europe/Oslo
+  const d = String(dateIso || '').replace(/-/g, '');
+  const t = String(hhmm || '00:00').replace(':', '') + '00';
+  return `${d}T${t}`;
+}
+function _icsUtcStamp(){
+  const z = (n) => String(n).padStart(2, '0');
+  const d = new Date();
+  return `${d.getUTCFullYear()}${z(d.getUTCMonth()+1)}${z(d.getUTCDate())}T${z(d.getUTCHours())}${z(d.getUTCMinutes())}${z(d.getUTCSeconds())}Z`;
+}
+function _foldIcsLine(line){
+  // RFC 5545: linjer skal være ≤75 oktetter, vi bruker konservative 73 og
+  // splitter med CRLF + space. Trygt nok for ASCII-tunge linjer.
+  if (line.length <= 73) return line;
+  const parts = [];
+  for (let i = 0; i < line.length; i += 73) {
+    parts.push((i === 0 ? '' : ' ') + line.slice(i, i + 73));
+  }
+  return parts.join('\r\n');
+}
+function buildRouteIcs(route){
+  if (!route) return null;
+  const date = route.date;
+  const start = route.start_clock;
+  const stops = Array.isArray(route.stops) ? route.stops : [];
+  if (!date || !start || !stops.length) return null;
+  // Slutt-tid: bruk departure_clock fra siste stopp hvis tilgjengelig, ellers
+  // arrival_clock. Det matcher "Ferdig med ruten"-raden nederst i timelinen.
+  const last = stops[stops.length - 1];
+  const end = last && (last.departure_clock || last.arrival_clock);
+  if (!end) return null;
+  const stopsList = stops.map((s, i) => {
+    const adr = [s.adresse, s.postnr, s.poststed].filter(Boolean).join(', ');
+    return `${i+1}. ${s.arrival_clock || ''} — ${s.navn || ''}${adr ? ' · ' + adr : ''}`;
+  }).join('\n');
+  const summary = `Havøyet rute · ${stops.length} stopp`;
+  const description = `Start fra Nesttun ${start}\nSlutt etter siste levering ${end}\n\nStopp:\n${stopsList}`;
+  const uid = `havoyet-route-${date}@havoyet.no`;
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Havoyet//Sjafor//NB',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    // Europe/Oslo VTIMEZONE — kort, dekker CET/CEST DST-regler i Norge
+    'BEGIN:VTIMEZONE',
+    'TZID:Europe/Oslo',
+    'BEGIN:STANDARD',
+    'DTSTART:19701025T030000',
+    'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10',
+    'TZOFFSETFROM:+0200',
+    'TZOFFSETTO:+0100',
+    'TZNAME:CET',
+    'END:STANDARD',
+    'BEGIN:DAYLIGHT',
+    'DTSTART:19700329T020000',
+    'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3',
+    'TZOFFSETFROM:+0100',
+    'TZOFFSETTO:+0200',
+    'TZNAME:CEST',
+    'END:DAYLIGHT',
+    'END:VTIMEZONE',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${_icsUtcStamp()}`,
+    `DTSTART;TZID=Europe/Oslo:${_icsLocalStamp(date, start)}`,
+    `DTEND;TZID=Europe/Oslo:${_icsLocalStamp(date, end)}`,
+    `SUMMARY:${_icsEsc(summary)}`,
+    `DESCRIPTION:${_icsEsc(description)}`,
+    `LOCATION:${_icsEsc('Nesttun depot')}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].map(_foldIcsLine);
+  return lines.join('\r\n') + '\r\n';
+}
+function downloadCalendar(){
+  if (!currentRoute || !(currentRoute.stops || []).length) {
+    alert('Ingen rute er lastet ennå — last på nytt eller velg en dato med leveringer.');
+    return;
+  }
+  if (currentRoute.awaiting_approval) {
+    if (!confirm('Ruten er ikke godkjent av admin ennå. Legge den i kalenderen likevel?')) return;
+  }
+  const ics = buildRouteIcs(currentRoute);
+  if (!ics) {
+    alert('Mangler start- eller slutt-tidspunkt — kan ikke lage kalender-event.');
+    return;
+  }
+  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `havoyet-rute-${currentRoute.date}.ics`;
+  // iOS Safari trenger at lenken er i DOM-en før click() for å åpne fila
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
 async function handleLogin(){
   const pin = $("pin").value.trim();
   if (!pin) return;
@@ -1179,6 +1324,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (cleaned.length === 4) handleLogin();
   });
   $("refreshBtn").addEventListener("click", () => loadRoute());
+  $("calBtn").addEventListener("click", () => downloadCalendar());
   $("logoutBtn").addEventListener("click", () => {
     if (!confirm("Logge ut?")) return;
     clearPin();
