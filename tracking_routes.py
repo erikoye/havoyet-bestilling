@@ -59,6 +59,7 @@ def register_tracking(
     sms_sender: Optional[Callable[[str, str], tuple]] = None,
     route_eta_sender: Optional[Callable[[dict, str, str], tuple]] = None,
     tracking_base_url: str = "",
+    status_hook: Optional[Callable[[str, str], None]] = None,
 ) -> None:
     _state["client"] = AbaxClient(state_dir)
     _state["orders_ref"] = manual_orders_ref
@@ -68,6 +69,7 @@ def register_tracking(
     _state["depot"] = depot_coords or _parse_depot()
     _state["sms_sender"] = sms_sender
     _state["route_eta_sender"] = route_eta_sender
+    _state["status_hook"] = status_hook
     _state["tracking_base_url"] = (
         tracking_base_url
         or os.environ.get("TRACKING_PUBLIC_URL")
@@ -80,6 +82,7 @@ def register_tracking(
         _state["notify_threshold_min"] = 10
     app.register_blueprint(bp)
     _start_proximity_watcher()
+    _ensure_default_driver()
 
 
 # Havøyet AS, Nesttunvegen 96, 5221 Nesttun (geokodet via Nominatim).
@@ -186,6 +189,53 @@ def _driver_only():
     if not driver:
         return None, (jsonify({"error": "unauthorized"}), 401)
     return {"role": "driver", "name": driver.get("name"), "id": driver.get("id")}, None
+
+
+def _default_driver_id() -> str | None:
+    """Returnerer ID til standard-sjåføren (den som får alle dager uten eksplisitt
+    tildeling). Ser etter `is_default: True` først, faller tilbake til en sjåfør
+    som heter "Erik Øye", deretter første sjåfør i lista."""
+    drivers = _load_drivers()
+    for d in drivers:
+        if d.get("is_default"):
+            return str(d.get("id"))
+    for d in drivers:
+        if (d.get("name") or "").strip().lower() in ("erik øye", "erik oye"):
+            return str(d.get("id"))
+    return str(drivers[0].get("id")) if drivers else None
+
+
+def _ensure_default_driver() -> None:
+    """Migrering: sørg for at minst én sjåfør er markert som standard. Kjøres
+    ved blueprint-registrering. Setter is_default=True på Erik Øye hvis ingen
+    er markert, eller på første sjåfør hvis Erik ikke finnes."""
+    drivers = _load_drivers()
+    if not drivers:
+        return
+    if any(d.get("is_default") for d in drivers):
+        return
+    target = None
+    for d in drivers:
+        if (d.get("name") or "").strip().lower() in ("erik øye", "erik oye"):
+            target = d
+            break
+    if not target:
+        target = drivers[0]
+    target["is_default"] = True
+    _save_drivers(drivers)
+    print(f"[DRIVERS] Default-sjåfør satt: {target.get('name')!r} ({target.get('id')})")
+
+
+def _driver_assigned_to_day(driver_id: str, date_iso: str) -> bool:
+    """Sjekker om en sjåfør har tilgang til ruten for `date_iso`. En sjåfør
+    har tilgang hvis (a) dagen er eksplisitt tildelt vedkommende, eller
+    (b) ingen er tildelt og sjåføren er standard-sjåfør."""
+    if not driver_id:
+        return False
+    assigned = _get_day_state(date_iso).get("driver_id")
+    if assigned:
+        return str(assigned) == str(driver_id)
+    return str(driver_id) == str(_default_driver_id() or "")
 
 
 def _find_order(order_id: str) -> dict | None:
@@ -1565,11 +1615,25 @@ def driver_route_today():
     Stopp som sjåføren har markert som "passert" returneres i et eget
     `passed_stops`-felt så app-en kan tilby "Vis passerte"-toggle, mens
     `stops` kun inneholder de gjenstående.
+
+    Hver leveringsdag kan tildeles en spesifikk sjåfør i admin. Når en sjåfør
+    spør om en dato som er tildelt en annen, returneres en tom rute med flagg
+    `not_assigned` — sjåføren ser bare sine egne ruter.
     """
-    _, err = _driver_only()
+    driver, err = _driver_only()
     if err:
         return err
     date_iso = (request.args.get("date") or _today_iso()).strip()
+    if not _driver_assigned_to_day(driver.get("id") or "", date_iso):
+        return jsonify({
+            "date": date_iso,
+            "not_assigned": True,
+            "approved": False,
+            "awaiting_approval": False,
+            "stops": [],
+            "passed_stops": [],
+            "vehicle": None,
+        })
     route = _build_route(date_iso, optimize=True)
     route["vehicle"] = _current_vehicle_position()
     route["awaiting_approval"] = not bool(route.get("approved"))
@@ -1589,12 +1653,17 @@ def driver_route_today():
 
 @bp.post("/api/driver/route/mark-passed")
 def driver_mark_passed():
-    """Sjåfør markerer/avmarkerer et stopp som passert (ferdig levert).
+    """Sjåfør markerer/avmarkerer et stopp som levert.
 
     Body: { date?: "YYYY-MM-DD", order_id: str, passed: bool }
     Default action: passed=True. Bruk passed=False for å angre.
+
+    Som side-effekt oppdateres ordrens status via `status_hook` (satt fra
+    app.py): "DONE" når levert markeres, "IN_PROGRESS" (Pakkes) ved angre.
+    Dette gjør at admin-siden og kundens min-side automatisk reflekterer
+    leveringsstatusen — uten at sjåføren må gjøre noe ekstra.
     """
-    _, err = _driver_only()
+    driver, err = _driver_only()
     if err:
         return err
     data = request.get_json(silent=True) or {}
@@ -1602,6 +1671,8 @@ def driver_mark_passed():
     order_id = str(data.get("order_id") or "").strip()
     if not order_id:
         return jsonify({"error": "order_id mangler"}), 400
+    if not _driver_assigned_to_day(driver.get("id") or "", date_iso):
+        return jsonify({"error": "not_assigned"}), 403
     passed = bool(data.get("passed", True))
 
     day_state = _get_day_state(date_iso)
@@ -1613,16 +1684,28 @@ def driver_mark_passed():
     else:
         current = [x for x in current if x != order_id]
     _set_day_state(date_iso, {"passed_orders": current})
+
+    # Side-effekt: speil leveringsstatus til ordren slik admin og kunde ser den.
+    hook = _state.get("status_hook")
+    if callable(hook):
+        try:
+            hook(order_id, "DONE" if passed else "IN_PROGRESS")
+        except Exception as e:
+            print(f"[driver_mark_passed] status_hook feilet for #{order_id}: {e}")
+
     return jsonify({"ok": True, "date": date_iso, "passed_orders": current})
 
 
 @bp.get("/api/driver/route/live")
 def driver_route_live():
     """Sjåfør-versjon av live ETA-poll. PIN-beskyttet."""
-    _, err = _driver_only()
+    driver, err = _driver_only()
     if err:
         return err
-    return _route_live_payload(request.args.get("date") or _today_iso())
+    date_iso = request.args.get("date") or _today_iso()
+    if not _driver_assigned_to_day(driver.get("id") or "", date_iso):
+        return jsonify({"date": date_iso, "not_assigned": True, "stops": []})
+    return _route_live_payload(date_iso)
 
 
 @bp.post("/api/driver/auth")
@@ -1699,9 +1782,61 @@ def admin_update_driver(driver_id: str):
                        for o in drivers):
                     return jsonify({"error": "PIN allerede i bruk"}), 409
                 d["pin"] = new_pin
+            if "is_default" in data:
+                wants = bool(data.get("is_default"))
+                if wants:
+                    # Bare én default — fjern flagget fra alle andre
+                    for o in drivers:
+                        o["is_default"] = (str(o.get("id")) == str(driver_id))
+                else:
+                    d["is_default"] = False
             _save_drivers(drivers)
             return jsonify({"ok": True, "driver": d})
     return jsonify({"error": "ikke funnet"}), 404
+
+
+# ── Daglig sjåfør-tildeling (admin) ──────────────────────────────────────
+@bp.get("/api/admin/route/driver-assignment")
+def admin_get_day_driver():
+    """Returnerer hvilken sjåfør som er tildelt for en gitt dato. Hvis ingen
+    er tildelt eksplisitt, returneres standard-sjåføren som fallback."""
+    _, err = _admin_only()
+    if err:
+        return err
+    date_iso = (request.args.get("date") or _today_iso()).strip()
+    day = _get_day_state(date_iso)
+    assigned = day.get("driver_id")
+    effective = str(assigned) if assigned else (_default_driver_id() or "")
+    return jsonify({
+        "date": date_iso,
+        "driver_id": str(assigned) if assigned else "",
+        "effective_driver_id": effective,
+        "default_driver_id": _default_driver_id() or "",
+    })
+
+
+@bp.post("/api/admin/route/driver-assignment")
+def admin_set_day_driver():
+    """Setter sjåfør for en leveringsdag. Body: { date, driver_id }.
+    Tom driver_id fjerner tildelingen (faller tilbake til standard-sjåføren)."""
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    driver_id = str(data.get("driver_id") or "").strip()
+    if driver_id:
+        drivers = _load_drivers()
+        if not any(str(d.get("id")) == driver_id for d in drivers):
+            return jsonify({"error": "Ukjent sjåfør"}), 400
+    _set_day_state(date_iso, {"driver_id": driver_id})
+    effective = driver_id or (_default_driver_id() or "")
+    return jsonify({
+        "ok": True,
+        "date": date_iso,
+        "driver_id": driver_id,
+        "effective_driver_id": effective,
+    })
 
 
 @bp.delete("/api/admin/drivers/<driver_id>")

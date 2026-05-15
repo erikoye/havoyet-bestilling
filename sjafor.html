@@ -465,11 +465,11 @@ function togglePassed(){
   if (expanded) {
     sec.style.display = 'none';
     btn.dataset.expanded = 'false';
-    btn.textContent = `✓ Vis ${n} passert${plural} stopp`;
+    btn.textContent = `✓ Vis ${n} levert${plural} stopp`;
   } else {
     sec.style.display = '';
     btn.dataset.expanded = 'true';
-    btn.textContent = `Skjul ${n} passert${plural} stopp`;
+    btn.textContent = `Skjul ${n} levert${plural} stopp`;
   }
 }
 
@@ -670,7 +670,7 @@ async function loadRoute(){
             </div>
             <div class="actions">
               <a class="nav-btn" href="${navLink(s.lat, s.lon)}" target="_blank" title="Naviger" aria-label="Naviger til ${(s.navn||'').replace(/"/g,'&quot;')}">🧭</a>
-              <button class="pass-btn" data-pass="${s.order_id}" title="Marker som passert / ferdig levert">✓ Passert</button>
+              <button class="pass-btn" data-pass="${s.order_id}" title="Marker som levert — kunde og admin får statusoppdatering">✓ Levert</button>
             </div>
           </div>
         </div>
@@ -705,14 +705,14 @@ async function loadRoute(){
               <div class="name">#${s.stop_index} · ${s.navn || ('Bestilling #'+s.order_id)}</div>
               <div class="addr">${[s.adresse, s.postnr, s.poststed].filter(Boolean).join(", ")}</div>
             </div>
-            <button class="undo-btn" data-unpass="${s.order_id}" title="Angre passert">↶ Angre</button>
+            <button class="undo-btn" data-unpass="${s.order_id}" title="Angre levert-markering">↶ Angre</button>
           </div>
         </div>
       </div>`).join('');
     passedHtml = `
       <button class="passed-toggle" id="passedToggle" type="button"
               data-expanded="false" onclick="togglePassed()">
-        ✓ Vis ${passedStops.length} passert${passedStops.length === 1 ? '' : 'e'} stopp
+        ✓ Vis ${passedStops.length} levert${passedStops.length === 1 ? '' : 'e'} stopp
       </button>
       <div id="passedSection" style="display:none;margin-top:8px;">
         <div class="timeline" style="opacity:.85">${passedItems}</div>

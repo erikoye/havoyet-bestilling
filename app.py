@@ -8078,6 +8078,53 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str)
 
 
 # ── ABAX ETA-integrasjon (kunder ser "X minutter til levering") ──────────
+def _driver_set_order_status(order_id, new_status):
+    """Kalles fra sjåfør-appen (tracking_routes) når et stopp markeres som levert
+    eller leveringen angres. Speiler logikken i `/api/manual-orders/<id>/status`
+    så admin-siden og kunde-min-side viser samme tilstand som om admin satte den
+    selv — inkludert e-post/SMS/Telegram-varsler.
+    """
+    global _manual_orders
+    for o in _manual_orders:
+        if str(o.get("ordrenr") or o.get("id")) != str(order_id):
+            continue
+        old_status = o.get("status", "")
+        if old_status == new_status:
+            return  # ingen endring, ikke spam varsler
+        o["status"] = new_status
+        _save_sync_state()
+        nr = o.get("ordrenr") or o.get("id") or "?"
+        change_summary = (
+            f"Status endret fra '{old_status}' til '{new_status}' "
+            f"(markert av sjåfør i rute-appen)."
+        )
+        is_delivered = (
+            str(new_status).upper() in ("DONE", "LEVERT")
+            or "lever" in str(new_status).lower()
+        )
+        try:
+            if is_delivered:
+                _notify_admins(
+                    "order_delivered",
+                    f"[Havøyet] Bestilling #{nr} er levert",
+                    change_summary + "\n\n" + _format_order_lines(o),
+                    html_body=_format_order_email_html(o, change_summary, "order_delivered"),
+                )
+                _notify_customer_order_update(o, "order_delivered", change_summary)
+            else:
+                _notify_admins(
+                    "order_updated",
+                    f"[Havøyet] Bestilling #{nr} oppdatert",
+                    change_summary + "\n\n" + _format_order_lines(o),
+                    html_body=_format_order_email_html(o, change_summary, "order_updated"),
+                )
+                _notify_customer_order_update(o, "order_updated", change_summary)
+        except Exception as e:
+            print(f"[driver status] notify failed for #{nr}: {e}")
+        return
+    print(f"[driver status] ordre #{order_id} ikke funnet i manual_orders")
+
+
 try:
     from tracking_routes import register_tracking
     register_tracking(
@@ -8089,6 +8136,7 @@ try:
         sms_sender=_send_admin_sms,
         route_eta_sender=_send_route_eta_notification,
         tracking_base_url=os.environ.get("TRACKING_PUBLIC_URL", "https://bestilling.havoyet.no"),
+        status_hook=_driver_set_order_status,
     )
     print("[BOOT] Tracking-routes registrert (ABAX)")
 except Exception as _e:
