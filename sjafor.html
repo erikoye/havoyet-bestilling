@@ -344,6 +344,37 @@
     .cl-card .cl-empty-items{padding:12px 14px;font-size:12px;color:var(--soft);
                              font-style:italic;line-height:1.4}
 
+    /* Kalender-sheet — kompakt bunn-sheet for to valg + lenke-kopi */
+    .cal-sheet{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;
+               align-items:flex-end;justify-content:center;z-index:9000;
+               backdrop-filter:blur(2px);}
+    .cal-sheet.open{display:flex;}
+    .cal-sheet-inner{background:#fff;width:100%;max-width:480px;
+                     border-radius:18px 18px 0 0;padding:18px 18px 26px;
+                     box-shadow:0 -10px 40px rgba(0,0,0,.25);
+                     animation:_calSheetUp .22s ease-out;}
+    @keyframes _calSheetUp{from{transform:translateY(40%);opacity:.4}to{transform:none;opacity:1}}
+    .cal-sheet h3{font-size:16px;margin:0 0 4px;color:var(--ink);font-weight:700;}
+    .cal-sheet p{font-size:13px;color:var(--soft);margin:0 0 14px;line-height:1.45;}
+    .cal-sheet .cal-opt{display:flex;flex-direction:column;gap:2px;align-items:flex-start;
+                        width:100%;padding:14px 16px;border:1px solid var(--line);
+                        background:#fafafa;border-radius:12px;cursor:pointer;
+                        font-family:inherit;text-align:left;margin-bottom:10px;}
+    .cal-sheet .cal-opt.primary{background:var(--blue);color:#fff;border-color:var(--blue);}
+    .cal-sheet .cal-opt .ttl{font-weight:700;font-size:14px;}
+    .cal-sheet .cal-opt .sub{font-size:12px;opacity:.8;}
+    .cal-sheet .cal-link{display:flex;gap:8px;align-items:center;margin-top:6px;
+                         background:#f1f5f9;padding:10px 12px;border-radius:10px;
+                         font-family:monospace;font-size:11px;color:var(--ink);
+                         word-break:break-all;line-height:1.4;}
+    .cal-sheet .cal-link button{margin-left:auto;background:var(--ink);color:#fff;
+                                border:none;border-radius:8px;padding:6px 12px;
+                                font-size:12px;font-weight:600;cursor:pointer;
+                                font-family:inherit;flex-shrink:0;}
+    .cal-sheet .cal-close{display:block;width:100%;background:none;border:none;
+                          padding:10px;color:var(--soft);font-size:13px;
+                          cursor:pointer;margin-top:4px;font-family:inherit;}
+
     .cl-start{width:100%;background:var(--gold);color:var(--blue);border:none;
               border-radius:12px;padding:14px;font-size:15.5px;font-weight:700;
               cursor:pointer;font-family:inherit;letter-spacing:.2px;
@@ -390,6 +421,27 @@
   <div class="stops-panel">
     <div id="nextCard"></div>
     <div id="stops"></div>
+  </div>
+</div>
+
+<!-- Kalender-sheet -->
+<div class="cal-sheet" id="calSheet" onclick="if(event.target===this) closeCalSheet()">
+  <div class="cal-sheet-inner">
+    <h3>Legg rutene i kalenderen</h3>
+    <p>Abonnér én gang så holder kalenderen seg automatisk oppdatert — nye ordrer og endrede tider synker innen ca. én time.</p>
+    <button class="cal-opt primary" id="calSubBtn" type="button">
+      <span class="ttl">📅 Abonnér i kalender</span>
+      <span class="sub">iOS/macOS Kalender · synker hver time</span>
+    </button>
+    <button class="cal-opt" id="calOneBtn" type="button">
+      <span class="ttl">⬇️ Last ned bare denne dagen</span>
+      <span class="sub">Engangs-event for <span id="calOneDate">i dag</span></span>
+    </button>
+    <div class="cal-link" id="calLinkBox" style="display:none;">
+      <span id="calLinkText"></span>
+      <button id="calCopyBtn" type="button">Kopier</button>
+    </div>
+    <button class="cal-close" type="button" onclick="closeCalSheet()">Lukk</button>
   </div>
 </div>
 
@@ -1290,6 +1342,53 @@ function buildRouteIcs(route){
   ].map(_foldIcsLine);
   return lines.join('\r\n') + '\r\n';
 }
+function _calFeedUrl(scheme){
+  // scheme: 'https' (for kopiering) eller 'webcal' (for å auto-åpne kalender-appen)
+  const pin = encodeURIComponent(getPin());
+  const host = location.host;
+  return `${scheme}://${host}/api/driver/calendar.ics?pin=${pin}`;
+}
+function openCalSheet(){
+  const dateLbl = currentRoute && currentRoute.date ? _humanDate(currentRoute.date).pretty : 'i dag';
+  $("calOneDate").textContent = dateLbl;
+  $("calLinkBox").style.display = 'none';
+  $("calSheet").classList.add('open');
+}
+function closeCalSheet(){ $("calSheet").classList.remove('open'); }
+function subscribeCalendar(){
+  if (!getPin()) { alert('Du må være innlogget.'); return; }
+  // iOS: webcal:// utløser at Kalender-appen tar over og spør om abonnement.
+  // Android Chrome håndterer webcal:// inkonsistent — derfor viser vi alltid
+  // lenken under, så brukeren kan kopiere den inn manuelt i Google Kalender.
+  const webcalUrl = _calFeedUrl('webcal');
+  const httpsUrl  = _calFeedUrl('https');
+  $("calLinkText").textContent = httpsUrl;
+  $("calLinkBox").style.display = 'flex';
+  // Forsøk å trigge protocol-handler — fungerer rett ut på iOS Safari/Chrome.
+  // På Android som ikke har en webcal-handler skjer ingenting synlig, men da
+  // har vi vist lenken alt.
+  try { window.location.href = webcalUrl; } catch (e) {}
+}
+async function copyCalendarLink(){
+  const url = _calFeedUrl('https');
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    const btn = $("calCopyBtn");
+    const orig = btn.textContent;
+    btn.textContent = 'Kopiert ✓';
+    setTimeout(() => { btn.textContent = orig; }, 1600);
+  } catch (e) {
+    alert('Kunne ikke kopiere — marker lenken manuelt:\n\n' + url);
+  }
+}
 function downloadCalendar(){
   if (!currentRoute || !(currentRoute.stops || []).length) {
     alert('Ingen rute er lastet ennå — last på nytt eller velg en dato med leveringer.');
@@ -1339,7 +1438,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (cleaned.length === 4) handleLogin();
   });
   $("refreshBtn").addEventListener("click", () => loadRoute());
-  $("calBtn").addEventListener("click", () => downloadCalendar());
+  $("calBtn").addEventListener("click", () => openCalSheet());
+  $("calSubBtn").addEventListener("click", () => subscribeCalendar());
+  $("calOneBtn").addEventListener("click", () => { closeCalSheet(); downloadCalendar(); });
+  $("calCopyBtn").addEventListener("click", () => copyCalendarLink());
   $("logoutBtn").addEventListener("click", () => {
     if (!confirm("Logge ut?")) return;
     clearPin();

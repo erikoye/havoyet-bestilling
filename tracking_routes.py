@@ -14,9 +14,10 @@ import os
 import secrets
 import threading
 import time
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
-from flask import Blueprint, jsonify, request, redirect, render_template_string, abort
+from flask import Blueprint, jsonify, request, redirect, render_template_string, abort, make_response
 
 from abax import AbaxClient, AbaxError, AbaxNotConnected
 from eta import (
@@ -1672,6 +1673,152 @@ def driver_route_today():
     else:
         route["passed_stops"] = []
     return jsonify(route)
+
+
+@bp.get("/api/driver/calendar.ics")
+def driver_calendar_ics():
+    """Live .ics-feed for sjåfør-kalender. PIN-beskyttet via query-string (?pin=).
+
+    Returnerer ett VEVENT per leveringsdag for de neste 30 dagene:
+      DTSTART = avgang fra Nesttun-depot (route.start_clock)
+      DTEND   = siste leverings tidspunkt (departure_clock || arrival_clock)
+      SUMMARY = "Havøyet rute · N stopp"
+      DESCRIPTION = full stopp-liste
+
+    Stabile UIDs per dato gjør at når admin endrer rekkefølgen, en stopp
+    flyttes, eller ny ordre legges inn, så *oppdateres* eventet i kalenderen
+    ved neste sync (typisk hver time på iOS) i stedet for å bli duplisert.
+
+    iOS-bruker abonnerer ved å åpne webcal://-versjonen av denne URLen.
+    """
+    pin = (request.args.get("pin") or "").strip()
+    driver = _match_driver_by_pin(pin)
+    if not driver:
+        # Returner 401 som tekst — calendar-klienter logger feilen og brukeren
+        # ser "Could not refresh" i kalender-appen
+        return ("UNAUTHORIZED", 401, {"Content-Type": "text/plain"})
+
+    horizon_days = 30
+    today = date.fromisoformat(_today_iso())
+    driver_id = driver.get("id") or ""
+
+    def _esc(s: str) -> str:
+        return (str(s or "")
+                .replace("\\", "\\\\")
+                .replace(";", "\\;")
+                .replace(",", "\\,")
+                .replace("\r\n", "\\n")
+                .replace("\n", "\\n"))
+
+    def _fold(line: str) -> str:
+        # RFC 5545: linjer ≤75 oktetter, fortsettelser begynner med space.
+        if len(line) <= 73:
+            return line
+        out = []
+        for i in range(0, len(line), 73):
+            out.append(("" if i == 0 else " ") + line[i:i + 73])
+        return "\r\n".join(out)
+
+    def _local_stamp(date_iso: str, hhmm: str) -> str:
+        return f"{date_iso.replace('-', '')}T{hhmm.replace(':', '')}00"
+
+    now_utc = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Havoyet//Sjafor//NB",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "X-WR-CALNAME:Havøyet leveringsruter",
+        "X-WR-TIMEZONE:Europe/Oslo",
+        # Apple/Google leser dette som hint om hvor ofte de skal pulle.
+        # 60 min er korteste verdi de pleier å respektere.
+        "X-PUBLISHED-TTL:PT60M",
+        "REFRESH-INTERVAL;VALUE=DURATION:PT60M",
+        "BEGIN:VTIMEZONE",
+        "TZID:Europe/Oslo",
+        "BEGIN:STANDARD",
+        "DTSTART:19701025T030000",
+        "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10",
+        "TZOFFSETFROM:+0200",
+        "TZOFFSETTO:+0100",
+        "TZNAME:CET",
+        "END:STANDARD",
+        "BEGIN:DAYLIGHT",
+        "DTSTART:19700329T020000",
+        "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3",
+        "TZOFFSETFROM:+0100",
+        "TZOFFSETTO:+0200",
+        "TZNAME:CEST",
+        "END:DAYLIGHT",
+        "END:VTIMEZONE",
+    ]
+
+    events_added = 0
+    for delta in range(horizon_days):
+        date_iso = (today + timedelta(days=delta)).isoformat()
+        # Hopp over dager som er tildelt en annen sjåfør
+        if driver_id and not _driver_assigned_to_day(driver_id, date_iso):
+            continue
+        try:
+            route = _build_route(date_iso, optimize=True)
+        except Exception:
+            continue
+        stops = route.get("stops") or []
+        start_clock = route.get("start_clock")
+        if not stops or not start_clock:
+            continue
+        last = stops[-1]
+        end_clock = last.get("departure_clock") or last.get("arrival_clock")
+        if not end_clock:
+            continue
+        approved = bool(route.get("approved"))
+        stop_list = []
+        for i, s in enumerate(stops, 1):
+            adr = ", ".join(str(x) for x in (s.get("adresse"), s.get("postnr"), s.get("poststed")) if x)
+            navn = s.get("navn") or f"Bestilling #{s.get('order_id', '')}"
+            tid = s.get("arrival_clock") or ""
+            stop_list.append(f"{i}. {tid} — {navn}" + (f" · {adr}" if adr else ""))
+        desc = (
+            f"Start fra Nesttun {start_clock}\n"
+            f"Slutt etter siste levering {end_clock}\n"
+            f"{len(stops)} stopp"
+            + ("" if approved else "\n(IKKE GODKJENT — kan endre seg)")
+            + "\n\n" + "\n".join(stop_list)
+        )
+        # Stabil UID per dato → kalenderen oppdaterer samme event i stedet
+        # for å duplisere når ruta endres.
+        uid = f"havoyet-route-{date_iso}@havoyet.no"
+        summary = f"Havøyet rute · {len(stops)} stopp" + (" (foreløpig)" if not approved else "")
+        ev = [
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{now_utc}",
+            f"DTSTART;TZID=Europe/Oslo:{_local_stamp(date_iso, start_clock)}",
+            f"DTEND;TZID=Europe/Oslo:{_local_stamp(date_iso, end_clock)}",
+            f"SUMMARY:{_esc(summary)}",
+            f"DESCRIPTION:{_esc(desc)}",
+            f"LOCATION:{_esc('Nesttun depot')}",
+            # SEQUENCE bumpes implisitt av klienter ved hver pull pga ny DTSTAMP
+            # og innhold, men vi setter en eksplisitt verdi basert på antall
+            # stopp så vi får predictable revisions.
+            f"SEQUENCE:{len(stops)}",
+            "END:VEVENT",
+        ]
+        lines.extend(ev)
+        events_added += 1
+
+    lines.append("END:VCALENDAR")
+    body = "\r\n".join(_fold(l) for l in lines) + "\r\n"
+    resp = make_response(body, 200)
+    resp.headers["Content-Type"] = "text/calendar; charset=utf-8"
+    resp.headers["Content-Disposition"] = 'inline; filename="havoyet-rute.ics"'
+    # Klienter cacher .ics — la dem refreshe ofte. Apple ignorerer ofte
+    # Cache-Control og bruker sin egen ~60min-syklus, men det skader ikke.
+    resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    resp.headers["X-Events"] = str(events_added)
+    return resp
 
 
 @bp.post("/api/driver/route/mark-passed")
