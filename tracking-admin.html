@@ -259,6 +259,24 @@
     refreshStatus();
   };
 
+  function _vehicleLabel(v) {
+    // ABAX bruker camelCase — prøv mange varianter så vi viser noe lesbart
+    const alias = v.alias || v.vehicleAlias || v.name || v.nickname || v.label || "";
+    const plate = v.licensePlate || v.numberPlate || v.registrationNumber
+                || v.registration_number || v.regnr || v.plate || "";
+    const make  = v.make || v.brand || v.manufacturer || "";
+    const model = v.model || v.vehicleModel || "";
+    const mm    = [make, model].filter(Boolean).join(" ");
+    const parts = [];
+    if (alias) parts.push(alias);
+    if (plate) parts.push(plate);
+    if (mm)    parts.push(mm);
+    if (parts.length) return parts.join(" · ");
+    // Siste fallback: kort UUID så lista ikke kollapser hvis ABAX-skjemaet er ukjent
+    const id = String(v.id ?? v.uuid ?? v.vehicle_id ?? "");
+    return id ? `Bil ${id.slice(0, 8)}…` : "Ukjent bil";
+  }
+
   async function loadVehicles(activeId) {
     const r = await api("/api/admin/tracking/vehicles");
     const sel = $("vehicle-select");
@@ -274,7 +292,7 @@
     for (const v of r.data.vehicles || []) {
       const opt = document.createElement("option");
       opt.value = v.id ?? v.uuid ?? v.vehicle_id ?? "";
-      opt.textContent = (v.registration_number || v.regnr || v.name || v.label || opt.value);
+      opt.textContent = _vehicleLabel(v);
       if (String(opt.value) === String(activeId || "")) opt.selected = true;
       sel.appendChild(opt);
     }
