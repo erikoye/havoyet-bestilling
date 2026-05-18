@@ -1758,7 +1758,11 @@ function renderList() {
     const isToday = o.delivery === todayISO;
     const dayNum  = d.getDate();
     const month   = MONTHS_SHORT[d.getMonth()];
-    const slot    = o.slot === 'a' ? '13–15' : '15–18';
+    // Bruk kundens FAKTISKE valgte leveringstid (kilden til sannhet fra
+    // checkout). Den gamle slot a/b-mappingen er bare en CSS-fallback for
+    // bakoverkompatible ordrer uten leveringstid.
+    const directSlot = (o.kunde && (o.kunde.leveringstid || '').trim()) || '';
+    const slot       = directSlot || (o.slot === 'a' ? '13–15' : '15–18');
     const dot     = !o.seen ? `<div class="unseen-dot" title="Ikke åpnet"></div>` : '';
     const todayBadge = isToday ? `<span class="today-badge">i dag</span>` : '';
     const stateForOrder = STATE[o.id] || [];
@@ -1973,7 +1977,9 @@ function renderDetail() {
     const deliveryStr = String(o.delivery || todayISO).slice(0, 10);
     const d = new Date(deliveryStr + 'T00:00:00');
     const dateStr = isNaN(d.getTime()) ? deliveryStr : d.toLocaleDateString('nb-NO', { weekday:'long', day:'numeric', month:'long' });
-    const slotStr = o.slot === 'a' ? '13:00 – 15:00' : (o.slot === 'b' ? '15:00 – 18:00' : (o.kunde?.leveringstid || ''));
+    // Prioriter kundens faktiske valg over slot a/b-mapping (samme som listevisningen).
+    const directTid = (o.kunde && (o.kunde.leveringstid || '').trim()) || '';
+    const slotStr   = directTid || (o.slot === 'a' ? '13:00 – 15:00' : (o.slot === 'b' ? '15:00 – 18:00' : ''));
     const { confirmed, total } = countConfirmed(s);
     const pct       = total ? Math.round(confirmed/total*100) : 0;
 
