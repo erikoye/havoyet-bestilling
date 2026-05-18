@@ -2126,31 +2126,67 @@ def driver_checklist_set():
         state.pop(order_id, None)
     _set_day_state(date_iso, {"checklist": state})
 
-    # Auto-send tracking-mail til alle kunder når sjekklisten blir komplett.
-    # Krysser av siste linje = "sjåfør er klar til å kjøre" → kundene skal vite.
-    # Kjører én gang per dato (tracking_auto_notified_at lagres som flagg).
-    auto_notify: dict | None = None
-    day_state = _get_day_state(date_iso)
-    if not day_state.get("tracking_auto_notified_at") and checked_flag:
-        try:
-            if _is_checklist_complete_for_date(date_iso):
-                summary, start_clock = _run_route_notify(date_iso, "")
-                _set_day_state(date_iso, {
-                    "tracking_auto_notified_at": int(time.time()),
-                    "tracking_auto_notify_summary": summary,
-                })
-                auto_notify = {"start_time": start_clock, "notify": summary}
-                print(f"[AUTO-NOTIFY] Sjekkliste komplett {date_iso} → "
-                      f"sent={summary.get('sent', 0)}, "
-                      f"skipped={summary.get('skipped', 0)}, "
-                      f"failed={summary.get('failed', 0)}")
-        except Exception as e:
-            print(f"[AUTO-NOTIFY] feilet for {date_iso}: {e}")
+    # Auto-trigger fjernet: sjåfør bekrefter eksplisitt via
+    # /api/driver/route/start-delivery slik at mail ikke fyrer ved feilavkryssing.
+    return jsonify({
+        "ok": True,
+        "date": date_iso,
+        "checklist": state,
+        "complete": _is_checklist_complete_for_date(date_iso),
+    })
 
-    resp = {"ok": True, "date": date_iso, "checklist": state}
-    if auto_notify:
-        resp["auto_notify"] = auto_notify
-    return jsonify(resp)
+
+@bp.post("/api/driver/route/start-delivery")
+def driver_start_delivery():
+    """Sjåfør har bekreftet 'Alt hentet — start levering'. Vi sender mail til
+    alle kunder på dagens rute med estimert leveringstid + tracking-lenke.
+
+    Idempotent via tracking_auto_notified_at-flagg på date-state, så
+    dobbeltrykk på 'Ja, kjør ut' ikke spammer kundene.
+    """
+    driver, err = _driver_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    if not _driver_assigned_to_day(driver.get("id") or "", date_iso):
+        return jsonify({"error": "not_assigned"}), 403
+
+    day_state = _get_day_state(date_iso)
+    if day_state.get("tracking_auto_notified_at"):
+        return jsonify({
+            "ok": True,
+            "already_sent": True,
+            "sent_at": day_state.get("tracking_auto_notified_at"),
+            "notify": day_state.get("tracking_auto_notify_summary") or {},
+        })
+
+    if not _is_checklist_complete_for_date(date_iso):
+        return jsonify({
+            "error": "checklist_incomplete",
+            "detail": "Kryss av alle varelinjer før du starter leveringen.",
+        }), 400
+
+    try:
+        summary, start_clock = _run_route_notify(date_iso, "")
+    except Exception as e:
+        print(f"[START-DELIVERY] _run_route_notify feilet for {date_iso}: {e}")
+        return jsonify({"error": "notify_failed", "detail": str(e)}), 500
+
+    _set_day_state(date_iso, {
+        "tracking_auto_notified_at": int(time.time()),
+        "tracking_auto_notify_summary": summary,
+    })
+    print(f"[START-DELIVERY] {date_iso} bekreftet av sjåfør → "
+          f"sent={summary.get('sent', 0)}, "
+          f"skipped={summary.get('skipped', 0)}, "
+          f"failed={summary.get('failed', 0)}")
+    return jsonify({
+        "ok": True,
+        "date": date_iso,
+        "start_time": start_clock,
+        "notify": summary,
+    })
 
 
 @bp.get("/api/driver/route/live")

@@ -1234,18 +1234,76 @@ function _renderChecklistCard(data, stops){
     });
   });
 
-  // Start/Tilbake-knapp: lukker peek-modus (hvis aktiv) eller åpner gaten.
+  // Start/Tilbake-knapp: lukker peek-modus (hvis aktiv), bekrefter utkjøring
+  // (med kunde-varsel) eller åpner gaten på tom dag.
   //   - Peek + komplett → "Tilbake til ruten": slå av peek, vis Naviger-CTA
-  //   - Ikke peek + komplett → "Start rute": vanlig åpning av gaten
+  //   - Ikke peek + komplett → "Start rute": confirm-dialog + send mail til kunder
   //   - Ikke peek + tom dag → "Bekreft og start rute": ack-flagg + åpne gate
   const startBtn = document.getElementById("clStartBtn");
   if (startBtn) {
-    startBtn.addEventListener("click", () => {
+    startBtn.addEventListener("click", async () => {
       if (startBtn.disabled) return;
-      if (total === 0 && !_peekChecklist) _ackDay(activeDate);
-      _peekChecklist = false;
+
+      // Peek-modus: bare lukk og gå tilbake til Naviger-CTA
+      if (_peekChecklist) {
+        _peekChecklist = false;
+        _renderNextCard(currentRoute);
+        pollLive();
+        return;
+      }
+
+      // Tom dag: ingen kunder å varsle, bare ack og åpne gate
+      if (total === 0) {
+        _ackDay(activeDate);
+        _renderNextCard(currentRoute);
+        pollLive();
+        return;
+      }
+
+      // Komplett sjekkliste + reelle kunder → bekreft og send e-post
+      const stopsCount = stops.length;
+      const sure = confirm(
+        `Er du sikker på at alt er hentet?\n\n` +
+        `Når du trykker OK sendes e-post til alle ${stopsCount} ${stopsCount === 1 ? 'kunden' : 'kundene'} ` +
+        `på dagens rute med estimert leveringstid og live tracking-lenke.`
+      );
+      if (!sure) return;
+
+      const originalLabel = startBtn.textContent;
+      startBtn.disabled = true;
+      startBtn.textContent = "Sender e-post …";
+      try {
+        const r = await fetch(`/api/driver/route/start-delivery?pin=${encodeURIComponent(getPin())}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ date: activeDate }),
+        });
+        const respData = await r.json().catch(() => ({}));
+        if (!r.ok && !respData.already_sent) {
+          alert(respData.detail || respData.error || "Kunne ikke sende e-post.");
+          startBtn.disabled = false;
+          startBtn.textContent = originalLabel;
+          return;
+        }
+        const summary = respData.notify || {};
+        const sent = summary.sent || 0;
+        const failed = summary.failed || 0;
+        const skipped = summary.skipped || 0;
+        if (respData.already_sent) {
+          // Allerede sendt tidligere — bare gå videre uten alert
+        } else if (failed > 0) {
+          alert(`E-post sendt til ${sent} kunder. ${failed} feilet ${skipped ? '(' + skipped + ' hoppet over)' : ''} — sjekk varsler i admin.`);
+        } else if (sent > 0) {
+          alert(`✓ E-post sendt til ${sent} ${sent === 1 ? 'kunde' : 'kunder'}. God tur!`);
+        }
+      } catch (e) {
+        if (!confirm(`Klarte ikke å sende e-post: ${e.message}. Fortsette uansett?`)) {
+          startBtn.disabled = false;
+          startBtn.textContent = originalLabel;
+          return;
+        }
+      }
       _renderNextCard(currentRoute);
-      // Live-ETA hopper inn så snart neste-stopp-kortet er rendret
       pollLive();
     });
   }
