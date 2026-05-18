@@ -6514,13 +6514,37 @@ def api_analytics_timeseries():
     })
 
 
+def _analytics_range_window():
+    """Leser range/from/to fra request og returnerer (start_ms, end_ms).
+    Standard er 'all' (hele tid). Returnerer None hvis ugyldig range."""
+    rng = (request.args.get("range") or "all").lower().strip()
+    return _range_to_ms_window(rng, request.args.get("from") or "", request.args.get("to") or "")
+
+
+def _filtered_analytics(window):
+    """Returnerer (sessions_filtered_dict, events_filtered_list) der bare
+    poster innenfor window=(start_ms, end_ms) er med."""
+    if window is None:
+        return {}, []
+    start_ms, end_ms = window
+    sessions = {sid: s for sid, s in (_analytics.get("sessions", {}) or {}).items()
+                if start_ms <= (s.get("started_at") or 0) < end_ms}
+    events = [ev for ev in (_analytics.get("events", []) or [])
+              if start_ms <= (ev.get("ts") or 0) < end_ms]
+    return sessions, events
+
+
 @app.route("/api/analytics/funnel", methods=["GET"])
 def api_analytics_funnel():
     user, err = _analytics_admin_required()
     if err: return err
+    window = _analytics_range_window()
+    if window is None:
+        return jsonify({"ok": False, "error": "ugyldig range"}), 400
+    sessions, _ = _filtered_analytics(window)
     steps  = ["session_start", "view_pdp", "add_to_cart", "begin_checkout", "order_complete"]
     counts = {s: 0 for s in steps}
-    for sess in (_analytics.get("sessions", {}) or {}).values():
+    for sess in sessions.values():
         counts["session_start"] += 1
         f = sess.get("funnel") or {}
         for s in steps[1:]:
@@ -6542,8 +6566,12 @@ def api_analytics_funnel():
 def api_analytics_dropoff():
     user, err = _analytics_admin_required()
     if err: return err
+    window = _analytics_range_window()
+    if window is None:
+        return jsonify({"ok": False, "error": "ugyldig range"}), 400
+    sessions, _ = _filtered_analytics(window)
     cnt = {}
-    for sess in (_analytics.get("sessions", {}) or {}).values():
+    for sess in sessions.values():
         if (sess.get("funnel") or {}).get("order_complete"):
             continue
         p = sess.get("last_path") or "(ukjent)"
@@ -6555,8 +6583,12 @@ def api_analytics_dropoff():
 def api_analytics_pages():
     user, err = _analytics_admin_required()
     if err: return err
+    window = _analytics_range_window()
+    if window is None:
+        return jsonify({"ok": False, "error": "ugyldig range"}), 400
+    _, events = _filtered_analytics(window)
     pv, ck, ex, t_ms, scr = {}, {}, {}, {}, {}
-    for ev in (_analytics.get("events", []) or []):
+    for ev in events:
         p, t = ev.get("path") or "", ev.get("type")
         if   t == "pageview": pv[p] = pv.get(p, 0) + 1
         elif t == "click":    ck[p] = ck.get(p, 0) + 1
@@ -6600,8 +6632,12 @@ def api_analytics_heatmap():
 def api_analytics_paths():
     user, err = _analytics_admin_required()
     if err: return err
+    window = _analytics_range_window()
+    if window is None:
+        return jsonify({"ok": False, "error": "ugyldig range"}), 400
+    sessions, _ = _filtered_analytics(window)
     seq_count = {}
-    for sess in (_analytics.get("sessions", {}) or {}).values():
+    for sess in sessions.values():
         pages = sess.get("pages") or []
         if not pages:
             continue
@@ -6614,7 +6650,11 @@ def api_analytics_paths():
 def api_analytics_sessions():
     user, err = _analytics_admin_required()
     if err: return err
-    items = sorted((_analytics.get("sessions", {}) or {}).items(),
+    window = _analytics_range_window()
+    if window is None:
+        return jsonify({"ok": False, "error": "ugyldig range"}), 400
+    sessions, _ = _filtered_analytics(window)
+    items = sorted(sessions.items(),
                    key=lambda kv: -(kv[1].get("started_at") or 0))[:50]
     rows  = []
     for sid, s in items:
