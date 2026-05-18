@@ -64,6 +64,59 @@
               text-align:center;font-size:13px;margin:14px}
     .ck-loading{padding:48px 14px;text-align:center;color:var(--soft);font-size:14px}
 
+    /* === Min Side ordre-kort (matchet til pages.jsx) === */
+    .ms-wrap{background:#0f1419;color:#f5f1e7;padding:18px 14px;margin:14px;
+             border-radius:12px}
+    .ms-card{border:1px solid rgba(245,241,231,0.12);border-radius:14px;
+             padding:18px 20px;background:rgba(255,255,255,0.015)}
+    .ms-head{display:flex;align-items:flex-start;justify-content:space-between;
+             flex-wrap:wrap;gap:12px;margin-bottom:12px}
+    .ms-ordre-label{font-size:10px;color:#8a8d91;text-transform:uppercase;
+                    letter-spacing:0.1em}
+    .ms-total{font-size:17px;font-weight:700;margin-top:4px;font-family:Georgia,serif}
+    .ms-pills{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .ms-status-pill{display:inline-flex;align-items:center;gap:6px;
+                    padding:4px 12px;border-radius:999px;
+                    background:rgba(245,158,11,0.15);
+                    border:1px solid rgba(245,158,11,0.4);
+                    color:#f59e0b;font-size:11px;font-weight:600}
+    .ms-status-dot{width:7px;height:7px;border-radius:50%;background:#f59e0b;
+                   box-shadow:0 0 6px #f59e0baa}
+    .ms-eta-pill{display:inline-flex;align-items:center;gap:8px;
+                 padding:4px 14px;border-radius:999px;
+                 background:rgba(200,164,92,0.22);
+                 border:1px solid rgba(200,164,92,0.6);
+                 color:#f5f1e7;font-size:11px;font-weight:700}
+    .ms-eta-dot{width:7px;height:7px;border-radius:50%;background:#C8A45C;
+                box-shadow:0 0 0 0 rgba(200,164,92,0.7);
+                animation:msPulse 1.8s ease-in-out infinite}
+    @keyframes msPulse{
+      0%,100%{box-shadow:0 0 0 0 rgba(200,164,92,0.55)}
+      50%{box-shadow:0 0 0 6px rgba(200,164,92,0)}
+    }
+    .ms-leveres{display:flex;align-items:center;gap:12px;
+                padding:10px 14px;border-radius:12px;
+                background:rgba(65,193,186,0.12);
+                border:1.5px solid rgba(65,193,186,0.45);
+                margin-bottom:10px}
+    .ms-leveres-icon{width:32px;height:32px;border-radius:50%;
+                     background:#41c1ba;color:#0f1419;
+                     display:inline-flex;align-items:center;justify-content:center;
+                     font-size:16px}
+    .ms-leveres-label{font-size:10px;color:#41c1ba;text-transform:uppercase;
+                      letter-spacing:0.1em;font-weight:700}
+    .ms-leveres-text{font-family:Georgia,serif;font-size:15px;font-weight:700;
+                     color:#f5f1e7;margin-top:2px}
+    .ms-map-link{display:inline-flex;align-items:center;gap:6px;
+                 padding:7px 13px;border-radius:999px;
+                 border:1.5px solid rgba(200,164,92,0.5);
+                 color:#f5f1e7;text-decoration:none;font-size:12px;font-weight:600}
+    .ms-section-label{font-size:11px;color:var(--gold);font-weight:700;
+                      text-transform:uppercase;letter-spacing:0.1em;
+                      margin:4px 14px 8px;display:flex;align-items:center;gap:6px}
+    .ms-section-label::before{content:"";flex:1;height:1px;background:rgba(200,164,92,0.3)}
+    .ms-section-label::after{content:"";flex:1;height:1px;background:rgba(200,164,92,0.3)}
+
     .empty{background:#fff;border-radius:12px;padding:36px 20px;text-align:center;
            color:var(--soft);font-size:14px;line-height:1.5}
     .err-banner{background:#FFE5E5;color:#A33;padding:12px 14px;border-radius:10px;
@@ -72,12 +125,14 @@
 </head>
 <body>
 <div class="page">
-  <h1>Slik ser kundene tracking-siden</h1>
+  <h1>Slik ser kundene leveringsinfo</h1>
   <p class="lede">
-    Forhåndsvisning av det kunden ser når de åpner sin tracking-link.
-    Tallet er beregnet på samme måte som i prod: bilens nåværende ABAX-posisjon
-    → kundens leveringsadresse via Google Maps. Hvert kort tilsvarer ett stopp
-    i dagens rute, så du ser hva både første kunde og kunder lenger ned i køen ser nå.
+    For hvert stopp på dagens rute viser vi to vyer:
+    <strong>Min Side på havoyet.no</strong> (der ETA-pillen står ved siden av
+    status — det de først ser når de logger inn) og
+    <strong>kart-siden på bestilling.havoyet.no</strong> (det de ser når de
+    trykker "Se på kart"). Begge tallene er beregnet på samme måte som i prod:
+    bilens nåværende ABAX-posisjon → kundens leveringsadresse via Google Maps.
   </p>
 
   <div class="toolbar">
@@ -165,6 +220,53 @@
       </div>`;
   }
 
+  // "Min Side"-ordre-kort — matchet til pages.jsx LiveDeliveryEta-pillen
+  function msCard(state, orderId, etaClock, kundeAdresse) {
+    if (state.error) {
+      return `<div class="ms-card">
+        <div class="ck-error" style="margin:0">${state.error}</div>
+      </div>`;
+    }
+    const showEta = !state.delivered && state.minutes != null;
+    const statusLabel = state.delivered ? "Levert"
+      : (/lever/i.test(state.status || "") ? "Levert" : (state.status || "På vei"));
+    const statusColor = state.delivered ? "#22c55e" : "#f59e0b";
+    const days = ["Søndag","Mandag","Tirsdag","Onsdag","Torsdag","Fredag","Lørdag"];
+    const months = ["januar","februar","mars","april","mai","juni","juli","august",
+                    "september","oktober","november","desember"];
+    const now = new Date();
+    const dayLabel = `${days[now.getDay()]} ${now.getDate()}. ${months[now.getMonth()]}`;
+    const leveringsTekst = `${dayLabel}${etaClock ? ' · kl. ' + etaClock : ''}`;
+    return `
+      <div class="ms-card">
+        <div class="ms-head">
+          <div>
+            <div class="ms-ordre-label">Ordre #${orderId || '—'} · ${now.toISOString().slice(0,10)}</div>
+            <div class="ms-total">— kr</div>
+          </div>
+          <div class="ms-pills">
+            <span class="ms-status-pill" style="background:${statusColor}22;border-color:${statusColor}66;color:${statusColor}">
+              <span class="ms-status-dot" style="background:${statusColor};box-shadow:0 0 6px ${statusColor}aa"></span>
+              ${statusLabel}
+            </span>
+            ${showEta ? `
+              <span class="ms-eta-pill" title="Live-oppdatert fra sjåførens GPS · ${fmtKm(state.distance_km)} igjen">
+                <span class="ms-eta-dot"></span>
+                🚚 ${state.minutes} min unna
+              </span>` : ''}
+          </div>
+        </div>
+        <div class="ms-leveres">
+          <span class="ms-leveres-icon">📦</span>
+          <div>
+            <div class="ms-leveres-label">Leveres</div>
+            <div class="ms-leveres-text">${leveringsTekst}</div>
+          </div>
+        </div>
+        ${showEta ? `<a class="ms-map-link" href="#" onclick="event.preventDefault()">🗺 Se på kart →</a>` : ''}
+      </div>`;
+  }
+
   function previewFrame(stopIndex, totalStops, dataOrErr) {
     const label = stopIndex === 0
       ? "Neste kunde"
@@ -175,19 +277,26 @@
       : '—';
     const etaClock = dataOrErr && dataOrErr.estimated_eta_clock
       ? dataOrErr.estimated_eta_clock
-      : '—';
-    const orderId = dataOrErr && dataOrErr.order_id ? `#${dataOrErr.order_id}` : '';
+      : '';
+    const orderId = dataOrErr && dataOrErr.order_id ? dataOrErr.order_id : '';
+    const state = dataOrErr || {};
     return `
       <div class="preview-frame${highlight}">
         <div class="preview-head">
           <span class="badge">Stopp ${stopIndex + 1} av ${totalStops}</span>
-          <h2>${label} ${orderId}</h2>
+          <h2>${label}${orderId ? ' #' + orderId : ''}</h2>
           <div class="who">${who}</div>
         </div>
-        <div class="preview-body">${ckCard(dataOrErr || {})}</div>
+
+        <div class="ms-section-label">på havoyet.no/konto-dashbord</div>
+        <div class="ms-wrap">${msCard(state, orderId, etaClock, dataOrErr?.kunde_adresse)}</div>
+
+        <div class="ms-section-label">på bestilling.havoyet.no/track/${orderId || '...'}</div>
+        <div class="preview-body">${ckCard(state)}</div>
+
         <div class="info-line">
-          <span>Planlagt kl <strong>${etaClock}</strong></span>
-          <span>Live-min mot bilens posisjon nå</span>
+          <span>Planlagt kl <strong>${etaClock || '—'}</strong></span>
+          <span>Live-min oppdatert hvert 30. sek</span>
         </div>
       </div>`;
   }
