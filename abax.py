@@ -32,13 +32,16 @@ DEFAULT_TOKEN_URL = "https://identity.abax.cloud/connect/token"
 DEFAULT_API_BASE = "https://api.abax.cloud/v1"
 DEFAULT_SCOPES = (
     "openid offline_access "
-    "open_api open_api_vehicles"
+    "open_api open_api.vehicles"
 )
-# Merknad: open_api_trips (kjørebok) og open_api_streams (sanntids-events)
-# tas ikke med som default fordi de ikke alltid er aktivert på klient-
-# registreringen og gir "invalid_scope" under OAuth. Vi bruker bare
-# vehicles/locations + vehicles/drive-states, som dekkes av open_api_vehicles.
-# Sett ABAX_SCOPES env-var hvis du trenger flere scopes.
+# ABAX bruker PUNKTUM som scope-separator (verifisert via discovery-endpoint:
+# https://identity.abax.cloud/.well-known/openid-configuration). Tidligere
+# underscore-varianter (open_api_vehicles, open_api_trips, open_api_streams)
+# eksisterer ikke og gir invalid_scope under OAuth-godkjenning.
+#
+# Andre tilgjengelige scopes hvis behov: open_api.trips, open_api.organization,
+# open_api.driving_behaviour, open_api.location_stream m.fl.
+# Sett ABAX_SCOPES env-var for å overstyre.
 
 _TOKEN_FILE = "abax_tokens.json"
 _REFRESH_LOCK = threading.Lock()
