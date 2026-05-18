@@ -6303,6 +6303,38 @@ def api_analytics_event():
         accepted += 1
     return jsonify({"ok": True, "accepted": accepted})
 
+def _range_to_ms_window(rng: str, from_iso: str = "", to_iso: str = "") -> tuple[int, int] | None:
+    """Returnerer (start_ms, end_ms) for en analytics-periode. None hvis ugyldig."""
+    if rng == "all":
+        return (0, int(time.time() * 1000) + 1)
+    now_oslo = datetime.now(_OSLO_TZ)
+    end_dt = (now_oslo + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if rng == "today":
+        start_dt = now_oslo.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt   = start_dt + timedelta(days=1)
+    elif rng == "week":
+        start_dt = end_dt - timedelta(days=7)
+    elif rng == "month":
+        start_dt = end_dt - timedelta(days=30)
+    elif rng == "quarter":
+        start_dt = end_dt - timedelta(days=90)
+    elif rng == "halfyear":
+        start_dt = end_dt - timedelta(days=182)
+    elif rng == "year":
+        start_dt = end_dt - timedelta(days=365)
+    elif rng == "custom":
+        try:
+            start_dt = datetime.strptime(from_iso.strip(), "%Y-%m-%d").replace(tzinfo=_OSLO_TZ)
+            end_dt   = datetime.strptime(to_iso.strip(),   "%Y-%m-%d").replace(tzinfo=_OSLO_TZ) + timedelta(days=1)
+            if end_dt <= start_dt or (end_dt - start_dt).days > 730:
+                return None
+        except Exception:
+            return None
+    else:
+        return None
+    return (int(start_dt.timestamp() * 1000), int(end_dt.timestamp() * 1000))
+
+
 @app.route("/api/analytics/summary", methods=["GET"])
 def api_analytics_summary():
     user, err = _analytics_admin_required()
@@ -6312,18 +6344,60 @@ def api_analytics_summary():
     cutoff_7d  = max(0, now - 7 * 24 * 60 * 60 * 1000)
     events     = _analytics.get("events", []) or []
     sessions   = _analytics.get("sessions", {}) or {}
+
+    # Periode-filtrerte totals (når admin bytter periode i grafen,
+    # skal stat-kortene øverst respektere det). Default 'all' = alle tall.
+    rng = (request.args.get("range") or "all").lower().strip()
+    window = _range_to_ms_window(rng, request.args.get("from") or "", request.args.get("to") or "")
+    if window is None:
+        return jsonify({"ok": False, "error": "ugyldig range"}), 400
+    start_ms, end_ms = window
+
+    p_pageviews = 0
+    p_clicks    = 0
+    p_session_ids: set[str] = set()
+    for ev in events:
+        ts = ev.get("ts", 0) or 0
+        if ts < start_ms or ts >= end_ms:
+            continue
+        t = ev.get("type")
+        if t == "pageview":
+            p_pageviews += 1
+            sid = ev.get("sid")
+            if sid: p_session_ids.add(sid)
+        elif t == "click":
+            p_clicks += 1
+    # Sesjoner i periode: started_at innen window
+    p_sessions_count = 0
+    p_devices: set[str] = set()
+    for sid, s in sessions.items():
+        if (s.get("started_at") or 0) < start_ms or (s.get("started_at") or 0) >= end_ms:
+            continue
+        p_sessions_count += 1
+        did = s.get("did")
+        if did: p_devices.add(did)
+
+    # Total-tall (på tvers av all tid, beholdt for bakoverkompat)
     pageviews  = sum(1 for e in events if e.get("type") == "pageview")
     pv_24h     = sum(1 for e in events if e.get("type") == "pageview" and e.get("ts", 0) >= cutoff_24h)
     pv_7d      = sum(1 for e in events if e.get("type") == "pageview" and e.get("ts", 0) >= cutoff_7d)
     sess_24h   = sum(1 for s in sessions.values() if (s.get("started_at") or 0) >= cutoff_24h)
     devices    = len({s.get("did") for s in sessions.values() if s.get("did")})
     clicks     = sum(1 for e in events if e.get("type") == "click")
+
     return jsonify({
         "ok": True,
-        "totals":   {"events": len(events), "sessions": len(sessions),
-                     "devices": devices, "pageviews": pageviews, "clicks": clicks},
-        "last_24h": {"pageviews": pv_24h, "sessions": sess_24h},
-        "last_7d":  {"pageviews": pv_7d},
+        "range":     rng,
+        "period":    {
+            "sessions":  p_sessions_count,
+            "devices":   len(p_devices),
+            "pageviews": p_pageviews,
+            "clicks":    p_clicks,
+        },
+        "totals":    {"events": len(events), "sessions": len(sessions),
+                      "devices": devices, "pageviews": pageviews, "clicks": clicks},
+        "last_24h":  {"pageviews": pv_24h, "sessions": sess_24h},
+        "last_7d":   {"pageviews": pv_7d},
     })
 
 @app.route("/api/analytics/timeseries", methods=["GET"])
