@@ -61,6 +61,7 @@ def register_tracking(
     route_eta_sender: Optional[Callable[[dict, str, str], tuple]] = None,
     tracking_base_url: str = "",
     status_hook: Optional[Callable[[str, str], None]] = None,
+    admin_notifier: Optional[Callable[[str, str, str], None]] = None,
 ) -> None:
     _state["client"] = AbaxClient(state_dir)
     _state["orders_ref"] = manual_orders_ref
@@ -71,6 +72,7 @@ def register_tracking(
     _state["sms_sender"] = sms_sender
     _state["route_eta_sender"] = route_eta_sender
     _state["status_hook"] = status_hook
+    _state["admin_notifier"] = admin_notifier  # _notify_admins(event, subject, body)
     _state["tracking_base_url"] = (
         tracking_base_url
         or os.environ.get("TRACKING_PUBLIC_URL")
@@ -83,6 +85,7 @@ def register_tracking(
         _state["notify_threshold_min"] = 10
     app.register_blueprint(bp)
     _start_proximity_watcher()
+    _start_abax_health_watcher()
     _ensure_default_driver()
 
 
@@ -674,6 +677,124 @@ def _start_proximity_watcher() -> None:
     _state["watcher_started"] = True
     t = threading.Thread(target=_proximity_watcher_loop, name="abax-proximity", daemon=True)
     t.start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ABAX-HELSE-WATCHDOG — sørger for at integrasjonen 'alltid er koblet til'
+# ═══════════════════════════════════════════════════════════════════════════
+
+_ABAX_HEALTH_INTERVAL = 300        # 5 min mellom hver helse-sjekk
+_ABAX_ALERT_COOLDOWN  = 3600       # admin varsles maks én gang per time per feiltype
+_ABAX_HEALTH_BOOT_DELAY = 30       # vent etter boot så app rekker å lade state
+
+_abax_health_state: dict = {
+    "last_ok_at": 0,
+    "last_alert_at": 0,
+    "last_status": "unknown",
+}
+
+
+def _start_abax_health_watcher() -> None:
+    if _state.get("abax_health_started"):
+        return
+    _state["abax_health_started"] = True
+    t = threading.Thread(target=_abax_health_loop, name="abax-health", daemon=True)
+    t.start()
+
+
+def _abax_health_loop() -> None:
+    """Bakgrunns-watchdog: fornyer ABAX-access-token proaktivt og varsler
+    admin via e-post/SMS/Telegram hvis sesjonen er brutt. Hensikten er at
+    integrasjonen alltid skal være koblet til — admin trenger ikke å
+    oppdage at noe er galt ved å åpne /tracking-admin og se rødt.
+    """
+    time.sleep(_ABAX_HEALTH_BOOT_DELAY)
+    while True:
+        try:
+            _abax_health_tick()
+        except Exception as e:
+            print(f"[ABAX-HEALTH] tick krasjet: {e}")
+        time.sleep(_ABAX_HEALTH_INTERVAL)
+
+
+def _abax_health_tick() -> None:
+    client = _state.get("client")
+    if not client or not client.is_configured():
+        return  # ingen vits å sjekke — env-vars mangler
+
+    status = "ok"
+    detail = ""
+
+    if not client.is_connected():
+        status = "disconnected"
+        detail = ("ABAX OAuth-sesjon er borte (refresh-token utløpt eller fjernet). "
+                  "Gå til /tracking-admin og trykk \"Koble til\".")
+    else:
+        # Sesjon eksisterer — prøv proaktiv refresh så vi fanger problemer FØR
+        # neste kunde-tracking-poll feiler.
+        try:
+            client._refresh_if_needed()  # pylint: disable=protected-access
+        except AbaxNotConnected as e:
+            status = "refresh_failed"
+            detail = (f"ABAX refresh-token er ugyldig. Re-koble til på "
+                      f"/tracking-admin. ({e})")
+        except AbaxError as e:
+            status = "refresh_failed"
+            detail = f"ABAX-token-fornying feilet: {e}"
+        else:
+            vehicle_id = _state.get("active_vehicle_id")
+            if not vehicle_id:
+                status = "no_vehicle"
+                detail = "Ingen aktiv leveringsbil valgt på /tracking-admin."
+            else:
+                try:
+                    pos = client.get_position(vehicle_id)
+                    if pos is None:
+                        status = "no_position"
+                        detail = ("ABAX-brikken rapporterer ikke posisjon — "
+                                  "sjekk at brikken sitter i OBD-porten og at bilen "
+                                  "har kjørt en kort tur.")
+                except (AbaxError, AbaxNotConnected) as e:
+                    status = "position_error"
+                    detail = f"ABAX-posisjons-kall feilet: {e}"
+
+    now = int(time.time())
+    state = _abax_health_state
+
+    if status == "ok":
+        if state["last_status"] != "ok" and state["last_status"] != "unknown":
+            # Recovery — send "alt er bra igjen"-melding
+            _send_health_alert(
+                "tracking-integrasjon OK igjen",
+                f"ABAX-integrasjonen er tilbake i normal drift "
+                f"(forrige status: {state['last_status']}). Kunder får live-ETA som vanlig.",
+            )
+        state["last_ok_at"] = now
+        state["last_status"] = "ok"
+        return
+
+    # Status er ikke ok. Send admin-varsel ved første overgang, og igjen etter cooldown.
+    status_changed = (status != state["last_status"])
+    cooldown_passed = (now - state["last_alert_at"] > _ABAX_ALERT_COOLDOWN)
+    if status_changed or cooldown_passed:
+        _send_health_alert(
+            f"Tracking-integrasjon trenger oppmerksomhet ({status})",
+            detail,
+        )
+        state["last_alert_at"] = now
+    state["last_status"] = status
+
+
+def _send_health_alert(subject: str, body: str) -> None:
+    """Sender admin-varsel via _notify_admins (e-post + SMS + Telegram)."""
+    notifier = _state.get("admin_notifier")
+    print(f"[ABAX-HEALTH] {subject}: {body}")
+    if not notifier:
+        return
+    try:
+        notifier("tracking_health", f"Havøyet tracking: {subject}", body)
+    except Exception as e:
+        print(f"[ABAX-HEALTH] varsel-utsending feilet: {e}")
 
 
 def _proximity_watcher_loop() -> None:

@@ -1705,7 +1705,7 @@ def _send_contact_mail(from_email, from_name, subject, body):
 # ── ADMIN-VARSLER ──────────────────────────────────────────────────────────────
 # Send e-post + SMS til registrerte admin-mottakere ved nye/oppdaterte/leverte
 # ordre og innkommende kontaktmeldinger.
-ADMIN_EVENTS = ("new_order", "order_updated", "order_delivered", "new_message")
+ADMIN_EVENTS = ("new_order", "order_updated", "order_delivered", "new_message", "tracking_health")
 ADMIN_NOTIFY_LOG = os.path.join(os.path.dirname(_BASE_DIR), "admin_notifications.jsonl")
 
 # Sveve (primær SMS-leverandør — norsk, gratis sender-ID-godkjenning)
@@ -8176,6 +8176,7 @@ try:
         route_eta_sender=_send_route_eta_notification,
         tracking_base_url=os.environ.get("TRACKING_PUBLIC_URL", "https://bestilling.havoyet.no"),
         status_hook=_driver_set_order_status,
+        admin_notifier=_notify_admins,
     )
     print("[BOOT] Tracking-routes registrert (ABAX)")
 except Exception as _e:
