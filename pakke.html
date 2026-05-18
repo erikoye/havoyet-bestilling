@@ -1785,6 +1785,10 @@ function openOrder(id) {
 function stripWeightSuffix(name) {
   if (!name) return '';
   return String(name)
+    // "Laks filet (ca. 500 g)" / "Laks filet (500 g)" / "Laks filet (1,5 kg)"
+    // → "Laks filet". Vekt vises nå i qty-pillen til høyre, så parantesen er overflødig.
+    .replace(/\s*\(\s*(?:ca\.?\s*)?\d+(?:[.,]\d+)?\s*(?:g|gram|kg|stk|pk|pakke|porsjon(?:er)?)\s*\)\s*$/i, '')
+    // Eldre format uten parentes: "Laks filet 500 g"
     .replace(/\s+\d+(?:[.,]\d+)?\s*(?:g|gram|kg|stk|pk|pakke|porsjon(?:er)?)\b\.?\s*$/i, '')
     .trim();
 }
