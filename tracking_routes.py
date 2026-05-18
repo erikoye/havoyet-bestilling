@@ -914,6 +914,103 @@ def _verify_track_access(order_id: str) -> dict:
     return order
 
 
+@bp.get("/api/admin/tracking/preview-eta")
+def admin_preview_eta():
+    """Admin-preview: simulerer hva en kunde i posisjon N (0-indeksert) på
+    dagens rute ville sett i live tracking-widgeten. Returnerer samme format
+    som /api/orders/<id>/eta så admin-preview-siden kan gjenbruke samme UI.
+
+    Query:
+      - date: "YYYY-MM-DD" (default i dag)
+      - stop_index: int (0 = neste, 1 = om 1 levering, etc.)
+    """
+    _, err = _admin_only()
+    if err:
+        return err
+
+    date_iso = (request.args.get("date") or _today_iso()).strip()
+    try:
+        stop_index = int(request.args.get("stop_index") or "0")
+    except (TypeError, ValueError):
+        stop_index = 0
+
+    route = _build_route(date_iso, optimize=True)
+    stops = route.get("stops") or []
+    if not stops:
+        return jsonify({"error": "ingen_stopp", "detail": f"Ingen leveringer på {date_iso}"}), 404
+    if stop_index < 0 or stop_index >= len(stops):
+        return jsonify({
+            "error": "stop_index_out_of_range",
+            "detail": f"Stopp #{stop_index + 1} finnes ikke — ruten har {len(stops)} stopp.",
+        }), 400
+
+    stop = stops[stop_index]
+    order_id = str(stop.get("order_id") or "")
+    order = _find_order(order_id) or {}
+
+    dest = order_destination(order) if order else None
+    if not dest:
+        # Bruk stoppets egen lat/lon hvis ordren ikke har destinasjon
+        slat = stop.get("lat")
+        slon = stop.get("lon")
+        if slat and slon:
+            dest = (float(slat), float(slon))
+
+    if not dest:
+        return jsonify({
+            "error": "no_destination",
+            "detail": "Kunne ikke finne leveringsadressen for dette stoppet.",
+        }), 422
+
+    # Hent live-posisjon (samme logikk som public-endpoint)
+    vehicle_id = order.get("track_vehicle_id") or _state["active_vehicle_id"]
+    position = None
+    source = None
+    if vehicle_id:
+        try:
+            position = _client().get_position(vehicle_id)
+            source = "abax"
+        except AbaxNotConnected:
+            source = "not_connected"
+        except AbaxError:
+            source = "abax_error"
+    if position is None:
+        depot = _state["depot"]
+        if depot:
+            position = {"lat": depot[0], "lon": depot[1], "speed_kmh": 0, "timestamp": None}
+            source = source or "depot_fallback"
+        else:
+            return jsonify({
+                "error": "no_position",
+                "detail": "Ingen posisjonsdata tilgjengelig.",
+            }), 503
+
+    eta = compute_eta(position["lat"], position["lon"], dest[0], dest[1])
+
+    return jsonify({
+        "preview": True,
+        "stop_index": stop_index,
+        "order_id": order_id,
+        "kunde_navn": stop.get("navn") or order.get("kunde", {}).get("navn") or "Kunde",
+        "kunde_adresse": stop.get("adresse") or "",
+        "estimated_eta_clock": order.get("estimated_eta_clock") or stop.get("arrival_clock") or "",
+        "status": order.get("status"),
+        "minutes": int(round(eta["duration_min"])),
+        "duration_min": eta["duration_min"],
+        "distance_km": eta["distance_km"],
+        "eta_source": eta["source"],
+        "vehicle": {
+            "lat": position["lat"],
+            "lon": position["lon"],
+            "speed_kmh": position.get("speed_kmh"),
+            "data_source": source,
+        },
+        "destination": {"lat": dest[0], "lon": dest[1]},
+        "delivered": _is_delivered(order),
+        "total_stops": len(stops),
+    })
+
+
 @bp.get("/api/orders/<order_id>/eta")
 def public_order_eta(order_id: str):
     """Public: kunden poller dette for å oppdatere live ETA. Token-beskyttet."""

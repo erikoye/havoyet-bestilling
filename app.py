@@ -366,6 +366,7 @@ _PRETTY_PAGES = {
     "ptouch":           "ptouch.html",
     "nesttun-admin":    "nesttun-admin.html",
     "tracking-admin":   "tracking-admin.html",
+    "tracking-preview": "tracking-preview.html",
     "rute":             "rute.html",
     "sjafor":           "sjafor.html",
     "sjåfør":           "sjafor.html",

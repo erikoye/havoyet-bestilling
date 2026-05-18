@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Forhåndsvis kunde-tracking — Havøyet admin</title>
+  <style>
+    :root{--blue:#1A3A5C;--gold:#C8A45C;--bg:#F4F1EA;--ink:#1B1B1B;--soft:#666;
+          --line:#E4DDD0;--ok:#2F7A4F;--err:#B33A3A}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:var(--bg);color:var(--ink);min-height:100dvh}
+    .page{max-width:1180px;margin:0 auto;padding:24px 18px 60px}
+    h1{color:var(--blue);font-size:24px;margin:0 0 6px}
+    .lede{color:var(--soft);font-size:14px;margin:0 0 18px;max-width:760px;line-height:1.5}
+    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+             background:#fff;padding:14px 16px;border-radius:12px;
+             box-shadow:0 4px 14px rgba(0,0,0,.05);margin-bottom:20px}
+    .toolbar label{font-size:13px;color:var(--soft);font-weight:600}
+    .toolbar input,.toolbar select{padding:8px 10px;border:1px solid var(--line);
+                                    border-radius:8px;font-size:14px}
+    .toolbar button{font-family:inherit;padding:9px 16px;border:none;
+                    border-radius:8px;font-weight:600;cursor:pointer}
+    .btn-primary{background:var(--blue);color:#fff}
+    .btn-secondary{background:#fff;color:var(--blue);border:1.5px solid var(--blue)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px}
+    .preview-frame{background:#fff;border-radius:14px;overflow:hidden;
+                   box-shadow:0 6px 18px rgba(0,0,0,.08);
+                   border:2px solid transparent;transition:border-color .2s}
+    .preview-frame.highlight{border-color:var(--gold)}
+    .preview-head{padding:14px 18px;background:linear-gradient(135deg,var(--blue),#264a72);
+                  color:#fff}
+    .preview-head .badge{display:inline-block;padding:2px 10px;border-radius:999px;
+                         font-size:11px;font-weight:700;background:rgba(200,164,92,.25);
+                         color:var(--gold);text-transform:uppercase;letter-spacing:.5px}
+    .preview-head h2{margin:6px 0 2px;font-size:17px}
+    .preview-head .who{font-size:13px;opacity:.9}
+    .preview-body{padding:0;background:var(--bg)}
+    .info-line{padding:10px 18px;background:#fff;border-top:1px solid var(--line);
+               font-size:12px;color:var(--soft);display:flex;justify-content:space-between;
+               flex-wrap:wrap;gap:8px}
+    .info-line strong{color:var(--ink)}
+
+    /* === Replika av kundens tracking-widget === */
+    .ck-card{background:#fff;border-radius:14px;padding:24px 22px;
+             box-shadow:0 4px 14px rgba(0,0,0,.06);margin:14px;text-align:center}
+    .ck-label{color:var(--soft);font-size:13px;text-transform:uppercase;letter-spacing:.5px}
+    .ck-num{font-size:68px;font-weight:700;color:var(--blue);line-height:1;
+            margin:6px 0;font-variant-numeric:tabular-nums}
+    .ck-unit{color:var(--soft);font-size:17px}
+    .ck-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
+    .ck-meta-block{background:var(--bg);border-radius:10px;padding:11px;text-align:center}
+    .ck-meta-block span{display:block;font-size:11px;color:var(--soft);
+                        text-transform:uppercase;letter-spacing:.5px}
+    .ck-meta-block strong{display:block;font-size:17px;color:var(--blue);margin-top:2px}
+    .ck-info{margin:0 14px 14px;background:#fff;border-radius:10px;padding:11px 14px;
+             font-size:13px;color:var(--soft);text-align:center}
+    .ck-pulse{display:inline-block;width:8px;height:8px;border-radius:50%;
+              background:#28A745;margin-right:6px;animation:p 1.6s ease-in-out infinite}
+    @keyframes p{50%{opacity:.3}}
+    .ck-delivered{background:#E5F4EB;color:#1F6B43;padding:14px 18px;
+                  border-radius:10px;text-align:center;font-weight:600;margin:14px}
+    .ck-error{background:#FFE5E5;color:#A33;padding:12px 14px;border-radius:10px;
+              text-align:center;font-size:13px;margin:14px}
+    .ck-loading{padding:48px 14px;text-align:center;color:var(--soft);font-size:14px}
+
+    .empty{background:#fff;border-radius:12px;padding:36px 20px;text-align:center;
+           color:var(--soft);font-size:14px;line-height:1.5}
+    .err-banner{background:#FFE5E5;color:#A33;padding:12px 14px;border-radius:10px;
+                margin-bottom:14px;font-size:14px}
+  </style>
+</head>
+<body>
+<div class="page">
+  <h1>Slik ser kundene tracking-siden</h1>
+  <p class="lede">
+    Forhåndsvisning av det kunden ser når de åpner sin tracking-link.
+    Tallet er beregnet på samme måte som i prod: bilens nåværende ABAX-posisjon
+    → kundens leveringsadresse via Google Maps. Hvert kort tilsvarer ett stopp
+    i dagens rute, så du ser hva både første kunde og kunder lenger ned i køen ser nå.
+  </p>
+
+  <div class="toolbar">
+    <label for="preview-date">Dato:</label>
+    <input type="date" id="preview-date" style="min-width:160px">
+    <button id="btn-reload" class="btn-primary">Last på nytt</button>
+    <button id="btn-auto" class="btn-secondary">Auto-oppdater: PÅ</button>
+    <span style="flex:1"></span>
+    <a href="/tracking-admin" style="color:var(--blue);font-size:13px">← Tilbake til ABAX-oppsett</a>
+  </div>
+
+  <div id="err-banner" class="err-banner" hidden></div>
+
+  <div id="preview-grid" class="grid">
+    <div class="empty">Velg dato og trykk «Last på nytt» for å se hvordan kunder på den ruten ser tracking-siden sin.</div>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const TOKEN_KEY = "hv_admin_token";
+  const getToken = () => localStorage.getItem(TOKEN_KEY) || "";
+
+  let autoOn = true;
+  let autoTimer = null;
+
+  async function api(path) {
+    const r = await fetch(path, {
+      credentials: "include",
+      headers: {
+        "Accept": "application/json",
+        ...(getToken() ? { "Authorization": "Bearer " + getToken() } : {}),
+      },
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) {}
+    return { ok: r.ok, status: r.status, data };
+  }
+
+  function showError(msg) {
+    const b = $("err-banner");
+    b.textContent = msg;
+    b.hidden = !msg;
+  }
+
+  function fmtKm(km) {
+    if (km == null || isNaN(km)) return "—";
+    return `${Number(km).toFixed(1)} km`;
+  }
+
+  function ckCard(state) {
+    if (state.error) {
+      return `
+        <div class="ck-error">
+          ${state.error}
+          <div style="font-size:11px;margin-top:4px;opacity:.7">(Kunden ville sett: «Henter…» eller en feilmelding)</div>
+        </div>`;
+    }
+    if (state.delivered) {
+      return `
+        <div class="ck-delivered">
+          ✓ Leveringen er fullført. Takk for at du handlet hos Havøyet!
+        </div>`;
+    }
+    const min = state.minutes;
+    const unit = min === 1 ? "minutt" : "minutter";
+    return `
+      <div class="ck-card">
+        <div class="ck-label">Forventet ankomst</div>
+        <div class="ck-num">${min}</div>
+        <div class="ck-unit">${unit}</div>
+        <div class="ck-meta">
+          <div class="ck-meta-block">
+            <span>Avstand</span>
+            <strong>${fmtKm(state.distance_km)}</strong>
+          </div>
+          <div class="ck-meta-block">
+            <span>Status</span>
+            <strong>${state.status || "Underveis"}</strong>
+          </div>
+        </div>
+      </div>
+      <div class="ck-info">
+        <span class="ck-pulse"></span> Oppdateres automatisk hvert 30. sekund.
+      </div>`;
+  }
+
+  function previewFrame(stopIndex, totalStops, dataOrErr) {
+    const label = stopIndex === 0
+      ? "Neste kunde"
+      : `Om ${stopIndex} levering${stopIndex === 1 ? '' : 'er'}`;
+    const highlight = stopIndex === 0 || stopIndex === 2 ? ' highlight' : '';
+    const who = dataOrErr && dataOrErr.kunde_navn
+      ? `${dataOrErr.kunde_navn}${dataOrErr.kunde_adresse ? ' · ' + dataOrErr.kunde_adresse : ''}`
+      : '—';
+    const etaClock = dataOrErr && dataOrErr.estimated_eta_clock
+      ? dataOrErr.estimated_eta_clock
+      : '—';
+    const orderId = dataOrErr && dataOrErr.order_id ? `#${dataOrErr.order_id}` : '';
+    return `
+      <div class="preview-frame${highlight}">
+        <div class="preview-head">
+          <span class="badge">Stopp ${stopIndex + 1} av ${totalStops}</span>
+          <h2>${label} ${orderId}</h2>
+          <div class="who">${who}</div>
+        </div>
+        <div class="preview-body">${ckCard(dataOrErr || {})}</div>
+        <div class="info-line">
+          <span>Planlagt kl <strong>${etaClock}</strong></span>
+          <span>Live-min mot bilens posisjon nå</span>
+        </div>
+      </div>`;
+  }
+
+  async function loadPreviews() {
+    const date = $("preview-date").value;
+    if (!date) return;
+
+    const grid = $("preview-grid");
+    grid.innerHTML = `<div class="empty">Henter forhåndsvisning …</div>`;
+
+    // Først: finn antall stopp i ruten via et eta-kall for stop 0
+    const probe = await api(`/api/admin/tracking/preview-eta?date=${date}&stop_index=0`);
+    if (probe.status === 401 || probe.status === 403) {
+      showError("Ikke logget inn som admin. Gå til /tracking-admin og logg inn først.");
+      grid.innerHTML = "";
+      return;
+    }
+    if (probe.status === 404) {
+      grid.innerHTML = `<div class="empty">Ingen leveringer registrert på <strong>${date}</strong>.</div>`;
+      showError("");
+      return;
+    }
+    if (!probe.ok || !probe.data) {
+      showError(probe.data?.detail || probe.data?.error || `Feil ${probe.status}`);
+      grid.innerHTML = "";
+      return;
+    }
+    showError("");
+    const total = probe.data.total_stops || 1;
+
+    // Hent ETA for hvert stopp parallelt
+    const results = await Promise.all(
+      Array.from({ length: total }, (_, i) =>
+        api(`/api/admin/tracking/preview-eta?date=${date}&stop_index=${i}`)
+      )
+    );
+
+    grid.innerHTML = results.map((r, i) => {
+      const data = r.ok ? r.data : { error: r.data?.detail || r.data?.error || "Feil" };
+      return previewFrame(i, total, data);
+    }).join("");
+  }
+
+  // Init dato til i dag
+  (function initDate() {
+    $("preview-date").value = new Date().toISOString().slice(0, 10);
+  })();
+
+  $("btn-reload").onclick = loadPreviews;
+
+  $("btn-auto").onclick = () => {
+    autoOn = !autoOn;
+    $("btn-auto").textContent = `Auto-oppdater: ${autoOn ? "PÅ" : "AV"}`;
+    if (autoOn) {
+      autoTimer = setInterval(loadPreviews, 30000);
+    } else if (autoTimer) {
+      clearInterval(autoTimer);
+      autoTimer = null;
+    }
+  };
+
+  // Første lasting
+  loadPreviews();
+  autoTimer = setInterval(loadPreviews, 30000);
+</script>
+</body>
+</html>
