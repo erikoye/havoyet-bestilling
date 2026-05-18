@@ -1559,29 +1559,18 @@ def admin_route_approve():
     return jsonify({"ok": True, "date": date_iso, "approved_at": now})
 
 
-@bp.post("/api/admin/tracking/route/notify")
-def admin_route_notify():
-    """Sender e-post / SMS til alle kundene på dagens rute med deres estimerte
-    leveringstid. Bruker `route_eta`-malen fra customer-notify-config så admin
-    kan styre tekst på Varsel-siden.
+def _run_route_notify(date_iso: str, start_time_arg: str = "") -> tuple[dict, str]:
+    """Sender e-post/SMS til alle kunder på ruten med ETA + tracking-lenke.
 
-    Body:
-      - date: "YYYY-MM-DD" (default: i dag)
-      - start_time: "HH:MM" (valgfritt — overskriver evt. lagret start_clock)
+    Kalles fra både admin (manuelt trykk) og auto-trigger når sjåfør har
+    krysset av alle varelinjer på sjekklisten. Returnerer (notify_summary,
+    start_clock "HH:MM"). Summary har sent/skipped/failed + details-liste.
     """
-    _, err = _admin_only()
-    if err:
-        return err
-    data = request.get_json(silent=True) or {}
-    date_iso = (data.get("date") or _today_iso()).strip()
-    start_time_arg = (data.get("start_time") or "").strip()
-
     notify_summary = {"sent": 0, "skipped": 0, "failed": 0, "details": []}
     route = _build_route(date_iso, optimize=True)
     stops = route.get("stops") or []
     if not stops:
-        return jsonify({"ok": True, "date": date_iso, "notify": notify_summary,
-                        "info": "ingen stopp denne datoen"})
+        return notify_summary, ""
 
     start_hh, start_mm = _parse_start_time(start_time_arg, stops)
     base = (_state["tracking_base_url"] or "").rstrip("/")
@@ -1612,7 +1601,6 @@ def admin_route_notify():
 
         track_url = f"{base}/track/{order_id}?token={order['track_token']}"
 
-        # Bruk route_eta-mal hvis registrert. Fallback til gammel SMS-funksjon.
         if eta_sender:
             ok, detail = eta_sender(order, eta_clock, track_url)
         else:
@@ -1633,9 +1621,58 @@ def admin_route_notify():
     except Exception as e:
         print(f"[NOTIFY] save_state feilet: {e}")
 
+    return notify_summary, f"{start_hh:02d}:{start_mm:02d}"
+
+
+def _is_checklist_complete_for_date(date_iso: str) -> bool:
+    """Sjekker om sjåfør har krysset av alle varelinjer i alle ordrer for dato.
+
+    Speiler frontend-logikken i sjafor.html (_isChecklistComplete) så auto-
+    trigger fyrer på samme tidspunkt som sjåfør ser "Alt klart" i appen.
+    """
+    route = _build_route(date_iso, optimize=False)
+    stops = route.get("stops") or []
+    if not stops:
+        return False
+    checklist = _get_day_state(date_iso).get("checklist") or {}
+    for stop in stops:
+        order_id = str(stop.get("order_id") or "")
+        items = stop.get("items") or []
+        if not items:
+            continue  # ingen linjer å krysse av → auto-ok for denne stoppen
+        checked = set(str(x) for x in (checklist.get(order_id) or []))
+        for it in items:
+            if str(it.get("line_id")) not in checked:
+                return False
+    return True
+
+
+@bp.post("/api/admin/tracking/route/notify")
+def admin_route_notify():
+    """Sender e-post / SMS til alle kundene på dagens rute med deres estimerte
+    leveringstid. Bruker `route_eta`-malen fra customer-notify-config så admin
+    kan styre tekst på Varsel-siden.
+
+    Body:
+      - date: "YYYY-MM-DD" (default: i dag)
+      - start_time: "HH:MM" (valgfritt — overskriver evt. lagret start_clock)
+    """
+    _, err = _admin_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+    start_time_arg = (data.get("start_time") or "").strip()
+
+    summary, start_clock = _run_route_notify(date_iso, start_time_arg)
+    if not summary.get("details") and not summary.get("sent"):
+        return jsonify({"ok": True, "date": date_iso, "notify": summary,
+                        "info": "ingen stopp denne datoen"})
+    # Marker som manuelt sendt så auto-trigger ikke duplicater senere
+    _set_day_state(date_iso, {"tracking_auto_notified_at": int(time.time())})
     return jsonify({"ok": True, "date": date_iso,
-                    "start_time": f"{start_hh:02d}:{start_mm:02d}",
-                    "notify": notify_summary})
+                    "start_time": start_clock,
+                    "notify": summary})
 
 
 @bp.post("/api/admin/tracking/route/reset")
@@ -1967,7 +2004,32 @@ def driver_checklist_set():
     else:
         state.pop(order_id, None)
     _set_day_state(date_iso, {"checklist": state})
-    return jsonify({"ok": True, "date": date_iso, "checklist": state})
+
+    # Auto-send tracking-mail til alle kunder når sjekklisten blir komplett.
+    # Krysser av siste linje = "sjåfør er klar til å kjøre" → kundene skal vite.
+    # Kjører én gang per dato (tracking_auto_notified_at lagres som flagg).
+    auto_notify: dict | None = None
+    day_state = _get_day_state(date_iso)
+    if not day_state.get("tracking_auto_notified_at") and checked_flag:
+        try:
+            if _is_checklist_complete_for_date(date_iso):
+                summary, start_clock = _run_route_notify(date_iso, "")
+                _set_day_state(date_iso, {
+                    "tracking_auto_notified_at": int(time.time()),
+                    "tracking_auto_notify_summary": summary,
+                })
+                auto_notify = {"start_time": start_clock, "notify": summary}
+                print(f"[AUTO-NOTIFY] Sjekkliste komplett {date_iso} → "
+                      f"sent={summary.get('sent', 0)}, "
+                      f"skipped={summary.get('skipped', 0)}, "
+                      f"failed={summary.get('failed', 0)}")
+        except Exception as e:
+            print(f"[AUTO-NOTIFY] feilet for {date_iso}: {e}")
+
+    resp = {"ok": True, "date": date_iso, "checklist": state}
+    if auto_notify:
+        resp["auto_notify"] = auto_notify
+    return jsonify(resp)
 
 
 @bp.get("/api/driver/route/live")
