@@ -2210,15 +2210,50 @@ def _format_order_email_html(order, change_summary="", event=""):
 
     def esc(s): return _html.escape(str(s or ""))
 
+    import re as _re
+    def _grams_from_text(text):
+        if not text:
+            return None
+        m = _re.search(r"(\d+(?:[.,]\d+)?)\s*(kg|g)\b", str(text).lower().replace(",", "."))
+        if not m:
+            return None
+        try:
+            n = float(m.group(1))
+        except ValueError:
+            return None
+        return int(round(n * 1000)) if m.group(2) == "kg" else int(round(n))
+
+    def _qty_text(item):
+        """Vis faktisk bestilt mengde i stedet for "×1" — for f.eks. "Laks filet
+        (ca. 500 g)" med qty=1 blir det "500 g". Stk-varer beholder "×N stk"."""
+        qty = item.get("qty") or item.get("quantity") or item.get("antall") or 1
+        try:
+            qty = float(qty)
+        except (TypeError, ValueError):
+            qty = 1
+        unit = (item.get("unit") or "").lower()
+        variant = item.get("variantLabel") or item.get("variant") or item.get("name") or ""
+        grams = _grams_from_text(variant)
+        if grams and unit != "stk":
+            total = qty * grams
+            if total >= 1000:
+                kg = total / 1000
+                kg_s = f"{kg:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+                return f"{kg_s} kg"
+            return f"{int(total)} g"
+        # Fallback: stk-vare eller manglende vekt — vis qty + enhet
+        qty_int = int(qty) if qty == int(qty) else qty
+        return f"{qty_int} {unit or 'stk'}".strip()
+
     rows = []
     for v in varer:
         name = esc(v.get("name") or v.get("navn") or "?")
-        qty  = v.get("qty") or v.get("quantity") or v.get("antall") or 1
         price = v.get("price") if v.get("price") is not None else v.get("pris")
+        qty_str = esc(_qty_text(v))
         rows.append(
             f'<tr>'
             f'<td style="padding:8px 10px;border-bottom:1px solid #eee;color:#1a1a1a">{name}</td>'
-            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:center;color:#475569">×{esc(qty)}</td>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:center;color:#0f766e;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap">{qty_str}</td>'
             f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right;color:#1a1a1a;font-variant-numeric:tabular-nums">{esc(price)+" kr" if price is not None else ""}</td>'
             f'</tr>'
         )
@@ -3028,6 +3063,11 @@ def api_orders_new():
                 "new_order",
                 f"[Havøyet] Ny bestilling #{data['ordrenr']} — {navn} ({data.get('sum', 0)} kr)",
                 "\n".join(lines),
+                html_body=_format_order_email_html(
+                    data,
+                    "Det er kommet inn en ny bestilling.",
+                    "new_order",
+                ),
             )
         except Exception as e:
             print(f"[ADMIN-NOTIFY] new_order varsel feilet: {e}")

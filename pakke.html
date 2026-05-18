@@ -1930,10 +1930,21 @@ function _guessUnitFromName(name){
   if (/\b\d+\s*g\b/i.test(n))  return 'g';
   if (/\b\d+\s*stk\b/i.test(n)) return 'stk';
   // Tradisjonelle stk-varer (skjell, østers, krabbeklør, hummer, glass, kasse, abonnement)
-  const stkHints = ['østers','hummer','krabbeklør','blåskjell','muslinger','kamskjell','sjøkreps levende','sjøkreps fryst','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff'];
+  const stkHints = ['østers','hummer','krabbeklør','blåskjell','muslinger','kamskjell','sjøkreps levende','sjøkreps fryst','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff','fiskekake','fiskepudding','plukkfisk'];
   for (const h of stkHints) if (n.includes(h)) return 'stk';
   // Fisk/skalldyr i kg er normen
   return 'kg';
+}
+
+// Trekker ut antall gram fra en tekst som "ca. 500 g", "500 g", "1 kg", "1,2 kg".
+// Returnerer antall gram (integer) eller null hvis ingenting matcher.
+function _extractGramsFromText(text){
+  if (!text) return null;
+  const m = String(text).toLowerCase().replace(",", ".").match(/(\d+(?:\.\d+)?)\s*(kg|g)\b/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!isFinite(n)) return null;
+  return m[2] === 'kg' ? Math.round(n * 1000) : Math.round(n);
 }
 
 // Bestemmer om en ordre er manuelt opprettet (admin) — bare disse skal være editerbare,
@@ -1945,9 +1956,32 @@ function _orderIsManual(orderId){
 
 function renderItemQtyEditor(item, i){
   // Mengde og enhet er kun-lesbar her — endringer gjøres i admin-panelet.
-  const qty = (item && (item.qty ?? item.quantity)) ?? 1;
-  const unit = (item && item.unit) || _guessUnitFromName(item && item.name) || 'stk';
-  return `<div class="item-qty-edit readonly" title="Endres i admin-panelet"><span class="qty-num">${qty}</span><span class="qty-unit">${unit}</span></div>`;
+  // Pillen skal vise FAKTISK bestilt mengde, ikke `qty=1`. For fisk/skalldyr
+  // hvor produktet f.eks. heter "Laks filet (ca. 500 g)" og kunden bestilte 1
+  // porsjon, viser vi "500 g" (qty × porsjonsvekt). For stk-varer viser vi qty.
+  const qty = Number((item && (item.qty ?? item.quantity)) ?? 1) || 1;
+  let unit = (item && item.unit) || _guessUnitFromName(item && item.name) || 'stk';
+
+  // Forsøk å hente porsjonsvekt fra variant-felt eller (parantesen i) navnet.
+  const variantText = String(
+    (item && (item.variantLabel || item.variant)) || (item && item.name) || ''
+  );
+  const gramsPerUnit = _extractGramsFromText(variantText);
+
+  let displayQty = String(qty);
+  if (gramsPerUnit && unit !== 'stk') {
+    // Vekt-priset produkt: skaler qty × porsjons-gram. Vis kg når totalen er ≥ 1000.
+    const total = qty * gramsPerUnit;
+    if (total >= 1000) {
+      const kg = total / 1000;
+      displayQty = (Number.isInteger(kg) ? String(kg) : kg.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');
+      unit = 'kg';
+    } else {
+      displayQty = String(total);
+      unit = 'g';
+    }
+  }
+  return `<div class="item-qty-edit readonly" title="Endres i admin-panelet"><span class="qty-num">${displayQty}</span><span class="qty-unit">${unit}</span></div>`;
 }
 
 let _qtySaveTimers = {};
