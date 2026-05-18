@@ -595,6 +595,24 @@
     }
     .opt-badge.ub { background: rgba(245, 158, 11, 0.16); color: #b45309; border-color: rgba(245, 158, 11, 0.45); }
     .opt-badge.us { background: rgba(59, 130, 246, 0.14); color: #1d4ed8; border-color: rgba(59, 130, 246, 0.4); }
+    .item-variants {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 0 18px 10px;
+    }
+    .variant-chip {
+      display: inline-flex; align-items: center;
+      font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 500;
+      letter-spacing: 0.02em; line-height: 1; padding: 4px 9px;
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.04);
+      color: var(--dark);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .variant-chip-lbl {
+      font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted); margin-right: 5px;
+    }
     .repl-price {
       font-size: 11px; font-weight: 500; opacity: 0.75;
     }
@@ -1831,6 +1849,46 @@ function variantOptionBadges(item) {
   return out.join('');
 }
 
+// Bygger en chip-rad med ALLE varianter kunden har valgt på en linje.
+// Leser primært item.selectedOpts (kunde-checkout, keyed) og faller tilbake
+// til variantStr/variantLabel (Shopify-import, slash-separert). Hopper over
+// vekt-segmenter siden vekten allerede vises i qty-pillen til høyre.
+function variantChips(item) {
+  if (!item) return '';
+  const parts = [];
+  const seen = new Set();
+  const push = (v) => {
+    const s = String(v == null ? '' : v).trim();
+    if (!s) return;
+    const k = s.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    parts.push(s);
+  };
+  if (item.selectedOpts && typeof item.selectedOpts === 'object') {
+    for (const [key, val] of Object.entries(item.selectedOpts)) {
+      if (!val) continue;
+      if (/^vekt$/i.test(key)) continue; // vises allerede i qty-pillen
+      push(val);
+    }
+  }
+  const text = item.variantStr || item.variantLabel || item.variant || '';
+  if (text) {
+    String(text).split(/\s*[·/|]\s*/).forEach(seg => {
+      const t = seg.trim();
+      if (!t) return;
+      // Hopp over rene vekt-segmenter ("500 g", "1 kg", "ca. 500 g") — vises i pillen
+      if (/^(ca\.?\s*)?\d+(?:[.,]\d+)?\s*(g|kg|gram)\b/i.test(t)) return;
+      push(t);
+    });
+  }
+  if (!parts.length) return '';
+  return `<div class="item-variants">
+    <span class="variant-chip-lbl">Valgt</span>
+    ${parts.map(v => `<span class="variant-chip">${escHtml(v)}</span>`).join('')}
+  </div>`;
+}
+
 function formatItemName(item) {
   const name = stripWeightSuffix(item.name || '');
   const unit = item.unit || '';
@@ -2110,6 +2168,8 @@ function renderItemCard(item, i, s) {
       </div>
       <button class="btn-reset" title="Sett tilbake til original vare og Tilgjengelig" onclick="resetItem('${currentOrderId}',${i})">↶ Tilbakestill</button>
     </div>
+
+    ${variantChips(item)}
 
     <div class="item-fields ${fieldsVisible}" id="fields-${i}">
       <div class="field-group">
