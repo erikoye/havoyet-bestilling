@@ -371,6 +371,44 @@ def admin_tracking_diagnose():
         critical=False,
     )
 
+    # 6b) Google Maps API — gir mer presis ETA enn OSRM-fallback
+    gkey = (os.environ.get("GOOGLE_MAPS_API_KEY") or "").strip()
+    if not gkey:
+        add(
+            "Google Maps API-key",
+            False,
+            detail="Ikke satt — bruker OSRM som fallback (mindre presis i rushtid)",
+            action="Sett GOOGLE_MAPS_API_KEY env-var på Render",
+            critical=False,
+        )
+    else:
+        # Test mot et kjent punkt (Nesttun-depotet) → Bergen sentrum.
+        # Sjekker BÅDE Geocoding API og Directions API i samme runde.
+        from eta import google_geocode, google_directions_eta
+        gm_ok = False
+        gm_detail = ""
+        try:
+            geo = google_geocode("Nesttunbrekka 95, 5221 Nesttun, Norge")
+            if not geo:
+                gm_detail = "Geocoding API svarer ikke OK — sjekk at 'Geocoding API' er aktivert og at nøkkelen ikke er IP/HTTP-begrenset"
+            else:
+                eta = google_directions_eta(geo[0], geo[1], 60.3913, 5.3221)
+                if not eta or eta.get("source") != "google":
+                    gm_detail = "Directions API svarer ikke OK — sjekk at 'Directions API' er aktivert i samme prosjekt"
+                else:
+                    gm_ok = True
+                    gm_detail = (f"OK — Nesttun→Bergen sentrum: "
+                                 f"{eta['distance_km']} km / {eta['duration_min']} min")
+        except Exception as e:
+            gm_detail = f"Feil under test: {type(e).__name__}: {str(e)[:120]}"
+        add(
+            "Google Maps API-key",
+            gm_ok,
+            detail=gm_detail,
+            action="Aktiver Geocoding API + Directions API i Google Cloud Console",
+            critical=False,
+        )
+
     # 7) SMS-sender koblet
     sms_ready = bool(_state.get("sms_sender"))
     add(
