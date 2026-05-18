@@ -943,7 +943,10 @@ function renderAll(){
   }
   document.getElementById('ordreTabell').innerHTML=sorted.slice(0,10).map(o=>{
     const cls=confClass(o), pct=confPct(o), conf=confCount(o), total=(o.items||[]).length;
-    const slotLabel=o.slot==='a'?'13–15':'15–18';
+    // Prioriter kundens faktiske leveringstid fra checkout — slot a/b er bare
+    // en CSS-fallback for legacy-ordrer uten lagret leveringstid.
+    const directTid = (o.kunde && (o.kunde.leveringstid || '').trim()) || '';
+    const slotLabel = directTid || (o.slot==='a'?'13–15':'15–18');
     const dot=isUnseen(o)?`<span class="unseen-dot" title="Ikke åpnet"></span>`:'';
     const label=cls==='green'?'Klar':`${conf}/${total} varer`;
     return `<tr class="ordre-rad" onclick="location.href='pakke.html?ordre=${encodeURIComponent(o.id)}'" title="Åpne bestilling">
@@ -1124,7 +1127,8 @@ function openDrawer(type){
     ? `<div class="drawer-empty">Ingen ordre i denne kategorien</div>`
     : orders.map(o=>{
         const cls=confClass(o), pct=confPct(o), conf=confCount(o), total=(o.items||[]).length;
-        const slot=o.slot==='a'?'13–15':'15–18';
+        const directTid = (o.kunde && (o.kunde.leveringstid || '').trim()) || '';
+        const slot = directTid || (o.slot==='a'?'13–15':'15–18');
         const d=new Date((o.delivery||todayISO)+'T00:00:00');
         const dateStr=d.toLocaleDateString('nb-NO',{weekday:'short',day:'numeric',month:'short'});
         const unseenMark=isUnseen(o)?`<div class="drawer-unseen-badge"></div>`:'';
