@@ -1132,7 +1132,7 @@ function initKasseComponents(kasseInfo, item) {
         name: navn,
         weight: '', expiry: '',
         weightUnit: unit === 'kg' ? 'g' : unit,
-        avail: null, replacements: [], confirmedReplacement: null,
+        avail: 'unsure', replacements: [], confirmedReplacement: null,
         expected: qty > 1 ? `${qty} ${unit}` : (unit === 'stk' ? '1 stk' : ''),
       };
     });
@@ -1146,7 +1146,7 @@ function initKasseComponents(kasseInfo, item) {
       name: c.name,
       weight: '', expiry: '',
       weightUnit: c.unit || 'g',
-      avail: null, replacements: [], confirmedReplacement: null,
+      avail: 'unsure', replacements: [], confirmedReplacement: null,
       expected: expectedGrams ? `${expectedGrams} g` : (expectedStk ? `${expectedStk} stk` : ''),
     };
   });
@@ -1161,7 +1161,7 @@ function initState(orders) {
         if (k) {
           return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k, item), itemComment: '' };
         }
-        return { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
+        return { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:'unsure', replacements:[], confirmedReplacement:null, itemComment:'' };
       });
     } else {
       // Bakoverkompatibilitet: fyll inn kasse-state hvis det mangler på en eksisterende ordre,
@@ -1173,7 +1173,7 @@ function initState(orders) {
         if (k && (!entry || !entry.isKasse)) {
           STATE[o.id][i] = { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k, item), itemComment: entry?.itemComment || '' };
         } else if (!entry) {
-          STATE[o.id][i] = { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
+          STATE[o.id][i] = { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:'unsure', replacements:[], confirmedReplacement:null, itemComment:'' };
         }
       });
       // Trim bort STATE-entries for varer som er fjernet i den oppdaterte ordren.
@@ -1181,6 +1181,22 @@ function initState(orders) {
         STATE[o.id].length = (o.items || []).length;
       }
     }
+  });
+  // Migrer eksisterende null-avail til 'unsure' (Avventer fiskebåt) for
+  // konsistens med ny default. Tidligere lagret state har avail:null som
+  // brukes til å vise "ikke valgt" — den endres nå til den eksplisitte
+  // "avventer"-statusen så ordren alltid starter på en konkret status.
+  Object.values(STATE).forEach(arr => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach(entry => {
+      if (!entry) return;
+      if (entry.avail === null || entry.avail === undefined) entry.avail = 'unsure';
+      if (entry.isKasse && Array.isArray(entry.components)) {
+        entry.components.forEach(c => {
+          if (c && (c.avail === null || c.avail === undefined)) c.avail = 'unsure';
+        });
+      }
+    });
   });
 }
 
@@ -2054,7 +2070,7 @@ function renderItemCard(item, i, s) {
   // Defensiv default — beskytter mot s={} når en oppdatert ordre har
   // flere items enn STATE rakk å initialisere (rev .map på undefined).
   s = Object.assign(
-    { weight:'', expiry:'', weightUnit:item?.unit || 'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' },
+    { weight:'', expiry:'', weightUnit:item?.unit || 'g', avail:'unsure', replacements:[], confirmedReplacement:null, itemComment:'' },
     s || {}
   );
   if (!Array.isArray(s.replacements)) s.replacements = [];
@@ -2286,7 +2302,7 @@ function restoreState() {
             }
             return entry;
           }
-          return entry || { weight:'', expiry:'', weightUnit:'g', avail:null, replacements:[], confirmedReplacement:null, itemComment:'' };
+          return entry || { weight:'', expiry:'', weightUnit:'g', avail:'unsure', replacements:[], confirmedReplacement:null, itemComment:'' };
         });
         STATE[id] = merged;
         // Bakoverkompatibilitet for vanlige items
