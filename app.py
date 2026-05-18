@@ -8086,6 +8086,32 @@ try:
 except Exception as _e:
     print(f"[BOOT-WSGI] _load_subscriptions feilet: {_e}")
 
+_NORSK_DAGER = ("søndag","mandag","tirsdag","onsdag","torsdag","fredag","lørdag")
+_NORSK_MND   = ("januar","februar","mars","april","mai","juni","juli","august",
+                "september","oktober","november","desember")
+
+
+def _fmt_levdag_for_eta(iso_str: str) -> tuple[str, str]:
+    """Tar en ISO-dato ('2026-05-19') og returnerer (full, kort).
+       full  → 'tirsdag 19. mai'
+       kort  → 'i dag' / 'i morgen' / 'tirsdag 19. mai'
+       Begge tomme strenger hvis input ikke er en gyldig dato.
+    """
+    if not iso_str:
+        return "", ""
+    try:
+        d = datetime.strptime(iso_str.strip()[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return "", ""
+    today = date.today()
+    full = f"{_NORSK_DAGER[(d.weekday() + 1) % 7]} {d.day}. {_NORSK_MND[d.month - 1]}"
+    diff = (d - today).days
+    if diff == 0: kort = "i dag"
+    elif diff == 1: kort = "i morgen"
+    else: kort = full
+    return full, kort
+
+
 def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str) -> tuple[bool, str]:
     """Send leveringstids-varsling til en kunde basert på route_eta-mal.
 
@@ -8107,18 +8133,24 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str)
     epost = (kunde.get("epost") or kunde.get("email") or "").strip()
     tlf   = (kunde.get("tlf") or kunde.get("phone") or order.get("phone") or "").strip()
 
+    levdag_iso = (kunde.get("leveringsdag") or order.get("delivery") or "").strip()
+    leveringsdato_full, leveringsdato_kort = _fmt_levdag_for_eta(levdag_iso)
+
     tmpl_vars = {
         "navn": navn or "kunde",
         "ordrenr": nr,
         "eta_clock": eta_clock or "—",
         "tracking_url": tracking_url or "",
         "kontolenke": f"{PUBLIC_SITE_URL}/konto",
+        "leveringsdag": levdag_iso,
+        "leveringsdato": leveringsdato_full,
+        "leveringsdato_kort": leveringsdato_kort,
     }
     subject = _kv_render(cfg.get("subject"), **tmpl_vars) or (
         f"Estimert leveringstid for bestilling #{nr} — Havøyet"
     )
     body_template = cfg.get("body") or (
-        "Hei {navn},\n\nVi leverer bestillingen din #{ordrenr} i dag "
+        "Hei {navn},\n\nVi leverer bestillingen din #{ordrenr} {leveringsdato_kort} "
         "ca. kl. {eta_clock}.\n\nFølg live: {tracking_url}\n\n— Havøyet"
     )
     body = _kv_render(body_template, **tmpl_vars)
