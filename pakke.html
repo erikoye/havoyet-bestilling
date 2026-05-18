@@ -1930,7 +1930,9 @@ function _guessUnitFromName(name){
   if (/\b\d+\s*g\b/i.test(n))  return 'g';
   if (/\b\d+\s*stk\b/i.test(n)) return 'stk';
   // Tradisjonelle stk-varer (skjell, østers, krabbeklør, hummer, glass, kasse, abonnement)
-  const stkHints = ['østers','hummer','krabbeklør','blåskjell','muslinger','kamskjell','sjøkreps levende','sjøkreps fryst','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff','fiskekake','fiskepudding','plukkfisk'];
+  // Fiskekaker er IKKE stk — det er kilo-priset (kind=fish i data2.jsx).
+  // Plukkfisk (Bergens plukkfisk) er stk-priset (kind=unit) → beholdes som stk-hint.
+  const stkHints = ['østers','hummer','krabbeklør','blåskjell','muslinger','kamskjell','sjøkreps levende','sjøkreps fryst','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff','plukkfisk'];
   for (const h of stkHints) if (n.includes(h)) return 'stk';
   // Fisk/skalldyr i kg er normen
   return 'kg';
