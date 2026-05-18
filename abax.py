@@ -69,7 +69,23 @@ class AbaxClient:
         return bool(self.client_id and self.client_secret and self.redirect_uri)
 
     def is_connected(self) -> bool:
-        return self._token_path.exists()
+        """Returnerer True hvis vi har en token-fil med en brukbar sesjon.
+
+        Brukbar = enten refresh_token (kan fornye), eller ikke-utløpt access_token.
+        Token-fil uten refresh_token + utløpt access_token regnes som FRAKOBLET,
+        så sjekklisten flagger riktig og admin får beskjed om å re-OAuth.
+        """
+        if not self._token_path.exists():
+            return False
+        try:
+            tokens = self._load_tokens()
+        except Exception:
+            return False
+        if tokens.get("refresh_token"):
+            return True
+        now = int(time.time())
+        expires_at = int(tokens.get("expires_at") or 0)
+        return bool(tokens.get("access_token")) and now < expires_at - _GUARD_SEC
 
     def status(self) -> dict:
         st = {
