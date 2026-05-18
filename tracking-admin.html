@@ -129,10 +129,66 @@
 
 </div>
 
+<!-- Login-overlay (vises hvis admin ikke er logget inn) -->
+<div id="login-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:center;justify-content:center;padding:18px">
+  <form id="login-form" style="background:#fff;border-radius:12px;padding:24px;min-width:320px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <h2 style="margin:0 0 8px;color:#1A3A5C;font-size:20px">Logg inn som admin</h2>
+    <p class="muted" style="margin:0 0 16px">Tracking-oppsettet krever admin-tilgang.</p>
+    <input type="email" id="login-email" placeholder="E-post" autocomplete="email" required autofocus
+           style="width:100%;margin-bottom:8px;padding:10px 12px;border:1px solid #E4DDD0;border-radius:8px;font-size:14px">
+    <input type="password" id="login-password" placeholder="Passord" autocomplete="current-password" required
+           style="width:100%;margin-bottom:12px;padding:10px 12px;border:1px solid #E4DDD0;border-radius:8px;font-size:14px">
+    <div id="login-err" style="display:none;color:#B33A3A;font-size:13px;margin-bottom:10px"></div>
+    <button type="submit" class="btn-primary" style="width:100%;padding:11px 14px">Logg inn</button>
+  </form>
+</div>
+
 <div id="toast" class="toast" style="display:none"></div>
 
 <script>
   const $ = (id) => document.getElementById(id);
+
+  // Admin-token (samme nøkkel som betalinger.html / andre admin-HTML-sider på bestilling.havoyet.no)
+  const TOKEN_KEY = "hv_admin_token";
+  const getToken   = () => localStorage.getItem(TOKEN_KEY) || "";
+  const setToken   = (t) => localStorage.setItem(TOKEN_KEY, t);
+  const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+  function showLogin() { $("login-overlay").style.display = "flex"; }
+  function hideLogin() { $("login-overlay").style.display = "none"; }
+
+  async function doLogin(ev) {
+    ev.preventDefault();
+    const email = $("login-email").value.trim().toLowerCase();
+    const password = $("login-password").value;
+    const errEl = $("login-err");
+    errEl.style.display = "none";
+    try {
+      const r = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok || !d.token) {
+        errEl.textContent = d.error || "Feil e-post eller passord";
+        errEl.style.display = "block";
+        return;
+      }
+      if (d.user && d.user.role !== "admin") {
+        errEl.textContent = "Bare admin har tilgang her.";
+        errEl.style.display = "block";
+        return;
+      }
+      setToken(d.token);
+      hideLogin();
+      bootApp();
+    } catch (e) {
+      errEl.textContent = "Kunne ikke kontakte server.";
+      errEl.style.display = "block";
+    }
+  }
+  document.getElementById("login-form").addEventListener("submit", doLogin);
 
   function toast(msg, kind = "") {
     const t = $("toast");
@@ -144,6 +200,8 @@
 
   async function api(path, opts = {}) {
     const init = { credentials: "include", headers: { Accept: "application/json" } };
+    const tok = getToken();
+    if (tok) init.headers["Authorization"] = "Bearer " + tok;
     if (opts.method) init.method = opts.method;
     if (opts.body !== undefined) {
       init.headers["Content-Type"] = "application/json";
@@ -152,6 +210,11 @@
     const r = await fetch(path, init);
     let data = null;
     try { data = await r.json(); } catch (_) {}
+    // Token utløpt eller mangler → vis login (men ikke under selve OAuth-callback)
+    if ((r.status === 401 || r.status === 403) && !opts._silent) {
+      clearToken();
+      showLogin();
+    }
     return { ok: r.ok, status: r.status, data };
   }
 
@@ -293,9 +356,19 @@
     await refreshDiagnose();
   };
 
-  refreshStatus();
-  // Auto-refresh hvert 20s mens admin har siden åpen
-  setInterval(refreshDiagnose, 20000);
+  let _diagnoseTimer = null;
+  function bootApp() {
+    refreshStatus();
+    // Auto-refresh hvert 20s mens admin har siden åpen
+    if (_diagnoseTimer) clearInterval(_diagnoseTimer);
+    _diagnoseTimer = setInterval(refreshDiagnose, 20000);
+  }
+
+  if (getToken()) {
+    bootApp();
+  } else {
+    showLogin();
+  }
 </script>
 </body>
 </html>
