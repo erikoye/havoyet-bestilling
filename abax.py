@@ -209,11 +209,15 @@ class AbaxClient:
         return []
 
     def get_position(self, vehicle_id: str) -> Optional[dict]:
-        """Live-posisjon for et kjøretøy via POST /v1/vehicles/locations."""
+        """Live-posisjon for et kjøretøy via POST /v1/vehicles/locations.
+
+        ABAX-API forventer feltet `ids` i payload (ikke `vehicleIds`).
+        Tidligere navn ga HTTP 400 "'Ids' must not be empty".
+        """
         raw = self._request(
             "POST",
             "vehicles/locations",
-            json={"vehicleIds": [vehicle_id]},
+            json={"ids": [vehicle_id]},
         )
         item = _first_item_for_vehicle(raw, vehicle_id)
         if item is None:
@@ -258,7 +262,7 @@ class AbaxClient:
             raw = self._request(
                 "POST",
                 "vehicles/drive-states",
-                json={"vehicleIds": [vehicle_id]},
+                json={"ids": [vehicle_id]},
             )
         except AbaxError:
             return None
