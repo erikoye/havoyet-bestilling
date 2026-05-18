@@ -91,13 +91,33 @@
   </div>
 </div>
 
-<!-- Ordre + tracking-link -->
+<!-- Send til hele dagens rute (primær flyt) -->
+<div class="card" style="border-left:4px solid var(--gold)">
+  <h2>Send tracking-link til alle stopp i dag</h2>
+  <p class="muted">Genererer tracking-token og sender e-post/SMS til <strong>alle kunder på dagens rute</strong> med deres estimerte leveringstid og live-link.</p>
+  <div class="row">
+    <label class="muted" for="route-date">Dato:</label>
+    <input type="date" id="route-date" style="min-width:150px">
+    <label class="muted" for="route-start">Avreise:</label>
+    <input type="text" id="route-start" placeholder="HH:MM (valgfritt)" style="width:130px">
+    <button id="btn-notify-route" class="btn-primary">Send til hele ruten</button>
+  </div>
+  <p class="muted" style="margin:8px 0 0;font-size:12px">
+    Tomt avreise-felt = bruker lagret start-tid eller leveringstid på første stopp.
+  </p>
+  <div id="route-result" hidden style="margin-top:14px;padding:12px;background:var(--bg);border-radius:8px">
+    <strong id="route-result-headline"></strong>
+    <ul id="route-result-list" style="margin:8px 0 0;padding-left:18px;font-size:13px"></ul>
+  </div>
+</div>
+
+<!-- Single-ordre (backup-flyt) -->
 <div class="card">
-  <h2>Send tracking-link til kunde</h2>
-  <p class="muted">Skriv inn ordrenummer for å generere en lenke kunden kan åpne for å se sanntids-ETA.</p>
+  <h2>Eller: send til én ordre manuelt</h2>
+  <p class="muted">Skriv inn ordrenummer for å generere lenken til én spesifikk kunde (f.eks. for re-sending).</p>
   <div class="row">
     <input type="text" id="order-id" placeholder="Ordrenr (f.eks. 1234)" style="min-width:160px">
-    <button id="btn-make-link" class="btn-primary">Generer lenke</button>
+    <button id="btn-make-link" class="btn-secondary">Generer lenke</button>
   </div>
   <div id="link-result" hidden style="margin-top:12px">
     <strong>Tracking-lenke for ordre <span id="result-order"></span>:</strong>
@@ -327,6 +347,50 @@
     inp.select();
     inp.setSelectionRange(0, 999);
     navigator.clipboard.writeText(inp.value).then(() => toast("Kopiert", "ok"));
+  };
+
+  // Sett standard dato til i dag
+  (function initRouteDate() {
+    const today = new Date().toISOString().slice(0, 10);
+    $("route-date").value = today;
+  })();
+
+  $("btn-notify-route").onclick = async () => {
+    const date = $("route-date").value || "";
+    const start = $("route-start").value.trim();
+    if (!confirm(`Sende tracking-link til ALLE kunder på ruten ${date}?\n\nDette går ikke an å angre.`)) return;
+
+    const btn = $("btn-notify-route");
+    btn.disabled = true;
+    btn.textContent = "Sender …";
+    try {
+      const body = { date };
+      if (start) body.start_time = start;
+      const r = await api("/api/admin/tracking/route/notify", { method: "POST", body });
+      if (!r.ok) {
+        toast(r.data?.error || "Feil ved sending", "err");
+        return;
+      }
+      const s = r.data?.notify || {};
+      const box = $("route-result");
+      box.hidden = false;
+      $("route-result-headline").textContent =
+        `${s.sent || 0} sendt · ${s.skipped || 0} hoppet over · ${s.failed || 0} feilet`;
+      const list = $("route-result-list");
+      list.innerHTML = (s.details || []).map(d => {
+        const ok = d.result === "ok";
+        const icon = ok ? "✓" : (d.result === "no-phone" || d.result === "opted-out" ? "○" : "✗");
+        const color = ok ? "#2F7A4F" : "#B33A3A";
+        return `<li><span style="color:${color};font-weight:700">${icon}</span>
+                Ordre ${d.order_id}${d.eta_clock ? " ("+d.eta_clock+")" : ""} — ${d.result}</li>`;
+      }).join("");
+      toast(`${s.sent || 0} tracking-link sendt`, "ok");
+    } catch (e) {
+      toast("Nettverksfeil: " + e.message, "err");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Send til hele ruten";
+    }
   };
 
   // ── Diagnose-panel ────────────────────────────────────────────────
