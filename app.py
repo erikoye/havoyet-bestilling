@@ -675,6 +675,15 @@ _product_overrides = {}
 # custom=admin-opprettede ekstra-kategorier (utover de hardkodede i admin.html)
 _category_config = {"hidden": [], "custom": []}
 _reviews = []  # [{id, slug, name, rating, text, date}]
+# Faktura-konfig styrt fra admin: kontonr, orgnr, forfallsdager.
+# Synket cross-device så ulike admin-enheter ikke ender med ulik info
+# på PDF-fakturaer som genereres for kundene.
+_INVOICE_CONFIG_DEFAULTS = {
+    "bankAccount": "1520.16.87214",
+    "orgNr":       "934 859 197 MVA",  # Havøyet AS
+    "paymentDays": 14,
+}
+_invoice_config = dict(_INVOICE_CONFIG_DEFAULTS)
 _customer_favorites = {}  # email → [slug, slug, ...]
 _admin_notifiers = []  # [{id, name, email, events:[...], created_at}]
 # Kunde-varsler-konfig: styres fra admin.html "Kunde-varsler"-seksjonen.
@@ -835,6 +844,7 @@ def _save_sync_state():
             "customer_favorites":  _customer_favorites,
             "admin_notifiers":     _admin_notifiers,
             "customer_notify_config": _customer_notify_config,
+            "invoice_config":      _invoice_config,
             "customers":           _customers,
             "vipps_imported_payments": _vipps_imported_payments,
             "card_payments_imported":  _card_payments_imported,
@@ -914,7 +924,7 @@ def _restore_vipps_baseline():
 
 def _load_sync_state():
     """Load cross-device sync state from disk on startup."""
-    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _category_config, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts, _abandoned_carts, _order_tombstones
+    global _manual_orders, _hidden_orders, _overrides, _packing_state, _order_notes, _product_overrides, _category_config, _reviews, _customer_favorites, _admin_notifiers, _customer_notify_config, _invoice_config, _customers, _vipps_imported_payments, _card_payments_imported, _auth_users, _auth_sessions, _subscribers, _discounts, _abandoned_carts, _order_tombstones
     if not os.path.exists(SYNC_STATE_FILE):
         _seed_auth_users()
         _restore_vipps_baseline()
@@ -944,6 +954,17 @@ def _load_sync_state():
             if k in merged_kvc and isinstance(v, dict):
                 merged_kvc[k].update(v)
         _customer_notify_config = merged_kvc
+        saved_inv = d.get("invoice_config") or {}
+        merged_inv = dict(_INVOICE_CONFIG_DEFAULTS)
+        if isinstance(saved_inv, dict):
+            for k in ("bankAccount", "orgNr", "paymentDays"):
+                if k in saved_inv and saved_inv[k] not in (None, ""):
+                    merged_inv[k] = saved_inv[k]
+        try:
+            merged_inv["paymentDays"] = int(merged_inv["paymentDays"])
+        except (TypeError, ValueError):
+            merged_inv["paymentDays"] = _INVOICE_CONFIG_DEFAULTS["paymentDays"]
+        _invoice_config = merged_inv
         _customers          = d.get("customers", [])
         _vipps_imported_payments = d.get("vipps_imported_payments", {}) or {}
         _card_payments_imported  = d.get("card_payments_imported", {}) or {}
@@ -1246,6 +1267,33 @@ def api_product_override(slug):
     _product_overrides[slug] = existing
     _save_sync_state()
     return jsonify({"ok": True, "slug": slug, "override": existing})
+
+
+@app.route("/api/admin/invoice-config", methods=["GET", "PUT"])
+def api_invoice_config():
+    """Faktura-konfig (bankkonto, orgnr, forfallsdager) styrt fra admin.
+    Synket cross-device så alle admin-enheter genererer PDF-fakturaer med
+    samme info. Defaults fra _INVOICE_CONFIG_DEFAULTS gjelder hvis ingen
+    har lagret noe enda."""
+    global _invoice_config
+    if request.method == "GET":
+        return jsonify(_invoice_config or dict(_INVOICE_CONFIG_DEFAULTS))
+    payload = request.get_json(force=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Forventer JSON-objekt"}), 400
+    cur = dict(_invoice_config or _INVOICE_CONFIG_DEFAULTS)
+    if "bankAccount" in payload and payload["bankAccount"] not in (None, ""):
+        cur["bankAccount"] = str(payload["bankAccount"]).strip()
+    if "orgNr" in payload and payload["orgNr"] not in (None, ""):
+        cur["orgNr"] = str(payload["orgNr"]).strip()
+    if "paymentDays" in payload and payload["paymentDays"] not in (None, ""):
+        try:
+            cur["paymentDays"] = int(payload["paymentDays"])
+        except (TypeError, ValueError):
+            pass
+    _invoice_config = cur
+    _save_sync_state()
+    return jsonify({"ok": True, "config": _invoice_config})
 
 
 @app.route("/api/categories/config", methods=["GET", "PUT"])
