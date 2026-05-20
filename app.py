@@ -5764,6 +5764,9 @@ def _public_user(u):
         "hasPassword": bool(u.get("password_hash")),
         "createdAt": u.get("created_at"),
         "isNewsletterSubscriber": is_subscriber,
+        # BSF = Bergen Seilforening. 'none' | 'pending' | 'approved' | 'rejected'.
+        # Settes ved registrering (selvrapportert → pending). Admin godkjenner.
+        "bsfMemberStatus": u.get("bsf_member_status") or "none",
     }
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -5909,12 +5912,16 @@ def api_customer_auth_register():
         return jsonify({"ok": False, "error": "Passordet må være minst 8 tegn"}), 400
     if _find_user(email):
         return jsonify({"ok": False, "error": "E-posten er allerede registrert. Logg inn i stedet."}), 409
+    # BSF-medlemskap: selvrapportert ved registrering → status 'pending'
+    # til admin godkjenner. Standardverdi 'none' hvis ikke huket av.
+    bsf_member = bool(data.get("bsf_member"))
     new_user = {
         "email": email,
         "role": "customer",
         "password_hash": generate_password_hash(password),
         "must_set_password": False,
         "created_at": int(time.time()),
+        "bsf_member_status": "pending" if bsf_member else "none",
     }
     _auth_users.append(new_user)
     token = secrets.token_urlsafe(32)
@@ -5925,6 +5932,24 @@ def api_customer_auth_register():
     }
     _save_sync_state()
     return jsonify({"ok": True, "token": token, "user": _public_user(new_user)})
+
+
+@app.route("/api/auth/users/<path:user_email>/bsf-status", methods=["PATCH"])
+def api_set_bsf_status(user_email):
+    """Admin endrer BSF-medlemskap-status. Body: {status: 'approved'|'rejected'|'pending'|'none'}."""
+    if not _is_admin_request():
+        return jsonify({"error": "Mangler admin-token"}), 401
+    target = (user_email or "").strip().lower()
+    u = _find_user(target)
+    if not u:
+        return jsonify({"error": "Ukjent bruker"}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    status = (data.get("status") or "").strip().lower()
+    if status not in ("none", "pending", "approved", "rejected"):
+        return jsonify({"error": "Ugyldig status"}), 400
+    u["bsf_member_status"] = status
+    _save_sync_state()
+    return jsonify({"ok": True, "user": _public_user(u)})
 
 @app.route("/api/auth/me/password", methods=["POST"])
 def api_auth_me_password():
@@ -7967,21 +7992,117 @@ def _is_discount_currently_active(d):
         return False
     if slutt and today > slutt:
         return False
+    # max_uses: hvis satt, sjekk at brukstelling ikke er nådd
+    max_uses = d.get("max_uses")
+    if max_uses is not None:
+        try:
+            if int(d.get("uses") or 0) >= int(max_uses):
+                return False
+        except (TypeError, ValueError):
+            pass
     return True
 
 
+def _is_bsf_approved(email):
+    """True hvis brukeren er godkjent Bergen Seilforening-medlem."""
+    if not email:
+        return False
+    u = _find_user(email)
+    return bool(u and u.get("bsf_member_status") == "approved")
+
+
+def _discount_applies_to_user(d, email):
+    """Sjekker om rabatten gjelder for denne brukeren basert på target_type.
+    target_type: 'anyone' (default) | 'email' (en bestemt bruker) | 'bsf_member' (godkjent BSF-medlem) | 'newsletter' (legacy = kun_nyhetsbrev)."""
+    tt = d.get("target_type")
+    # Backward-compat: gamle rabatter har kun_nyhetsbrev-flagg
+    if not tt:
+        tt = "newsletter" if d.get("kun_nyhetsbrev") else "anyone"
+    if tt == "anyone":
+        return True
+    if tt == "newsletter":
+        return bool(email and _is_active_subscriber(email))
+    if tt == "bsf_member":
+        return _is_bsf_approved(email)
+    if tt == "email":
+        target = (d.get("target_email") or "").strip().lower()
+        return bool(email and target and email.strip().lower() == target)
+    return False
+
+
 def _active_discounts_for(user_email=None):
-    """Returnerer rabatter som faktisk gjelder akkurat nå. Filtrerer på
-    kun_nyhetsbrev hvis user_email enten er None eller ikke aktiv abonnent."""
-    is_sub = bool(user_email and _is_active_subscriber(user_email))
+    """Returnerer rabatter som faktisk gjelder akkurat nå for den gitte brukeren.
+    Tar hensyn til target_type (anyone/email/bsf_member/newsletter)."""
     out = []
     for d in _discounts:
         if not _is_discount_currently_active(d):
             continue
-        if d.get("kun_nyhetsbrev") and not is_sub:
+        if not _discount_applies_to_user(d, user_email):
             continue
         out.append(d)
     return out
+
+
+def _normalize_code(s):
+    return (s or "").strip().upper()
+
+
+def _find_discount_by_code(code):
+    code_n = _normalize_code(code)
+    if not code_n:
+        return None
+    for d in _discounts:
+        if _normalize_code(d.get("code")) == code_n:
+            return d
+    return None
+
+
+@app.route("/api/discounts/validate", methods=["POST"])
+def api_discounts_validate():
+    """Validerer en rabattkode oppgitt i kassen.
+    Body: {code, email?, product_handles?: [..]}.
+    Returnerer {ok, discount, applies_to_handles[]} hvis gyldig, ellers {ok:false, error}."""
+    data = request.get_json(force=True, silent=True) or {}
+    code = _normalize_code(data.get("code"))
+    email = _normalize_email(data.get("email"))
+    if not code:
+        return jsonify({"ok": False, "error": "Mangler rabattkode"}), 400
+    d = _find_discount_by_code(code)
+    if not d:
+        return jsonify({"ok": False, "error": "Ukjent rabattkode"}), 404
+    if not _is_discount_currently_active(d):
+        return jsonify({"ok": False, "error": "Rabattkoden er utløpt eller ikke aktiv"}), 410
+    if not _discount_applies_to_user(d, email):
+        return jsonify({"ok": False, "error": "Denne koden gjelder ikke for kontoen din"}), 403
+    # Filtrer hvilke handles fra ordren rabatten gjelder for
+    cart_handles = data.get("product_handles") or []
+    applies_to = (d.get("applies_to") or "all").lower()
+    if applies_to == "products":
+        allowed = set([(h or "").strip().lower() for h in (d.get("product_handles") or [])])
+        matching = [h for h in cart_handles if (h or "").strip().lower() in allowed]
+    else:
+        matching = list(cart_handles)
+    return jsonify({"ok": True, "discount": d, "applies_to_handles": matching})
+
+
+@app.route("/api/discounts/<discount_id>/mark-used", methods=["POST"])
+def api_discount_mark_used(discount_id):
+    """Øker uses-teller når en kode faktisk brukes i en ordre. Idempotent
+    på order_id hvis sendt (lagres i used_order_ids så samme ordre ikke
+    teller dobbelt ved retry)."""
+    d = next((x for x in _discounts if x.get("id") == discount_id), None)
+    if not d:
+        return jsonify({"error": "Ikke funnet"}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    order_id = (data.get("order_id") or "").strip()
+    used_ids = d.setdefault("used_order_ids", [])
+    if order_id and order_id in used_ids:
+        return jsonify({"ok": True, "discount": d, "already_counted": True})
+    if order_id:
+        used_ids.append(order_id)
+    d["uses"] = int(d.get("uses") or 0) + 1
+    _save_sync_state()
+    return jsonify({"ok": True, "discount": d})
 
 
 @app.route("/api/discounts/active", methods=["GET"])
@@ -8006,15 +8127,52 @@ def api_discounts_root():
     if not _is_admin_request():
         return jsonify({"error": "Mangler admin-token"}), 401
     data = request.get_json(force=True, silent=True) or {}
-    handle = (data.get("handle") or "").strip()
-    if not handle:
-        return jsonify({"error": "Mangler produkt-handle"}), 400
     try:
         prosent = float(data.get("prosent") or 0)
     except (TypeError, ValueError):
         return jsonify({"error": "Ugyldig prosent"}), 400
     if prosent <= 0 or prosent >= 100:
         return jsonify({"error": "Prosent må være mellom 1 og 99"}), 400
+    # Nye felter: applies_to ('all'|'products'), product_handles[], code,
+    # target_type ('anyone'|'email'|'bsf_member'|'newsletter'), target_email,
+    # max_uses. Backward-compat: 'handle' beholdes som single-produkt for
+    # nyhetsbrev-rabatter; nye rabatter bruker applies_to+product_handles.
+    applies_to = (data.get("applies_to") or "").strip().lower()
+    product_handles = data.get("product_handles") or []
+    single_handle = (data.get("handle") or "").strip()
+    if not applies_to:
+        applies_to = "products" if (single_handle or product_handles) else "all"
+    if applies_to == "products":
+        if not product_handles and single_handle:
+            product_handles = [single_handle]
+        product_handles = [str(h).strip() for h in product_handles if str(h).strip()]
+        if not product_handles:
+            return jsonify({"error": "Mangler produkter (applies_to=products)"}), 400
+    else:
+        product_handles = []
+    target_type = (data.get("target_type") or "").strip().lower()
+    if not target_type:
+        target_type = "newsletter" if data.get("kun_nyhetsbrev", False) else "anyone"
+    if target_type not in ("anyone", "email", "bsf_member", "newsletter"):
+        return jsonify({"error": "Ugyldig target_type"}), 400
+    target_email = ""
+    if target_type == "email":
+        target_email = _normalize_email(data.get("target_email"))
+        if not target_email:
+            return jsonify({"error": "Mangler target_email"}), 400
+    code = _normalize_code(data.get("code"))
+    if code and _find_discount_by_code(code):
+        return jsonify({"error": "Rabattkoden finnes allerede"}), 409
+    max_uses = data.get("max_uses")
+    if max_uses not in (None, ""):
+        try:
+            max_uses = int(max_uses)
+            if max_uses <= 0:
+                max_uses = None
+        except (TypeError, ValueError):
+            max_uses = None
+    else:
+        max_uses = None
     start = (data.get("start") or _today_str()).strip()
     slutt = (data.get("slutt") or "").strip()
     if not _valid_date(start):
@@ -8024,12 +8182,20 @@ def api_discounts_root():
     now = datetime.now().isoformat()
     new = {
         "id": "d_" + _uuid.uuid4().hex[:12],
-        "handle": handle,
+        "handle": single_handle or (product_handles[0] if product_handles else ""),
+        "applies_to": applies_to,
+        "product_handles": product_handles,
+        "code": code or None,
+        "target_type": target_type,
+        "target_email": target_email or None,
+        "max_uses": max_uses,
+        "uses": 0,
+        "used_order_ids": [],
         "prosent": prosent,
         "start": start,
         "slutt": slutt or None,
         "beskrivelse": (data.get("beskrivelse") or "").strip()[:200],
-        "kun_nyhetsbrev": bool(data.get("kun_nyhetsbrev", True)),
+        "kun_nyhetsbrev": target_type == "newsletter",
         "aktiv": bool(data.get("aktiv", True)),
         "kilde_newsletter_id": (data.get("kilde_newsletter_id") or None),
         "created_at": now,
@@ -8071,6 +8237,38 @@ def api_discounts_modify(discount_id):
     for f in ("kun_nyhetsbrev", "aktiv"):
         if f in data:
             d[f] = bool(data[f])
+    # Nye felter
+    if "applies_to" in data:
+        v = (data["applies_to"] or "").strip().lower()
+        if v in ("all", "products"):
+            d["applies_to"] = v
+    if "product_handles" in data and isinstance(data["product_handles"], list):
+        d["product_handles"] = [str(h).strip() for h in data["product_handles"] if str(h).strip()]
+    if "code" in data:
+        new_code = _normalize_code(data["code"]) or None
+        if new_code and new_code != _normalize_code(d.get("code")):
+            existing = _find_discount_by_code(new_code)
+            if existing and existing.get("id") != d.get("id"):
+                return jsonify({"error": "Rabattkoden finnes allerede"}), 409
+        d["code"] = new_code
+    if "target_type" in data:
+        v = (data["target_type"] or "").strip().lower()
+        if v in ("anyone", "email", "bsf_member", "newsletter"):
+            d["target_type"] = v
+            if v == "newsletter":
+                d["kun_nyhetsbrev"] = True
+    if "target_email" in data:
+        d["target_email"] = _normalize_email(data["target_email"]) or None
+    if "max_uses" in data:
+        v = data["max_uses"]
+        if v in (None, ""):
+            d["max_uses"] = None
+        else:
+            try:
+                mv = int(v)
+                d["max_uses"] = mv if mv > 0 else None
+            except (TypeError, ValueError):
+                pass
     d["updated_at"] = now
     _save_sync_state()
     return jsonify({"ok": True, "discount": d})
