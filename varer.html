@@ -69,34 +69,26 @@
     .group-title{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:18px 4px 10px;}
     .group-title:first-child{margin-top:0;}
 
-    .product-row{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:8px;display:flex;flex-direction:column;gap:12px;transition:.15s;box-shadow:var(--shadow-sm);}
-    .product-row.dim{opacity:0.55;}
-    .pr-top{display:flex;align-items:center;gap:12px;}
+    .product-row{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:14px;transition:.15s;box-shadow:var(--shadow-sm);}
+    .product-row.dim{opacity:0.6;background:var(--surface-2);}
     .pr-info{flex:1;min-width:0;}
     .pr-name{font-size:15px;font-weight:600;color:var(--ink);line-height:1.3;}
-    .pr-meta{font-size:12px;color:var(--muted);margin-top:2px;font-family:'DM Mono',monospace;}
-    .pr-badge{flex-shrink:0;font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:6px;letter-spacing:0.01em;display:inline-flex;align-items:center;gap:5px;}
-    .pr-badge .dot{width:7px;height:7px;border-radius:50%;}
-    .pr-badge.b-available{background:#f0fdf4;color:#15803d;}
-    .pr-badge.b-available .dot{background:var(--green);}
-    .pr-badge.b-out_of_stock{background:#fef2f2;color:#b91c1c;}
-    .pr-badge.b-out_of_stock .dot{background:var(--red);}
-    .pr-badge.b-season{background:#fffbeb;color:#b45309;}
-    .pr-badge.b-season .dot{background:var(--orange);}
-    .pr-badge.b-hidden{background:#faf5ff;color:#6b21a8;}
-    .pr-badge.b-hidden .dot{background:var(--purple);}
+    .pr-meta{font-size:12px;color:var(--muted);margin-top:2px;}
+    .pr-state{font-size:11px;font-weight:700;letter-spacing:0.06em;color:var(--primary);flex-shrink:0;}
+    .pr-state.off{color:var(--muted);}
 
-    .pr-buttons{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;}
-    .pr-btn{padding:9px 6px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:12.5px;font-weight:600;color:var(--muted);transition:.12s;display:flex;flex-direction:column;align-items:center;gap:3px;line-height:1.2;}
-    .pr-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary);}
-    .pr-btn:disabled{cursor:not-allowed;}
-    .pr-btn.saving{position:relative;color:transparent;}
-    .pr-btn.saving::after{content:'';position:absolute;top:50%;left:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--primary);animation:spin 0.6s linear infinite;}
-    .pr-btn .ico{font-size:13px;}
-    .pr-btn.active.b-available{background:var(--green);border-color:var(--green);color:#fff;}
-    .pr-btn.active.b-out_of_stock{background:var(--red);border-color:var(--red);color:#fff;}
-    .pr-btn.active.b-season{background:var(--orange);border-color:var(--orange);color:#fff;}
-    .pr-btn.active.b-hidden{background:var(--purple);border-color:var(--purple);color:#fff;}
+    .toggle-switch{position:relative;width:46px;height:26px;background:#cbd5e1;border-radius:999px;cursor:pointer;transition:.2s;flex-shrink:0;border:none;padding:0;}
+    .toggle-switch::after{content:'';position:absolute;top:2px;left:2px;width:22px;height:22px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2);}
+    .toggle-switch.on{background:var(--primary);}
+    .toggle-switch.on::after{left:22px;}
+    .toggle-switch.saving{opacity:0.6;cursor:wait;}
+
+    .stat-bar{background:#ecfdf5;border:1px solid #99f6e4;border-radius:10px;padding:10px 14px;display:flex;gap:18px;align-items:center;font-size:13px;flex-wrap:wrap;}
+    .stat-bar .s-num{font-weight:700;font-family:'DM Mono',monospace;}
+    .stat-bar .s-num.on{color:var(--primary);}
+    .stat-bar .s-num.off{color:var(--red);}
+    .stat-bar .s-num.tot{padding:2px 10px;border:1.5px solid var(--ink);border-radius:6px;color:var(--ink);}
+    .stat-bar .s-lbl{color:var(--muted);font-weight:500;}
     @keyframes spin{to{transform:rotate(360deg);}}
 
     .empty,.loading{padding:48px 20px;text-align:center;color:var(--muted);font-size:13.5px;}
@@ -137,12 +129,12 @@
      innkjøpsbehov. Elementene beholdes i DOM-en (display:none) slik at
      eksisterende JS (renderProducts etc.) ikke krasjer på null-referanser. -->
 <div class="toolbar" style="display:none;">
+  <div class="stat-bar" id="statBar"></div>
   <label class="search">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input id="searchInput" type="search" placeholder="Søk produkt…" autocomplete="off" />
+    <input id="searchInput" type="search" placeholder="Søk etter produktnavn…" autocomplete="off" />
   </label>
   <div class="chip-row" id="catChips"></div>
-  <div class="chip-row" id="statusChips"></div>
 </div>
 
 <main>
@@ -308,28 +300,22 @@ function renderCats(){
   }).join('');
 }
 
-function renderStatusChips(counts){
-  const wrap = document.getElementById('statusChips');
+function renderStatBar(counts){
+  const wrap = document.getElementById('statBar');
+  if (!wrap) return;
   const total = _products.length;
-  const items = [
-    { key: 'all',          label: 'Alle',        cnt: total },
-    { key: 'available',    label: 'Tilgjengelig',cnt: counts.available || 0 },
-    { key: 'out_of_stock', label: 'Utsolgt',     cnt: counts.out_of_stock || 0 },
-    { key: 'season',       label: 'Sesong',      cnt: counts.season || 0 },
-    { key: 'hidden',       label: 'Skjult',      cnt: counts.hidden || 0 },
-  ];
-  wrap.innerHTML = items.map(it => {
-    const active = it.key === _activeStatus;
-    return `<button class="status-chip s-${it.key}${active ? ' active' : ''}" data-status="${it.key}">
-      <span class="dot"></span><strong>${it.cnt}</strong>${escH(it.label)}
-    </button>`;
-  }).join('');
+  const disabled = counts.hidden || 0;
+  const enabled = total - disabled;
+  wrap.innerHTML =
+    `<span><span class="s-num on">${enabled}</span> <span class="s-lbl">tilgjengelige</span></span>` +
+    `<span><span class="s-num off">${disabled}</span> <span class="s-lbl">deaktiverte</span></span>` +
+    `<span><span class="s-num tot">${total}</span> <span class="s-lbl">totalt</span></span>`;
 }
 
 function renderProducts(){
   const counts = renderCountLine();
   renderCats();
-  renderStatusChips(counts);
+  renderStatBar(counts);
 
   const list = document.getElementById('productsList');
   let filtered = _products.slice();
@@ -365,11 +351,15 @@ function renderProducts(){
   // Bind event-delegering kun én gang
   if (!list.dataset.bound) {
     list.addEventListener('click', e => {
-      const btn = e.target.closest('.pr-btn[data-status]');
+      const btn = e.target.closest('.toggle-switch[data-slug]');
       if (!btn) return;
       const slug = btn.getAttribute('data-slug');
-      const status = btn.getAttribute('data-status');
-      if (slug && status) setStatus(slug, status);
+      if (!slug || _saving.has(slug)) return;
+      const p = _products.find(x => x.slug === slug);
+      if (!p) return;
+      const cur = effectiveStatus(p);
+      const next = cur === 'hidden' ? 'available' : 'hidden';
+      setStatus(slug, next);
     });
     list.dataset.bound = '1';
   }
@@ -377,26 +367,17 @@ function renderProducts(){
 
 function renderRow(p){
   const cur = effectiveStatus(p);
+  const isOn = cur !== 'hidden';
   const saving = _saving.has(p.slug);
-  const dim = cur === 'hidden' ? ' dim' : '';
+  const dim = isOn ? '' : ' dim';
   const meta = [p.cat, priceLabel(p)].filter(Boolean).join(' · ');
-  const badge = STATUS_OPTIONS.find(s => s.key === cur);
-  const buttons = STATUS_OPTIONS.map(s => {
-    const active = s.key === cur;
-    const cls = `pr-btn b-${s.key}${active ? ' active' : ''}${saving ? ' saving' : ''}`;
-    return `<button class="${cls}" data-slug="${escH(p.slug)}" data-status="${s.key}" ${saving ? 'disabled' : ''}>
-      <span class="ico">${s.ico}</span>${escH(s.label)}
-    </button>`;
-  }).join('');
   return `<div class="product-row${dim}" data-slug="${escH(p.slug)}">
-    <div class="pr-top">
-      <div class="pr-info">
-        <div class="pr-name">${escH(p.name)}</div>
-        <div class="pr-meta">${escH(meta)}</div>
-      </div>
-      <span class="pr-badge b-${cur}"><span class="dot"></span>${escH(badge ? badge.full : cur)}</span>
+    <div class="pr-info">
+      <div class="pr-name">${escH(p.name)}</div>
+      <div class="pr-meta">${escH(meta)}</div>
     </div>
-    <div class="pr-buttons">${buttons}</div>
+    <span class="pr-state${isOn ? '' : ' off'}">${isOn ? 'TILGJENGELIG' : 'DEAKTIVERT'}</span>
+    <button class="toggle-switch${isOn ? ' on' : ''}${saving ? ' saving' : ''}" data-slug="${escH(p.slug)}" ${saving ? 'disabled' : ''} aria-label="${isOn ? 'Deaktiver' : 'Aktiver'} ${escH(p.name)}"></button>
   </div>`;
 }
 
@@ -410,13 +391,6 @@ document.getElementById('catChips').addEventListener('click', e => {
   const btn = e.target.closest('.chip[data-cat]');
   if (!btn) return;
   _activeCat = btn.getAttribute('data-cat') || 'Alle';
-  renderProducts();
-});
-
-document.getElementById('statusChips').addEventListener('click', e => {
-  const btn = e.target.closest('.status-chip[data-status]');
-  if (!btn) return;
-  _activeStatus = btn.getAttribute('data-status') || 'all';
   renderProducts();
 });
 
