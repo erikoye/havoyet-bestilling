@@ -34,13 +34,15 @@
     .sync-pill.offline{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
     .sync-pill.offline .dot{background:var(--red);animation:none;}
     @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.4);}70%{box-shadow:0 0 0 8px rgba(34,197,94,0);}100%{box-shadow:0 0 0 0 rgba(34,197,94,0);}}
-    .admin-toggle-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid var(--border);background:var(--surface);color:var(--ink);border-radius:10px;font-size:12.5px;font-weight:600;transition:.15s;}
-    .admin-toggle-btn:hover{border-color:var(--primary);color:var(--primary);}
-    .admin-toggle-btn.active{background:var(--primary);border-color:var(--primary);color:#fff;}
-    .admin-toggle-btn svg{flex-shrink:0;}
+    .tab-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;display:flex;gap:0;position:sticky;top:65px;z-index:45;}
+    .tab-btn{padding:14px 20px;background:transparent;border:none;font-family:'Montserrat',sans-serif;font-size:15px;font-weight:500;color:var(--muted);cursor:pointer;position:relative;letter-spacing:-0.01em;transition:color .15s;}
+    .tab-btn:hover{color:var(--ink);}
+    .tab-btn.active{color:var(--primary);font-weight:700;}
+    .tab-btn.active::after{content:'';position:absolute;left:14px;right:14px;bottom:-1px;height:2px;background:var(--primary);border-radius:2px 2px 0 0;}
+    @media (max-width:560px){.tab-bar{padding:0 8px;}.tab-btn{padding:12px 14px;font-size:14px;}}
 
     /* TOOLBAR */
-    .toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px 16px;display:flex;flex-direction:column;gap:12px;position:sticky;top:65px;z-index:40;}
+    .toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px 16px;display:flex;flex-direction:column;gap:12px;position:sticky;top:114px;z-index:40;}
     .search{position:relative;}
     .search input{width:100%;height:42px;padding:0 14px 0 40px;border:1px solid var(--border);border-radius:10px;font-size:14px;background:var(--surface-2);transition:.15s;}
     .search input:focus{outline:none;border-color:var(--primary);background:var(--surface);box-shadow:0 0 0 3px rgba(13,148,136,.1);}
@@ -101,7 +103,8 @@
 
     @media (max-width:560px){
       header{padding:12px 14px;}
-      .toolbar{padding:12px 14px 14px;top:61px;}
+      .tab-bar{top:61px;}
+      .toolbar{padding:12px 14px 14px;top:106px;}
       main{padding:14px 12px 80px;}
       .title{font-size:16px;}
       .title small{font-size:11px;}
@@ -118,16 +121,14 @@
   </a>
   <div class="title">Varer<small id="countLine">Laster…</small></div>
   <div class="header-spacer"></div>
-  <button class="admin-toggle-btn" id="adminToggleBtn" type="button" title="Vis/skjul produktstyring">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.2" fill="currentColor"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.2" fill="currentColor"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2.2" fill="currentColor"/></svg>
-    <span id="adminToggleLabel">Produktstyring</span>
-  </button>
   <div class="sync-pill" id="syncPill"><span class="dot"></span>Live-sync</div>
 </header>
 
-<!-- Søk og filtre er skjult — siden brukes nå primært til å se daglig
-     innkjøpsbehov. Elementene beholdes i DOM-en (display:none) slik at
-     eksisterende JS (renderProducts etc.) ikke krasjer på null-referanser. -->
+<nav class="tab-bar" role="tablist">
+  <button type="button" class="tab-btn" id="tabInnkjop"        role="tab">Innkjøp</button>
+  <button type="button" class="tab-btn" id="tabTilgjengelighet" role="tab">Tilgjengelighet</button>
+</nav>
+
 <div class="toolbar" style="display:none;">
   <div class="stat-bar" id="statBar"></div>
   <label class="search">
@@ -693,37 +694,39 @@ async function _renderSalesCalendar() {
   }
 }
 
-// ── PRODUKTSTYRING-TOGGLE ──────────────────────────────
-// Viser/skjuler søk+chips+produktliste. Selve produkt-admin-koden er
-// allerede bygget (status-chips → PATCH /api/products/overrides/<slug>),
-// men siden brukes primært til salgskalender. Knappen lar deg åpne
-// admin-visningen og endre tilgjengelig/utsolgt/sesong/skjult pr produkt.
-function _setProductAdminVisible(show){
-  const toolbar = document.querySelector('.toolbar');
-  const list    = document.getElementById('productsList');
-  const btn     = document.getElementById('adminToggleBtn');
-  const label   = document.getElementById('adminToggleLabel');
-  if (toolbar) toolbar.style.display = show ? 'flex' : 'none';
-  if (list)    list.style.display    = show ? 'block' : 'none';
-  if (btn)     btn.classList.toggle('active', show);
-  if (label)   label.textContent     = show ? 'Skjul produktstyring' : 'Produktstyring';
-  try { localStorage.setItem('hv_show_product_admin', show ? '1' : '0'); } catch(_){}
+// ── TAB-NAVIGASJON ─────────────────────────────────────
+// To faner: Innkjøp (salgskalender / daglig innkjøpsbehov) og
+// Tilgjengelighet (søk + kategori-chips + produktliste med toggle pr
+// produkt → PATCH /api/products/overrides/<slug>). Bare én seksjon
+// vises av gangen. Valgt fane huskes i localStorage.
+function _setActiveTab(tab){
+  const isAdmin = tab === 'tilgjengelighet';
+  const sales    = document.getElementById('salesCal');
+  const toolbar  = document.querySelector('.toolbar');
+  const list     = document.getElementById('productsList');
+  const btnInn   = document.getElementById('tabInnkjop');
+  const btnAdm   = document.getElementById('tabTilgjengelighet');
+  if (sales)   sales.style.display    = isAdmin ? 'none' : '';
+  if (toolbar) toolbar.style.display  = isAdmin ? 'flex' : 'none';
+  if (list)    list.style.display     = isAdmin ? 'block' : 'none';
+  if (btnInn)  btnInn.classList.toggle('active', !isAdmin);
+  if (btnAdm)  btnAdm.classList.toggle('active', isAdmin);
+  try { localStorage.setItem('hv_active_varer_tab', tab); } catch(_){}
 }
-(function initAdminToggle(){
-  const btn = document.getElementById('adminToggleBtn');
-  if (!btn) return;
-  let show = false;
-  try { show = localStorage.getItem('hv_show_product_admin') === '1'; } catch(_){}
-  // ?admin=1 fra dashbord-kortet (index.html) → åpne admin-visningen direkte
+(function initTabs(){
+  const btnInn = document.getElementById('tabInnkjop');
+  const btnAdm = document.getElementById('tabTilgjengelighet');
+  if (!btnInn || !btnAdm) return;
+  let tab = 'innkjop';
+  try { tab = localStorage.getItem('hv_active_varer_tab') || 'innkjop'; } catch(_){}
+  // ?admin=1 fra dashbord-kortet (index.html) → åpne Tilgjengelighet
   try {
     const qs = new URLSearchParams(window.location.search);
-    if (qs.get('admin') === '1') show = true;
+    if (qs.get('admin') === '1') tab = 'tilgjengelighet';
   } catch(_){}
-  _setProductAdminVisible(show);
-  btn.addEventListener('click', () => {
-    const cur = document.getElementById('productsList').style.display !== 'none';
-    _setProductAdminVisible(!cur);
-  });
+  _setActiveTab(tab);
+  btnInn.addEventListener('click', () => _setActiveTab('innkjop'));
+  btnAdm.addEventListener('click', () => _setActiveTab('tilgjengelighet'));
 })();
 
 // ── BOOT + POLL ────────────────────────────────────────
