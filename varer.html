@@ -34,6 +34,10 @@
     .sync-pill.offline{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
     .sync-pill.offline .dot{background:var(--red);animation:none;}
     @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.4);}70%{box-shadow:0 0 0 8px rgba(34,197,94,0);}100%{box-shadow:0 0 0 0 rgba(34,197,94,0);}}
+    .admin-toggle-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid var(--border);background:var(--surface);color:var(--ink);border-radius:10px;font-size:12.5px;font-weight:600;transition:.15s;}
+    .admin-toggle-btn:hover{border-color:var(--primary);color:var(--primary);}
+    .admin-toggle-btn.active{background:var(--primary);border-color:var(--primary);color:#fff;}
+    .admin-toggle-btn svg{flex-shrink:0;}
 
     /* TOOLBAR */
     .toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px 16px;display:flex;flex-direction:column;gap:12px;position:sticky;top:65px;z-index:40;}
@@ -122,6 +126,10 @@
   </a>
   <div class="title">Varer<small id="countLine">Laster…</small></div>
   <div class="header-spacer"></div>
+  <button class="admin-toggle-btn" id="adminToggleBtn" type="button" title="Vis/skjul produktstyring">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.2" fill="currentColor"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.2" fill="currentColor"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2.2" fill="currentColor"/></svg>
+    <span id="adminToggleLabel">Produktstyring</span>
+  </button>
   <div class="sync-pill" id="syncPill"><span class="dot"></span>Live-sync</div>
 </header>
 
@@ -710,6 +718,39 @@ async function _renderSalesCalendar() {
     body.dataset.flagBound = '1';
   }
 }
+
+// ── PRODUKTSTYRING-TOGGLE ──────────────────────────────
+// Viser/skjuler søk+chips+produktliste. Selve produkt-admin-koden er
+// allerede bygget (status-chips → PATCH /api/products/overrides/<slug>),
+// men siden brukes primært til salgskalender. Knappen lar deg åpne
+// admin-visningen og endre tilgjengelig/utsolgt/sesong/skjult pr produkt.
+function _setProductAdminVisible(show){
+  const toolbar = document.querySelector('.toolbar');
+  const list    = document.getElementById('productsList');
+  const btn     = document.getElementById('adminToggleBtn');
+  const label   = document.getElementById('adminToggleLabel');
+  if (toolbar) toolbar.style.display = show ? 'flex' : 'none';
+  if (list)    list.style.display    = show ? 'block' : 'none';
+  if (btn)     btn.classList.toggle('active', show);
+  if (label)   label.textContent     = show ? 'Skjul produktstyring' : 'Produktstyring';
+  try { localStorage.setItem('hv_show_product_admin', show ? '1' : '0'); } catch(_){}
+}
+(function initAdminToggle(){
+  const btn = document.getElementById('adminToggleBtn');
+  if (!btn) return;
+  let show = false;
+  try { show = localStorage.getItem('hv_show_product_admin') === '1'; } catch(_){}
+  // ?admin=1 fra dashbord-kortet (index.html) → åpne admin-visningen direkte
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get('admin') === '1') show = true;
+  } catch(_){}
+  _setProductAdminVisible(show);
+  btn.addEventListener('click', () => {
+    const cur = document.getElementById('productsList').style.display !== 'none';
+    _setProductAdminVisible(!cur);
+  });
+})();
 
 // ── BOOT + POLL ────────────────────────────────────────
 (async () => {
