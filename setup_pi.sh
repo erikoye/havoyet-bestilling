@@ -6,7 +6,8 @@
 # ════════════════════════════════════════════════════════
 set -e
 
-APPDIR="/home/pi/havoyet"
+PI_USER="${SUDO_USER:-$USER}"
+APPDIR="/home/${PI_USER}/havoyet"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -26,7 +27,7 @@ pip3 install flask flask-cors requests --quiet --break-system-packages 2>/dev/nu
 
 # ── 3. CUPS + AirPrint ───────────────────────────────
 echo "▸ Setter opp CUPS og AirPrint..."
-usermod -aG lpadmin pi
+usermod -aG lpadmin "$PI_USER"
 cupsctl --remote-admin --remote-any --share-printers
 systemctl enable cups avahi-daemon
 systemctl restart cups avahi-daemon
@@ -52,11 +53,11 @@ fi
 # ── 4. App-mappe og rettigheter ──────────────────────
 echo "▸ Setter opp appmappen..."
 mkdir -p "$APPDIR"
-chown -R pi:pi "$APPDIR"
+chown -R "$PI_USER:$PI_USER" "$APPDIR"
 
 # ── 5. systemd-tjeneste ──────────────────────────────
 echo "▸ Installerer systemd-tjeneste..."
-cat > /etc/systemd/system/havoyet.service << 'SERVICE'
+cat > /etc/systemd/system/havoyet.service << SERVICE
 [Unit]
 Description=Havøyet Bestillingsside (Flask)
 After=network-online.target
@@ -64,12 +65,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/havoyet
-ExecStart=/usr/bin/python3 /home/pi/havoyet/app.py
+User=${PI_USER}
+WorkingDirectory=${APPDIR}
+ExecStart=/usr/bin/python3 ${APPDIR}/app.py
 Restart=always
 RestartSec=5
-EnvironmentFile=/home/pi/havoyet/.env
+EnvironmentFile=-${APPDIR}/.env
 StandardOutput=journal
 StandardError=journal
 
@@ -84,7 +85,7 @@ echo "  ✔ Flask starter automatisk ved oppstart"
 
 # ── 5b. Print-worker (henter jobber fra Render og skriver lokalt) ──
 echo "▸ Installerer print-worker..."
-cat > /etc/systemd/system/havoyet-printer.service << 'PWSERVICE'
+cat > /etc/systemd/system/havoyet-printer.service << PWSERVICE
 [Unit]
 Description=Havøyet etikett-print worker (poller bestilling.havoyet.no)
 After=network-online.target cups.service
@@ -92,12 +93,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/havoyet
-ExecStart=/usr/bin/python3 /home/pi/havoyet/print_worker.py
+User=${PI_USER}
+WorkingDirectory=${APPDIR}
+ExecStart=/usr/bin/python3 ${APPDIR}/print_worker.py
 Restart=always
 RestartSec=5
-EnvironmentFile=-/home/pi/havoyet/.env.printer
+EnvironmentFile=-${APPDIR}/.env.printer
 Environment=PRINT_API_BASE=https://bestilling.havoyet.no
 Environment=PRINTER_NAME=brother-ql1110
 StandardOutput=journal
@@ -108,14 +109,14 @@ WantedBy=multi-user.target
 PWSERVICE
 
 # Lag tom env-fil hvis den ikke finnes — brukeren legger inn PRINT_WORKER_TOKEN her
-if [ ! -f /home/pi/havoyet/.env.printer ]; then
-    cat > /home/pi/havoyet/.env.printer << 'ENVFILE'
+if [ ! -f "$APPDIR/.env.printer" ]; then
+    cat > "$APPDIR/.env.printer" << 'ENVFILE'
 # Sett PRINT_WORKER_TOKEN til samme verdi som er konfigurert på Render.
 # Hvis tom: auth deaktivert (kun OK i utvikling).
 PRINT_WORKER_TOKEN=
 ENVFILE
-    chown pi:pi /home/pi/havoyet/.env.printer
-    chmod 600 /home/pi/havoyet/.env.printer
+    chown "$PI_USER:$PI_USER" "$APPDIR/.env.printer"
+    chmod 600 "$APPDIR/.env.printer"
 fi
 
 systemctl enable havoyet-printer
