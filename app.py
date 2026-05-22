@@ -730,6 +730,15 @@ _CUSTOMER_NOTIFY_DEFAULTS = {
                  "Følg leveringen live: {tracking_url}\n\n"
                  "Spørsmål? Svar på denne e-posten.\n\n— Havøyet"),
     },
+    "welcome_email": {
+        "enabled": True, "channel": "email",
+        "subject": "Velkommen til Havøyet",
+        "body": ("Hei {navn},\n\nTakk for at du meldte deg på nyhetsbrevet "
+                 "vårt. Du vil få meldinger om ukens fisk, sesong-tilbud og "
+                 "nyheter fra Havøyet — ikke noe spam, vi lover.\n\n"
+                 "Som abonnent får du også eksklusive rabatter når du er "
+                 "innlogget på havoyet.no.\n\nVennlig hilsen,\nErik · Havøyet"),
+    },
 }
 _customer_notify_config = {k: dict(v) for k, v in _CUSTOMER_NOTIFY_DEFAULTS.items()}
 _customers = []  # [{id, navn, tlf, epost, adresse, kommentar, created_at}]
@@ -8475,23 +8484,23 @@ def _fmt_levdag_for_eta(iso_str: str) -> tuple[str, str]:
 def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str) -> tuple[bool, str]:
     """Send leveringstids-varsling til en kunde basert på route_eta-mal.
 
-    Bruker e-post og/eller SMS i henhold til admin-konfig
-    (`_customer_notify_config["route_eta"]`). Returnerer (ok, detail).
+    Sender KUN e-post (Resend, med SMTP-fallback). SMS-kanal er fjernet for
+    denne varslingstypen — admin trykker «Send melding til kunder» på Rute-
+    siden og forventer at det «bare skal funke» som mail.
     """
     if not isinstance(order, dict):
         return False, "no-order"
     cfg = (_customer_notify_config or {}).get("route_eta") or {}
     if not cfg.get("enabled", True):
         return False, "disabled-by-config"
-    channel = cfg.get("channel", "email")
-    allow_email = channel in ("email", "both")
-    allow_sms   = channel in ("sms", "both")
 
     kunde = order.get("kunde") or {}
     nr    = order.get("ordrenr") or order.get("id") or "?"
     navn  = (kunde.get("navn") or kunde.get("name") or "").strip()
     epost = (kunde.get("epost") or kunde.get("email") or "").strip()
-    tlf   = (kunde.get("tlf") or kunde.get("phone") or order.get("phone") or "").strip()
+
+    if not epost:
+        return False, "no-email"
 
     levdag_iso = (kunde.get("leveringsdag") or order.get("delivery") or "").strip()
     leveringsdato_full, leveringsdato_kort = _fmt_levdag_for_eta(levdag_iso)
@@ -8515,38 +8524,21 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str)
     )
     body = _kv_render(body_template, **tmpl_vars)
 
+    if not (RESEND_API_KEY or (SMTP_USER and SMTP_PASS)):
+        return False, "no-mail-config"
+
     mail_ok = False
     mail_detail = "skipped"
-    has_mail = bool(RESEND_API_KEY or (SMTP_USER and SMTP_PASS))
-    if epost and has_mail and allow_email:
-        if RESEND_API_KEY:
-            mail_ok, mail_detail = _send_via_resend(
-                CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
-            )
-        if not mail_ok and SMTP_USER and SMTP_PASS:
-            mail_ok, mail_detail = _send_via_smtp(
-                CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
-            )
+    if RESEND_API_KEY:
+        mail_ok, mail_detail = _send_via_resend(
+            CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
+        )
+    if not mail_ok and SMTP_USER and SMTP_PASS:
+        mail_ok, mail_detail = _send_via_smtp(
+            CONTACT_TO, "Havøyet", subject, body, to_email=epost, reply_to=CONTACT_TO,
+        )
 
-    sms_ok = False
-    sms_detail = "skipped"
-    notify_pref = (kunde.get("notify") or order.get("notify") or {})
-    sms_opt_in  = notify_pref.get("sms", True) and not notify_pref.get("opted_out", False)
-    if (tlf and sms_opt_in and allow_sms and TWILIO_ACCOUNT_SID
-            and TWILIO_AUTH_TOKEN and TWILIO_FROM):
-        clean_phone = tlf.replace(" ", "").replace("-", "")
-        if clean_phone and not clean_phone.startswith("+"):
-            digits = "".join(ch for ch in clean_phone if ch.isdigit())
-            if len(digits) == 8:
-                clean_phone = "+47" + digits
-        sms_text = _strip_image_placeholders(body or "").strip() + _SMS_SIGNATURE
-        sms_ok, sms_detail = _send_admin_sms(clean_phone, sms_text)
-
-    if mail_ok or sms_ok:
-        return True, f"mail={mail_detail}; sms={sms_detail}"
-    if not epost and not tlf:
-        return False, "no-contact-info"
-    return False, f"mail={mail_detail}; sms={sms_detail}"
+    return mail_ok, f"mail={mail_detail}"
 
 
 # ── ABAX ETA-integrasjon (kunder ser "X minutter til levering") ──────────
