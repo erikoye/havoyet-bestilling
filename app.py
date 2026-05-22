@@ -2067,6 +2067,9 @@ def _notify_customer_order_update(order, event, change_summary=""):
     channel = cfg.get("channel", "both")
     allow_email = channel in ("email", "both")
     allow_sms   = channel in ("sms", "both")
+    # Hard-disable kunde-mail på order_updated/order_delivered (besluttet 2026-05-22).
+    # Kunden følger status via /konto-dashbord. SMS-grenen er urørt.
+    allow_email = False
 
     tmpl_vars = {
         "navn": navn or "kunde",
