@@ -2407,6 +2407,131 @@ def _format_order_email_html(order, change_summary="", event=""):
     )
 
 
+def _send_customer_order_confirmation(order):
+    """Send ordrebekreftelse til kunden. Kalles når ordren er fullført (PAID/NEW)."""
+    if not RESEND_API_KEY:
+        return False, "no-resend"
+    kunde = order.get("kunde") or {}
+    epost = (kunde.get("epost") or kunde.get("email") or "").strip()
+    if not epost:
+        return False, "no-customer-email"
+    nr = order.get("ordrenr") or "?"
+    navn = (kunde.get("navn") or "").strip()
+    fornavn = navn.split()[0] if navn else "du"
+
+    import html as _html
+    def esc(s): return _html.escape(str(s or ""))
+
+    varer = order.get("varer") or []
+    rows = []
+    for v in varer:
+        vname = esc(v.get("name") or v.get("navn") or "?")
+        price = v.get("price") if v.get("price") is not None else v.get("pris")
+        qty = v.get("qty") or v.get("quantity") or 1
+        vlabel = v.get("variantLabel") or ""
+        rows.append(
+            f'<tr>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;color:#1a1a1a">{vname}'
+            f'{"<br/><span style=font-size:12px;color:#888>" + esc(vlabel) + "</span>" if vlabel else ""}</td>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:center;color:#666">{qty}</td>'
+            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right;font-variant-numeric:tabular-nums">'
+            f'{esc(price)+" kr" if price is not None else ""}</td>'
+            f'</tr>'
+        )
+    varer_html = "".join(rows)
+
+    total = order.get("total") or 0
+    fee = order.get("fee") or 0
+    rabatt = order.get("rabattBelop") or 0
+    summ = order.get("sum") or total
+    dag = kunde.get("leveringsdag") or "—"
+    tid = kunde.get("leveringstid") or ""
+    adr = kunde.get("adresse") or ""
+    postnr = kunde.get("postnr") or ""
+    sted = kunde.get("sted") or ""
+    betaling = kunde.get("betaling") or ""
+    bet_label = "Vipps" if betaling == "vipps" else "Kort" if betaling == "kort" else betaling
+
+    html_body = (
+        f'<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\','
+        f'Helvetica,Arial,sans-serif;background:#F4F1EA;padding:24px 12px;color:#1a1a1a">'
+        f'<div style="max-width:560px;margin:0 auto;background:#fff;'
+        f'border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)">'
+
+        f'<div style="background:#0d9488;color:#fff;padding:22px;text-align:center">'
+        f'<div style="font-size:36px;margin-bottom:8px">✓</div>'
+        f'<div style="font-size:20px;font-weight:700">Takk for bestillinga, {esc(fornavn)}!</div>'
+        f'<div style="font-size:13px;opacity:.85;margin-top:4px">Ordrenummer {esc(nr)}</div>'
+        f'</div>'
+
+        f'<div style="padding:22px">'
+
+        f'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;'
+        f'padding:14px;margin-bottom:18px;text-align:center">'
+        f'<div style="font-size:13px;color:#166534;font-weight:600">Levering</div>'
+        f'<div style="font-size:16px;color:#1a1a1a;font-weight:700;margin-top:2px">'
+        f'{esc(dag)} kl. {esc(tid)}</div>'
+        f'<div style="font-size:13px;color:#666;margin-top:2px">'
+        f'{esc(adr)}, {esc(postnr)} {esc(sted)}</div>'
+        f'</div>'
+
+        f'<div style="font-size:11px;color:#666;text-transform:uppercase;'
+        f'letter-spacing:.5px;font-weight:600;margin-bottom:6px">Din bestilling</div>'
+        f'<table style="width:100%;border-collapse:collapse;font-size:14px;'
+        f'border-top:1px solid #eee">'
+        f'{varer_html}'
+        f'</table>'
+
+        f'<table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px">'
+        f'<tr><td style="padding:4px 10px;color:#666">Subtotal</td>'
+        f'<td style="padding:4px 10px;text-align:right">{esc(total)} kr</td></tr>'
+        + (f'<tr><td style="padding:4px 10px;color:#22c55e">Rabatt</td>'
+           f'<td style="padding:4px 10px;text-align:right;color:#22c55e">−{esc(rabatt)} kr</td></tr>' if rabatt else "")
+        + f'<tr><td style="padding:4px 10px;color:#666">Levering</td>'
+          f'<td style="padding:4px 10px;text-align:right">{"Gratis" if not fee else str(fee)+" kr"}</td></tr>'
+        f'<tr><td style="padding:10px;font-weight:700;font-size:16px;border-top:2px solid #0d9488">Totalt</td>'
+        f'<td style="padding:10px;text-align:right;font-weight:700;font-size:16px;'
+        f'border-top:2px solid #0d9488;color:#0d9488">{esc(summ)} kr</td></tr>'
+        f'</table>'
+
+        f'<div style="margin-top:16px;font-size:13px;color:#666">Betaling: {esc(bet_label)}</div>'
+
+        f'<div style="margin-top:24px;text-align:center">'
+        f'<a href="{PUBLIC_SITE_URL}/konto" style="display:inline-block;background:#0d9488;'
+        f'color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;'
+        f'font-weight:600;font-size:14px">Se bestillinga di</a>'
+        f'</div>'
+
+        f'<div style="margin-top:24px;padding-top:14px;border-top:1px solid #eee;'
+        f'font-size:12px;color:#999;text-align:center">'
+        f'Spørsmål? Svar på denne e-posten eller ring +47 416 39 788'
+        f'</div>'
+
+        f'</div></div></div>'
+    )
+
+    subject = f"Ordrebekreftelse #{nr} — Havøyet"
+    text_body = (
+        f"Hei {fornavn},\n\n"
+        f"Takk for bestillinga! Her er ordrebekreftelsen din.\n\n"
+        f"Ordrenummer: {nr}\n"
+        f"Levering: {dag} kl. {tid}\n"
+        f"Adresse: {adr}, {postnr} {sted}\n"
+        f"Totalt: {summ} kr\n\n"
+        f"Se bestillinga di: {PUBLIC_SITE_URL}/konto\n"
+    )
+
+    ok, detail = _send_via_resend(
+        CONTACT_TO, "Havøyet", subject, text_body,
+        to_email=epost, reply_to=CONTACT_TO, html_body=html_body,
+    )
+    if ok:
+        print(f"[CUSTOMER-CONFIRM] Sendt ordrebekreftelse til {epost} for #{nr}")
+    else:
+        print(f"[CUSTOMER-CONFIRM] Feilet for {epost}: {detail}")
+    return ok, detail
+
+
 def _format_order_lines(order):
     """Tekstoppsummering av en ordre fra ny.havoyet.no/kasse."""
     nr = order.get("ordrenr") or order.get("name") or order.get("id") or "?"
@@ -3054,6 +3179,11 @@ def api_orders_new():
                 )
             except Exception as e:
                 print(f"[ADMIN-NOTIFY] new_order varsel (pending→fullført) feilet: {e}")
+            # Kundebekreftelse — sendes når ordren flippar frå pending til fullført
+            try:
+                _send_customer_order_confirmation(merged)
+            except Exception as e:
+                print(f"[CUSTOMER-CONFIRM] feilet (pending→fullført): {e}")
         return jsonify({"ok": True, "ordrenr": target_id, "updated": True})
 
     # Ny ordre — legg til i state. Fjern eventuelle tombstones for samme nr
@@ -3131,6 +3261,11 @@ def api_orders_new():
             )
         except Exception as e:
             print(f"[ADMIN-NOTIFY] new_order varsel feilet: {e}")
+        # Kundebekreftelse — sendast med ein gong for nye fullførte ordrar
+        try:
+            _send_customer_order_confirmation(data)
+        except Exception as e:
+            print(f"[CUSTOMER-CONFIRM] feilet (ny ordre): {e}")
 
     return jsonify({"ok": True, "mail": detail, "ordrenr": data["ordrenr"], "order": data})
 
@@ -3501,6 +3636,10 @@ def api_vipps_status(reference):
                                     )
                                 except Exception as e:
                                     print(f"[ADMIN-NOTIFY] new_order varsel (Vipps status-poll) feilet: {e}")
+                                try:
+                                    _send_customer_order_confirmation(o)
+                                except Exception as e:
+                                    print(f"[CUSTOMER-CONFIRM] feilet (Vipps status-poll): {e}")
                         break
 
     return jsonify({"reference": reference, "state": state, "vipps": body})
@@ -3570,6 +3709,10 @@ def api_vipps_status_by_order(ordrenr):
                             )
                         except Exception as e:
                             print(f"[ADMIN-NOTIFY] new_order varsel (Vipps status-by-order) feilet: {e}")
+                        try:
+                            _send_customer_order_confirmation(o)
+                        except Exception as e:
+                            print(f"[CUSTOMER-CONFIRM] feilet (Vipps status-by-order): {e}")
                 order_data = o
                 break
 
@@ -4385,6 +4528,10 @@ def api_vipps_callback():
                                 )
                             except Exception as e:
                                 print(f"[ADMIN-NOTIFY] new_order varsel (Vipps→PAID) feilet: {e}")
+                            try:
+                                _send_customer_order_confirmation(o)
+                            except Exception as e:
+                                print(f"[CUSTOMER-CONFIRM] feilet (Vipps callback): {e}")
                         break
     return jsonify({"ok": True})
 
@@ -5464,6 +5611,10 @@ def api_webhook_stripe():
                         )
                     except Exception as e:
                         print(f"[ADMIN-NOTIFY] new_order varsel (Stripe→PAID) feilet: {e}")
+                    try:
+                        _send_customer_order_confirmation(target_order)
+                    except Exception as e:
+                        print(f"[CUSTOMER-CONFIRM] feilet (Stripe webhook): {e}")
             else:
                 # Kortet ble trukket, men selve ordre-objektet finnes ikke i
                 # _manual_orders. Det betyr at frontend feilet etter Stripe-bekreftelsen
