@@ -3352,6 +3352,44 @@ def _vipps_headers(idempotency_key=None):
         h["Idempotency-Key"] = idempotency_key
     return h
 
+def _vipps_capture(reference, amount_ore):
+    """Fang (capture) ein autorisert Vipps-betaling slik at pengane faktisk blir trekte."""
+    url = f"{VIPPS_API_BASE}/epayment/v1/payments/{reference}/capture"
+    body = {"modificationAmount": {"currency": "NOK", "value": amount_ore}}
+    try:
+        r = requests.post(url, headers=_vipps_headers(idempotency_key=f"cap-{reference}"),
+                          json=body, timeout=15)
+        if r.status_code < 300:
+            print(f"[VIPPS] Captured {reference} ({amount_ore/100:.2f} kr)")
+            return True
+        print(f"[VIPPS] Capture feilet for {reference}: {r.status_code} {r.text[:200]}")
+        return False
+    except Exception as e:
+        print(f"[VIPPS] Capture exception for {reference}: {e}")
+        return False
+
+@app.route("/api/vipps/capture/<reference>", methods=["POST"])
+def api_vipps_capture_endpoint(reference):
+    """Manuelt capture-endepunkt for admin."""
+    if not _vipps_configured():
+        return jsonify({"error": "Vipps er ikke konfigurert"}), 503
+    payments = _vipps_load_payments()
+    rec = payments.get(reference, {})
+    amount = int(rec.get("amount", 0))
+    if amount <= 0:
+        data = request.get_json(silent=True) or {}
+        amount = int(data.get("amount", 0))
+    if amount <= 0:
+        return jsonify({"error": "Ukjent beløp — oppgi amount i øre"}), 400
+    ok = _vipps_capture(reference, amount)
+    if ok:
+        if reference in payments:
+            payments[reference]["state"] = "CAPTURED"
+            payments[reference]["captured_at"] = time.time()
+            _vipps_save_payments(payments)
+        return jsonify({"ok": True, "state": "CAPTURED"})
+    return jsonify({"ok": False, "error": "Capture feilet"}), 502
+
 @app.route("/api/vipps/init", methods=["POST"])
 def api_vipps_init():
     """Oppretter en Vipps-betaling og returnerer redirect-URL."""
@@ -3428,6 +3466,17 @@ def api_vipps_status(reference):
         payments[reference]["last_check"] = time.time()
         _vipps_save_payments(payments)
 
+        # Auto-capture: fang betalinga med ein gong den er autorisert
+        if state == "AUTHORIZED":
+            amount = payments[reference].get("amount", 0)
+            if amount > 0:
+                captured = _vipps_capture(reference, amount)
+                if captured:
+                    state = "CAPTURED"
+                    payments[reference]["state"] = "CAPTURED"
+                    payments[reference]["captured_at"] = time.time()
+                    _vipps_save_payments(payments)
+
         # Oppdater ordren til PAID — same logikk som callback-handleren
         if state in _VIPPS_PAID_STATES:
             ordrenr = payments[reference].get("ordrenr")
@@ -3484,6 +3533,19 @@ def api_vipps_status_by_order(ordrenr):
     payments[reference]["state"] = state
     payments[reference]["last_check"] = time.time()
     _vipps_save_payments(payments)
+
+    # Auto-capture ved AUTHORIZED
+    if state == "AUTHORIZED":
+        amount = payments[reference].get("amount", 0)
+        if amount <= 0:
+            amount = int(body.get("amount", {}).get("value", 0))
+        if amount > 0:
+            captured = _vipps_capture(reference, amount)
+            if captured:
+                state = "CAPTURED"
+                payments[reference]["state"] = "CAPTURED"
+                payments[reference]["captured_at"] = time.time()
+                _vipps_save_payments(payments)
 
     # Oppdater ordren til PAID viss Vipps bekreftar
     order_data = None
@@ -4282,6 +4344,17 @@ def api_vipps_callback():
         payments[reference]["last_callback"] = body
         _vipps_save_payments(payments)
         print(f"vipps callback: {reference} → {state}")
+
+        # Auto-capture ved AUTHORIZED
+        if state == "AUTHORIZED":
+            amount = payments[reference].get("amount", 0)
+            if amount > 0:
+                captured = _vipps_capture(reference, amount)
+                if captured:
+                    state = "CAPTURED"
+                    payments[reference]["state"] = "CAPTURED"
+                    payments[reference]["captured_at"] = time.time()
+                    _vipps_save_payments(payments)
 
         # Oppdater ordren til PAID viss Vipps bekreftar betaling
         if state in _VIPPS_PAID_STATES:
