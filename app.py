@@ -3406,7 +3406,10 @@ def api_vipps_init():
 
 @app.route("/api/vipps/status/<reference>")
 def api_vipps_status(reference):
-    """Hent status for en Vipps-betaling fra Vipps API."""
+    """Hent status for ein Vipps-betaling frå Vipps API.
+    Oppdaterer også ordren til PAID viss Vipps bekreftar (sikkerheitsnett
+    i tillegg til callback-webhooken)."""
+    global _manual_orders
     if not _vipps_configured():
         return jsonify({"error": "Vipps er ikke konfigurert"}), 503
     url = f"{VIPPS_API_BASE}/epayment/v1/payments/{reference}"
@@ -3424,7 +3427,91 @@ def api_vipps_status(reference):
         payments[reference]["state"] = state
         payments[reference]["last_check"] = time.time()
         _vipps_save_payments(payments)
+
+        # Oppdater ordren til PAID — same logikk som callback-handleren
+        if state in _VIPPS_PAID_STATES:
+            ordrenr = payments[reference].get("ordrenr")
+            if ordrenr:
+                for o in _manual_orders:
+                    if str(o.get("ordrenr") or o.get("id") or "").strip() == str(ordrenr):
+                        was_pending = _is_pending_order_status(o.get("status"))
+                        if was_pending or o.get("status") != "PAID":
+                            o["status"] = "PAID"
+                            o["paymentStatus"] = "paid"
+                            o["paid_at"] = datetime.now().isoformat()
+                            o["vipps_reference"] = reference
+                            _save_sync_state()
+                            if was_pending:
+                                try:
+                                    navn_n = ((o.get("kunde") or {}).get("navn") or "?").strip()
+                                    _notify_admins(
+                                        "new_order",
+                                        f"[Havøyet] Ny bestilling #{ordrenr} — {navn_n} ({o.get('sum', 0)} kr)",
+                                        _format_order_lines(o),
+                                        html_body=_format_order_email_html(o, "Bestillingen er fullført og betalt med Vipps.", "new_order"),
+                                    )
+                                except Exception as e:
+                                    print(f"[ADMIN-NOTIFY] new_order varsel (Vipps status-poll) feilet: {e}")
+                        break
+
     return jsonify({"reference": reference, "state": state, "vipps": body})
+
+@app.route("/api/vipps/status-by-order/<ordrenr>")
+def api_vipps_status_by_order(ordrenr):
+    """Oppslag via ordrenr for tilfelle der frontend mista sessionStorage (mobil app-bytte).
+    Finn Vipps-referansen frå betalingsloggen, sjekk status, oppdater ordren viss betalt."""
+    global _manual_orders
+    if not _vipps_configured():
+        return jsonify({"error": "Vipps er ikke konfigurert"}), 503
+
+    payments = _vipps_load_payments()
+    reference = None
+    for ref, rec in payments.items():
+        if rec.get("ordrenr") == ordrenr:
+            reference = ref
+            break
+    if not reference:
+        return jsonify({"error": "Fant ingen Vipps-betaling for denne ordren", "state": "UNKNOWN"}), 404
+
+    url = f"{VIPPS_API_BASE}/epayment/v1/payments/{reference}"
+    try:
+        r = requests.get(url, headers=_vipps_headers(), timeout=10)
+        body = r.json() if r.content else {}
+    except Exception as e:
+        return jsonify({"error": f"Kunne ikke kontakte Vipps: {e}", "state": "UNKNOWN"}), 502
+
+    state = body.get("state", "UNKNOWN")
+    payments[reference]["state"] = state
+    payments[reference]["last_check"] = time.time()
+    _vipps_save_payments(payments)
+
+    # Oppdater ordren til PAID viss Vipps bekreftar
+    order_data = None
+    if state in _VIPPS_PAID_STATES:
+        for o in _manual_orders:
+            if str(o.get("ordrenr") or o.get("id") or "").strip() == str(ordrenr):
+                was_pending = _is_pending_order_status(o.get("status"))
+                if was_pending or o.get("status") != "PAID":
+                    o["status"] = "PAID"
+                    o["paymentStatus"] = "paid"
+                    o["paid_at"] = datetime.now().isoformat()
+                    o["vipps_reference"] = reference
+                    _save_sync_state()
+                    if was_pending:
+                        try:
+                            navn_n = ((o.get("kunde") or {}).get("navn") or "?").strip()
+                            _notify_admins(
+                                "new_order",
+                                f"[Havøyet] Ny bestilling #{ordrenr} — {navn_n} ({o.get('sum', 0)} kr)",
+                                _format_order_lines(o),
+                                html_body=_format_order_email_html(o, "Bestillingen er fullført og betalt med Vipps.", "new_order"),
+                            )
+                        except Exception as e:
+                            print(f"[ADMIN-NOTIFY] new_order varsel (Vipps status-by-order) feilet: {e}")
+                order_data = o
+                break
+
+    return jsonify({"reference": reference, "state": state, "order": order_data})
 
 # ─── Vipps Bedrift CSV/PDF-import (drag-drop fra Økonomi-fanen) ────────────
 import csv as _csv
@@ -4180,7 +4267,9 @@ def _api_economy_stats_impl():
 @app.route("/api/vipps/callback", methods=["POST"])
 def api_vipps_callback():
     """Webhook fra Vipps når betalingsstatus endrer seg.
-    Vipps sender hele betalingsobjektet som JSON. Vi lagrer status og bekrefter mottatt."""
+    Oppdaterer betalingslogg OG ordren i _manual_orders (same mønster som
+    Stripe payment_intent.succeeded-webhooken)."""
+    global _manual_orders
     body = request.get_json(silent=True) or {}
     reference = body.get("reference") or (body.get("data") or {}).get("reference")
     state     = body.get("name") or body.get("state") or "UNKNOWN"
@@ -4193,6 +4282,37 @@ def api_vipps_callback():
         payments[reference]["last_callback"] = body
         _vipps_save_payments(payments)
         print(f"vipps callback: {reference} → {state}")
+
+        # Oppdater ordren til PAID viss Vipps bekreftar betaling
+        if state in _VIPPS_PAID_STATES:
+            ordrenr = payments[reference].get("ordrenr")
+            if ordrenr:
+                for o in _manual_orders:
+                    if str(o.get("ordrenr") or o.get("id") or "").strip() == str(ordrenr):
+                        was_pending = _is_pending_order_status(o.get("status"))
+                        o["status"] = "PAID"
+                        o["paymentStatus"] = "paid"
+                        o["paid_at"] = datetime.now().isoformat()
+                        o["vipps_reference"] = reference
+                        _save_sync_state()
+                        _notify_admins(
+                            "payment_received",
+                            f"[Havøyet] Vipps-betaling mottatt #{ordrenr}",
+                            f"Beløp: {payments[reference].get('amount', 0)/100:.2f} kr (Vipps)\n"
+                            f"Ordre: {ordrenr}\nReference: {reference}",
+                        )
+                        if was_pending:
+                            try:
+                                navn_n = ((o.get("kunde") or {}).get("navn") or "?").strip()
+                                _notify_admins(
+                                    "new_order",
+                                    f"[Havøyet] Ny bestilling #{ordrenr} — {navn_n} ({o.get('sum', 0)} kr)",
+                                    _format_order_lines(o),
+                                    html_body=_format_order_email_html(o, "Bestillingen er fullført og betalt med Vipps.", "new_order"),
+                                )
+                            except Exception as e:
+                                print(f"[ADMIN-NOTIFY] new_order varsel (Vipps→PAID) feilet: {e}")
+                        break
     return jsonify({"ok": True})
 
 # ─── Vipps Checkout (Vipps + Kort på samme side) ──────────────────────
