@@ -3270,6 +3270,16 @@ def api_orders_new():
     return jsonify({"ok": True, "mail": detail, "ordrenr": data["ordrenr"], "order": data})
 
 
+@app.route("/api/orders/<ordrenr>/resend-confirmation", methods=["POST"])
+def api_resend_customer_confirmation(ordrenr):
+    """Send (eller re-send) ordrebekreftelse til kunden for ein eksisterande ordre."""
+    for o in _manual_orders:
+        if str(o.get("ordrenr") or o.get("id") or "").strip() == str(ordrenr):
+            ok, detail = _send_customer_order_confirmation(o)
+            return jsonify({"ok": ok, "detail": detail})
+    return jsonify({"ok": False, "error": "Ordre ikkje funne"}), 404
+
+
 # ── KUNDE-KONTO: ordrehistorikk + favoritter (identifiseres via e-post) ──────
 def _orders_for_email(email):
     """Samler alle ordre som matcher en e-postadresse."""
