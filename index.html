@@ -1259,6 +1259,7 @@ function nbmAddItem() {
       <input class="nbm-fi nbm-qty" id="nbm-qty-${i}" type="text" placeholder="Mengde" autocomplete="off" />
       <div class="nbm-unit">
         <button type="button" class="nbm-unit-btn active" id="nbm-u-g-${i}"   onclick="nbmSetUnit(${i},'g')">g</button>
+        <button type="button" class="nbm-unit-btn"        id="nbm-u-kg-${i}"  onclick="nbmSetUnit(${i},'kg')">kg</button>
         <button type="button" class="nbm-unit-btn"        id="nbm-u-stk-${i}" onclick="nbmSetUnit(${i},'stk')">stk</button>
       </div>
       <button type="button" class="nbm-rm" onclick="nbmRemoveItem(${i})" aria-label="Fjern">×</button>
@@ -1271,8 +1272,10 @@ function nbmSetUnit(i, unit) {
   const row = document.getElementById('nbm-row-' + i);
   if (row) row.dataset.unit = unit;
   const g   = document.getElementById('nbm-u-g-' + i);
+  const kg  = document.getElementById('nbm-u-kg-' + i);
   const stk = document.getElementById('nbm-u-stk-' + i);
   if (g)   g.classList.toggle('active',   unit === 'g');
+  if (kg)  kg.classList.toggle('active',  unit === 'kg');
   if (stk) stk.classList.toggle('active', unit === 'stk');
 }
 
