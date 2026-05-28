@@ -2045,7 +2045,7 @@ function _guessUnitFromName(name){
   // Tradisjonelle stk-varer (skjell, østers, krabbeklør, hummer, glass, kasse, abonnement)
   // Fiskekaker er IKKE stk — det er kilo-priset (kind=fish i data2.jsx).
   // Plukkfisk (Bergens plukkfisk) er stk-priset (kind=unit) → beholdes som stk-hint.
-  const stkHints = ['østers','hummer','krabbeklør','blåskjell','muslinger','kamskjell','sjøkreps levende','sjøkreps fryst','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff','plukkfisk'];
+  const stkHints = ['østers','hummer','krabbeklør','krabbeskjell','blåskjell','muslinger','kamskjell','sjøkreps levende','sjøkreps fryst','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff','plukkfisk'];
   for (const h of stkHints) if (n.includes(h)) return 'stk';
   // Fisk/skalldyr i kg er normen
   return 'kg';
@@ -2075,7 +2075,12 @@ function renderItemQtyEditor(item, i){
   // hvor produktet f.eks. heter "Laks filet (ca. 500 g)" og kunden bestilte 1
   // porsjon, viser vi "500 g" (qty × porsjonsvekt). For stk-varer viser vi qty.
   const qty = Number((item && (item.qty ?? item.quantity)) ?? 1) || 1;
-  let unit = (item && item.unit) || _guessUnitFromName(item && item.name) || 'stk';
+  // Stk-produkter (kind:"unit" m/ unitLabel:"stk" i data2.jsx) skal ALLTID vises som stk,
+  // selv om legacy-ordre tilfeldigvis ble lagret med unit='kg' eller tom.
+  const isStkProduct = (item && (item.kind === 'unit' || item.unitLabel === 'stk'));
+  let unit;
+  if (isStkProduct) unit = 'stk';
+  else unit = (item && item.unit) || _guessUnitFromName(item && item.name) || 'stk';
 
   // Forsøk å hente porsjonsvekt fra variant-felt eller (parantesen i) navnet.
   const variantText = String(
