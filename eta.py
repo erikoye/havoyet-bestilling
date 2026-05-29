@@ -230,6 +230,7 @@ def order_destination(order: dict) -> Optional[Tuple[float, float]]:
         levering.get("poststed")
         or order.get("leveringspoststed")
         or kunde.get("poststed")
+        or kunde.get("sted")
     )
 
     if not addr:

@@ -1152,6 +1152,7 @@ def _stop_payload(order: dict) -> dict:
             levering.get("poststed")
             or order.get("leveringspoststed")
             or kunde.get("poststed")
+            or kunde.get("sted")
             or ""
         ),
         "leveringstid": kunde.get("leveringstid") or order.get("slot") or "",
