@@ -472,6 +472,12 @@ function _itemToComponents(item) {
   // Vanlig fiskelinje: estimer gram fra variantStr / grams-felt / produktnavn / unit.
   // Plukker også opp "Reker Ferske – 1 kg" der vekten ligger i navnet, slik at
   // 2× "1 kg"-pakker ikke vises som "2 stk" men som "2 kg" i innkjøpslisten.
+  // VIKTIG: unit='g'/'kg' overstyrer variantLabel — for migrerte linjer er qty
+  // allerede den faktiske vekten (qty=250, unit='g') og må IKKE multipliseres
+  // med variant-gram igjen (det ga 62,5 kg på en 250 g-porsjon).
+  const unit = String(item.unit || '').toLowerCase();
+  if (unit === 'kg') return [{ productName: name, grams: qty * 1000 }];
+  if (unit === 'g')  return [{ productName: name, grams: qty }];
   const fromVariant = _parseGrams(item.variantStr) || _parseGrams(item.variantLabel) || _parseGrams(name);
   if (Number.isFinite(item.grams) && item.grams > 0) {
     return [{ productName: name, grams: Number(item.grams) * qty }];
@@ -479,10 +485,6 @@ function _itemToComponents(item) {
   if (fromVariant) {
     return [{ productName: name, grams: fromVariant * qty }];
   }
-  // Per-kg-pris-produkt uten eksplisitt vekt: bruk qty (kg) hvis unit antyder det
-  const unit = String(item.unit || '').toLowerCase();
-  if (unit === 'kg') return [{ productName: name, grams: qty * 1000 }];
-  if (unit === 'g')  return [{ productName: name, grams: qty }];
   if (unit === 'stk' || item.kind === 'unit') {
     // Produkter som faktisk telles per styk (krabbeklør, østers, kamskjell,
     // sjøkreps-bunter osv.) skal beholde "stk" i innkjøpslisten. Vi slår
