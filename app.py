@@ -3601,6 +3601,43 @@ def _vipps_capture(reference, amount_ore):
         print(f"[VIPPS] Capture exception for {reference}: {e}")
         return False
 
+
+def _vipps_refund(reference, amount_ore, idem_suffix=""):
+    """Refunder ein capturert Vipps-betaling — full eller delvis (amount i øre).
+    Vipps tillater flere delvise refusjoner så lenge summen ikke overstiger captured.
+    Returnerer (ok, body_dict, status_code)."""
+    url = f"{VIPPS_API_BASE}/epayment/v1/payments/{reference}/refund"
+    body = {"modificationAmount": {"currency": "NOK", "value": int(amount_ore)}}
+    # Unik idempotency-nøkkel per delvis refusjon — la admin kunne refundere flere
+    # ganger uten at Vipps avviser som duplikat.
+    idem = f"ref-{reference}-{idem_suffix or int(time.time()*1000)}"
+    try:
+        r = requests.post(url, headers=_vipps_headers(idempotency_key=idem),
+                          json=body, timeout=20)
+        try:
+            data = r.json() if r.content else {}
+        except Exception:
+            data = {"raw": r.text}
+        if r.status_code < 300:
+            print(f"[VIPPS] Refunded {reference} ({amount_ore/100:.2f} kr)")
+            return True, data, r.status_code
+        print(f"[VIPPS] Refund feilet for {reference}: {r.status_code} {str(data)[:200]}")
+        return False, data, r.status_code
+    except Exception as e:
+        print(f"[VIPPS] Refund exception for {reference}: {e}")
+        return False, {"error": str(e)}, 502
+
+
+def _find_vipps_reference_for_order(ordrenr):
+    """Slår opp Vipps payment-referanse for en gitt ordrenr i lokal payments-fil.
+    Returnerer (reference, rec_dict) eller (None, None)."""
+    payments = _vipps_load_payments() or {}
+    target = str(ordrenr).strip()
+    for ref, rec in payments.items():
+        if str(rec.get("ordrenr") or "").strip() == target:
+            return ref, rec
+    return None, None
+
 @app.route("/api/vipps/capture/<reference>", methods=["POST"])
 def api_vipps_capture_endpoint(reference):
     """Manuelt capture-endepunkt for admin."""
@@ -5905,14 +5942,13 @@ def _find_payment_intent_for_order(ordrenr):
 
 @app.route("/api/admin/orders/<ordrenr>/refund", methods=["POST"])
 def api_admin_order_refund(ordrenr):
-    """Refunder en kundeordre direkte via Stripe.
+    """Refunder en kundeordre — automatisk via Stripe ELLER Vipps, basert på
+    hva ordren ble betalt med. Støtter delvis refusjon (amount_ore < total).
+
     Body: { amount_ore: int, reason?: str, note?: str, lines?: list }
-    Backend slår opp Stripe payment_intent fra ordrenr og utfører refusjonen.
     """
     user, err = _admin_required_stripe()
     if err: return err
-    if not _stripe_configured():
-        return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
     body = request.get_json(silent=True) or {}
     try:
         amount_ore = int(body.get("amount_ore") or 0)
@@ -5924,42 +5960,77 @@ def api_admin_order_refund(ordrenr):
     note   = (body.get("note") or "").strip() or None
     lines  = body.get("lines") or []
 
+    # 1) Prøv Stripe først — disse har en payment_intent lagret
     pi_id, payment_rec = _find_payment_intent_for_order(ordrenr)
+    vipps_ref, vipps_rec = (None, None)
     if not pi_id:
+        # 2) Ikke funnet i Stripe — prøv Vipps
+        vipps_ref, vipps_rec = _find_vipps_reference_for_order(ordrenr)
+    if not pi_id and not vipps_ref:
         return jsonify({
             "ok": False,
-            "error": f"Fant ingen Stripe-betaling for ordre {ordrenr}. "
-                     f"Refusjon kan kun utføres for kortbetalinger gjort via nettsiden."
+            "error": f"Fant ingen Stripe- eller Vipps-betaling for ordre {ordrenr}. "
+                     f"Refusjon kan kun utføres for kortbetaling (Stripe) eller Vipps-betaling gjort via nettsiden."
         }), 404
 
-    try:
-        kwargs = {"payment_intent": pi_id, "amount": amount_ore}
-        if reason: kwargs["reason"] = reason
-        refund = _stripe.Refund.create(**kwargs)
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"Refusjon feilet: {e}"}), 502
+    refund_record = None
+    if pi_id:
+        if not _stripe_configured():
+            return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
+        try:
+            kwargs = {"payment_intent": pi_id, "amount": amount_ore}
+            if reason: kwargs["reason"] = reason
+            refund = _stripe.Refund.create(**kwargs)
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Stripe-refusjon feilet: {e}"}), 502
+        refund_record = {
+            "id":             refund.id,
+            "amount_ore":     refund.amount,
+            "amount_kr":      round(refund.amount / 100, 2),
+            "reason":         reason,
+            "note":           note,
+            "lines":          lines,
+            "status":         refund.status,
+            "payment_intent": pi_id,
+            "provider":       "stripe",
+            "created_at":     time.time(),
+            "by":             (user or {}).get("email"),
+        }
+        paid_amount = int((payment_rec or {}).get("amount") or 0)
+    else:
+        # Vipps refusjon
+        if not _vipps_configured():
+            return jsonify({"ok": False, "error": "Vipps ikke konfigurert"}), 503
+        ok, vbody, status = _vipps_refund(vipps_ref, amount_ore, idem_suffix=str(int(time.time()*1000)))
+        if not ok:
+            err_msg = (vbody.get("detail") or vbody.get("title") or vbody.get("error")
+                       or vbody.get("raw") or f"HTTP {status}")
+            return jsonify({"ok": False, "error": f"Vipps-refusjon feilet: {err_msg}"}), 502
+        # Vipps returnerer bl.a. pspReference, state etter refund
+        refund_id = (vbody.get("pspReference") or vbody.get("reference")
+                     or f"vipps-{vipps_ref}-{int(time.time())}")
+        refund_record = {
+            "id":             refund_id,
+            "amount_ore":     amount_ore,
+            "amount_kr":      round(amount_ore / 100, 2),
+            "reason":         reason,
+            "note":           note,
+            "lines":          lines,
+            "status":         vbody.get("state") or "refunded",
+            "vipps_reference": vipps_ref,
+            "provider":       "vipps",
+            "created_at":     time.time(),
+            "by":             (user or {}).get("email"),
+        }
+        paid_amount = int((vipps_rec or {}).get("amount") or 0)
 
     # Logg refusjonen mot ordren i _manual_orders så den vises i admin
-    refund_record = {
-        "id":             refund.id,
-        "amount_ore":     refund.amount,
-        "amount_kr":      round(refund.amount / 100, 2),
-        "reason":         reason,
-        "note":           note,
-        "lines":          lines,
-        "status":         refund.status,
-        "payment_intent": pi_id,
-        "created_at":     time.time(),
-        "by":             (user or {}).get("email"),
-    }
     try:
         global _manual_orders
         for o in _manual_orders:
             if str(o.get("ordrenr") or "").strip() == str(ordrenr).strip():
                 refunds = o.setdefault("refunds", [])
                 refunds.append(refund_record)
-                # Oppdater status hvis full refusjon
-                paid_amount = int((payment_rec or {}).get("amount") or 0)
                 refunded_total = sum(int(r.get("amount_ore") or 0) for r in refunds)
                 if paid_amount and refunded_total >= paid_amount:
                     o["status"] = "REFUNDED"
@@ -5968,14 +6039,15 @@ def api_admin_order_refund(ordrenr):
     except Exception as e:
         print(f"[refund] Klarte ikke oppdatere _manual_orders for {ordrenr}: {e}")
 
+    provider = refund_record.get("provider", "stripe")
     _notify_admins(
         "refund_issued",
-        f"[Havøyet] Refusjon utstedt ({refund.amount/100:.2f} kr) — ordre {ordrenr}",
-        f"Ordrenr: {ordrenr}\nPaymentIntent: {pi_id}\nRefund: {refund.id}\n"
-        f"Beløp: {refund.amount/100:.2f} kr\nÅrsak: {reason or '—'}\n"
+        f"[Havøyet] Refusjon utstedt ({refund_record['amount_kr']:.2f} kr) — ordre {ordrenr} via {provider.title()}",
+        f"Ordrenr: {ordrenr}\nKanal: {provider.title()}\nRefund-ID: {refund_record['id']}\n"
+        f"Beløp: {refund_record['amount_kr']:.2f} kr\nÅrsak: {reason or '—'}\n"
         f"Notat: {note or '—'}\nUtført av: {(user or {}).get('email')}",
     )
-    return jsonify({"ok": True, "refund": refund.to_dict(), "ordrenr": ordrenr})
+    return jsonify({"ok": True, "refund": refund_record, "ordrenr": ordrenr, "provider": provider})
 
 
 @app.route("/api/admin/stripe/subscriptions", methods=["GET"])
