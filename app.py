@@ -1102,12 +1102,100 @@ def api_overrides():
     return jsonify(_overrides)
 
 
+def _packing_diff_summary(old_state: dict, new_state: dict) -> list[str]:
+    """Bygg en kort liste over produkt-endringer mellom to packing-state snapshots.
+    Returnerer menneske-lesbare linjer som "[#H4WH9UW] Krabbeskjell: Tilgjengelig → Ikke tilgjengelig".
+    Tom liste = ingen endringer verdt å varsle om."""
+    AVAIL_LABELS = {"ok": "Tilgjengelig", "unsure": "Avventer fiskebåt", "no": "Ikke tilgjengelig", "maybe": "Avventer fiskebåt"}
+    def _label(v):
+        return AVAIL_LABELS.get(str(v or "").lower(), "(ikke vurdert)")
+    def _repl_name(r):
+        if not r:
+            return ""
+        if isinstance(r, dict):
+            return r.get("name") or r.get("slug") or r.get("id") or ""
+        return str(r)
+
+    def _item_name(order_id: str, idx) -> str:
+        for o in (_manual_orders or []):
+            oid = str(o.get("ordrenr") or o.get("id") or "")
+            if oid != str(order_id):
+                continue
+            varer = o.get("varer") or o.get("items") or []
+            try:
+                v = varer[int(idx)]
+                return v.get("name") or v.get("navn") or f"linje {idx}"
+            except (IndexError, ValueError, TypeError):
+                return f"linje {idx}"
+        return f"linje {idx}"
+
+    lines: list[str] = []
+    for order_id, new_lines in (new_state or {}).items():
+        old_lines = (old_state or {}).get(order_id) or {}
+        if not isinstance(new_lines, dict):
+            continue
+        for idx, new_meta in new_lines.items():
+            if not isinstance(new_meta, dict):
+                continue
+            old_meta = old_lines.get(idx) or {}
+            name = _item_name(order_id, idx)
+            old_avail = old_meta.get("avail")
+            new_avail = new_meta.get("avail")
+            if (old_avail or "") != (new_avail or ""):
+                lines.append(f"#{order_id} · {name}: {_label(old_avail)} → {_label(new_avail)}")
+            old_conf = _repl_name(old_meta.get("confirmedReplacement"))
+            new_conf = _repl_name(new_meta.get("confirmedReplacement"))
+            if old_conf != new_conf and new_conf:
+                lines.append(f"#{order_id} · {name}: erstattet med «{new_conf}»")
+            # Endringer i komponent-status for kasse-linjer
+            old_components = old_meta.get("components") or []
+            new_components = new_meta.get("components") or []
+            if new_components and (old_components or new_components):
+                old_by_name = {c.get("name"): c for c in old_components if isinstance(c, dict)}
+                for c in new_components:
+                    if not isinstance(c, dict):
+                        continue
+                    cname = c.get("name") or "komponent"
+                    oc = old_by_name.get(cname) or {}
+                    if (oc.get("avail") or "") != (c.get("avail") or ""):
+                        lines.append(f"#{order_id} · {name} / {cname}: {_label(oc.get('avail'))} → {_label(c.get('avail'))}")
+                    old_cr = _repl_name(oc.get("confirmedReplacement"))
+                    new_cr = _repl_name(c.get("confirmedReplacement"))
+                    if old_cr != new_cr and new_cr:
+                        lines.append(f"#{order_id} · {name} / {cname}: erstattet med «{new_cr}»")
+    return lines
+
+
 @app.route("/api/packing-state", methods=["GET", "POST"])
 def api_packing_state():
     global _packing_state
     if request.method == "POST":
+        old_state = dict(_packing_state or {})
         _packing_state = request.get_json(force=True) or {}
         _save_sync_state()
+        # Diff vs forrige snapshot — send "product_changed"-varsel hvis det er
+        # meningsfulle endringer (avail eller bekreftet erstatning).
+        try:
+            changes = _packing_diff_summary(old_state, _packing_state)
+            if changes:
+                # Begrens til de første 12 linjene i body — resten vises som "...og N flere".
+                preview = changes[:12]
+                remaining = len(changes) - len(preview)
+                body_lines = list(preview)
+                if remaining > 0:
+                    body_lines.append(f"...og {remaining} flere endringer.")
+                import html as _html_mod
+                _notify_admins(
+                    "product_changed",
+                    "[Havøyet] Pakke-status oppdatert",
+                    "\n".join(body_lines),
+                    html_body=(
+                        "<p>Følgende produkt-endringer er registrert på bestillingsiden eller i admin:</p>"
+                        + "<ul>" + "".join(f"<li>{_html_mod.escape(l)}</li>" for l in body_lines) + "</ul>"
+                    ),
+                )
+        except Exception as e:
+            print(f"[packing-state] notify feilet: {e}")
         return jsonify({"ok": True})
     return jsonify(_packing_state)
 
@@ -1763,7 +1851,7 @@ def _send_contact_mail(from_email, from_name, subject, body):
 # ── ADMIN-VARSLER ──────────────────────────────────────────────────────────────
 # Send e-post + SMS til registrerte admin-mottakere ved nye/oppdaterte/leverte
 # ordre og innkommende kontaktmeldinger.
-ADMIN_EVENTS = ("new_order", "order_updated", "order_delivered", "new_message", "tracking_health")
+ADMIN_EVENTS = ("new_order", "order_updated", "order_delivered", "new_message", "tracking_health", "product_changed")
 ADMIN_NOTIFY_LOG = os.path.join(os.path.dirname(_BASE_DIR), "admin_notifications.jsonl")
 
 # Sveve (primær SMS-leverandør — norsk, gratis sender-ID-godkjenning)
