@@ -1813,7 +1813,7 @@ def _send_via_smtp(from_email, from_name, subject, body, to_email=None, reply_to
         return False, f"smtp-exception: {e}"
 
 
-def _send_contact_mail(from_email, from_name, subject, body):
+def _send_contact_mail(from_email, from_name, subject, body, html_body=None):
     """Prøv Resend først, så SMTP, og logg alltid til disk som backup."""
     # Alltid logg til disk (backup)
     try:
@@ -1828,14 +1828,14 @@ def _send_contact_mail(from_email, from_name, subject, body):
 
     # Prøv Resend først (enklere)
     if RESEND_API_KEY:
-        ok, detail = _send_via_resend(from_email, from_name, subject, body)
+        ok, detail = _send_via_resend(from_email, from_name, subject, body, html_body=html_body)
         print(f"[CONTACT] Resend: {detail}")
         if ok:
             return True, detail
 
     # Fallback: SMTP
     if SMTP_USER and SMTP_PASS:
-        ok, detail = _send_via_smtp(from_email, from_name, subject, body)
+        ok, detail = _send_via_smtp(from_email, from_name, subject, body, html_body=html_body)
         print(f"[CONTACT] SMTP: {detail}")
         if ok:
             return True, detail
@@ -2322,6 +2322,108 @@ def _notify_admins(event, subject, body, html_body=None):
           f"sms={sms_sent}/{sms_sent+sms_failed}, "
           f"push={push_sent}/{push_sent+push_failed}, "
           f"telegram={tg_sent}/{tg_sent+tg_failed}")
+
+
+def _format_message_email_html(source, navn, epost, melding, *, tlf="", emne="", session_id="", history=None):
+    """Pen HTML-versjon av kundemeldings-varselet — strukturert med banner,
+    avsender-info-tabell, full meldingstekst i sitatblokk, og evt. chat-historikk.
+    Brukes både for kontaktskjema-mailer og chat-handoff-mailer.
+    `source` = "Kontaktskjema" | "Chat" | annet."""
+    import html as _html
+    def esc(s): return _html.escape(str(s or ""))
+
+    # Banner-farge per kilde
+    if source.lower().startswith("chat"):
+        banner_color, banner_label = "#7C3AED", "Chat — kunde ber om hjelp"
+    else:
+        banner_color, banner_label = "#0d9488", "Ny melding"
+
+    # Avsender-info som tabell
+    info_rows = []
+    info_rows.append(("Navn", esc(navn) or "—"))
+    info_rows.append(("E-post", f'<a href="mailto:{esc(epost)}" style="color:#0d9488;text-decoration:none">{esc(epost)}</a>' if epost else "—"))
+    if tlf:
+        info_rows.append(("Telefon", f'<a href="tel:{esc(tlf)}" style="color:#0d9488;text-decoration:none">{esc(tlf)}</a>'))
+    info_rows.append(("Mottatt", datetime.now().strftime("%Y-%m-%d kl. %H:%M")))
+    info_rows.append(("Kilde", esc(source)))
+    if emne:
+        info_rows.append(("Emne", esc(emne)))
+    info_html = "".join(
+        f'<tr><td style="padding:6px 10px 6px 0;color:#777;font-size:13px;width:100px;vertical-align:top">{lbl}</td>'
+        f'<td style="padding:6px 0;color:#1a1a1a;font-size:14px">{val}</td></tr>'
+        for lbl, val in info_rows
+    )
+
+    # Melding som sitatblokk
+    melding_html = (
+        f'<div style="margin-top:18px">'
+        f'<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:8px">Melding</div>'
+        f'<div style="background:#F4F1EA;border-left:4px solid #0d9488;padding:14px 18px;border-radius:0 6px 6px 0;color:#1a1a1a;font-size:15px;line-height:1.6;white-space:pre-wrap">{esc(melding)}</div>'
+        f'</div>'
+    )
+
+    # Chat-historikk (valgfri)
+    history_html = ""
+    if isinstance(history, list) and history:
+        rows = []
+        for m in history[-12:]:
+            role = m.get("role") or ""
+            text = m.get("text") or ""
+            who_label = {"customer": navn or "Kunde", "ai": "Bot", "admin": "Admin"}.get(role, role.title() or "—")
+            color = "#0d9488" if role == "customer" else ("#7C3AED" if role == "ai" else "#1a1a1a")
+            rows.append(
+                f'<div style="margin-bottom:10px"><div style="font-size:11px;color:{color};font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">{esc(who_label)}</div>'
+                f'<div style="color:#1a1a1a;font-size:13.5px;line-height:1.5;white-space:pre-wrap">{esc(text)}</div></div>'
+            )
+        history_html = (
+            f'<div style="margin-top:18px">'
+            f'<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.6px;font-weight:700;margin-bottom:8px">Samtalehistorikk</div>'
+            f'<div style="background:#FAFAF8;padding:14px;border-radius:6px;border:1px solid #ECE8DC">{"".join(rows)}</div>'
+            f'</div>'
+        )
+
+    # Footer / call-to-action
+    cta_parts = []
+    if epost:
+        cta_parts.append(f'<a href="mailto:{esc(epost)}" style="display:inline-block;background:#0d9488;color:#fff;text-decoration:none;padding:10px 22px;border-radius:999px;font-weight:700;font-size:14px">Svar {esc(navn) or "kunden"}</a>')
+    if session_id:
+        cta_parts.append(f'<a href="https://admin.havoyet.no/#chat" style="display:inline-block;margin-left:10px;padding:10px 22px;border-radius:999px;font-size:14px;color:#0d9488;text-decoration:none;border:1px solid #0d9488;font-weight:600">Åpne chat i admin</a>')
+    cta_html = f'<div style="margin-top:22px;text-align:center">{"".join(cta_parts)}</div>' if cta_parts else ""
+
+    reply_hint = ""
+    if epost:
+        reply_hint = (
+            f'<div style="margin-top:16px;padding:10px 14px;background:#FFF8E1;border-left:3px solid #C8A45C;'
+            f'border-radius:0 4px 4px 0;font-size:12.5px;color:#5C4A1E">'
+            f'<strong>Tips:</strong> Svar direkte på denne e-posten — Reply-To peker til {esc(epost)}, '
+            f'så kunden får svaret rett i innboksen.'
+            f'</div>'
+        )
+
+    return (
+        f'<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;'
+        f'background:#F4F1EA;padding:24px 12px;color:#1a1a1a">'
+        f'<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;'
+        f'box-shadow:0 1px 3px rgba(0,0,0,.08)">'
+        # Banner
+        f'<div style="background:{banner_color};color:#fff;padding:18px 22px">'
+        f'<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.85">{banner_label}</div>'
+        f'<div style="font-size:22px;font-weight:700;margin-top:4px">{esc(navn) or "Kunde uten navn"}</div>'
+        f'</div>'
+        # Body
+        f'<div style="padding:22px 22px 26px">'
+        f'<table style="width:100%;border-collapse:collapse">{info_html}</table>'
+        f'{melding_html}'
+        f'{history_html}'
+        f'{cta_html}'
+        f'{reply_hint}'
+        f'</div>'
+        # Footer
+        f'<div style="background:#FAFAF8;padding:12px 22px;border-top:1px solid #ECE8DC;'
+        f'font-size:11px;color:#888;text-align:center">Havøyet — Bare fersk sjømat · '
+        f'<a href="https://havoyet.no" style="color:#888;text-decoration:none">havoyet.no</a></div>'
+        f'</div></div>'
+    )
 
 
 def _format_order_email_html(order, change_summary="", event=""):
@@ -3173,25 +3275,27 @@ def api_contact():
     if not navn or not epost or not melding:
         return jsonify({"ok": False, "error": "Navn, e-post og melding er påkrevet"}), 400
 
+    # Plain-text fallback (for e-postklienter som ikke renderer HTML)
     body = (
         f"Ny melding fra Havøyet-nettsiden\n"
-        f"{'='*54}\n\n"
+        f"{'-'*54}\n"
         f"Navn:     {navn}\n"
         f"E-post:   {epost}\n"
         f"Mottatt:  {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-        f"Melding:\n"
-        f"{'-'*54}\n"
-        f"{melding}\n"
-        f"{'-'*54}\n\n"
-        f"Svar på denne e-posten for å svare {navn} direkte —\n"
-        f"Reply-To peker til {epost}.\n"
+        f"Melding:\n{melding}\n\n"
+        f"Svar på denne e-posten for å nå {navn} direkte — Reply-To peker til {epost}.\n"
     )
-    ok, detail = _send_contact_mail(epost, navn, emne, body)
+    html_body = _format_message_email_html(
+        source="Kontaktskjema",
+        navn=navn, epost=epost, melding=melding, emne=emne,
+    )
+    ok, detail = _send_contact_mail(epost, navn, emne, body, html_body=html_body)
     # Send også varsel til registrerte admin-mottakere
     _notify_admins(
         "new_message",
         f"[Havøyet] Ny melding fra {navn}",
         body,
+        html_body=html_body,
     )
     return jsonify({"ok": ok, "detail": detail})
 
@@ -7651,27 +7755,35 @@ def _send_human_handoff_mail(session, customer_question):
     """Sender mail til erik+stian når AI escalerer en samtale."""
     name = (session.get("customer") or {}).get("name") or "Ukjent"
     email = (session.get("customer") or {}).get("email") or ""
+    phone = (session.get("customer") or {}).get("phone") or ""
     sid = session.get("id")
     subj = f"[Havøyet chat] {name} ber om hjelp"
+    # Plain-text fallback
     history_text = ""
     for m in (session.get("messages") or [])[-12:]:
         who = {"customer": name or "Kunde", "ai": "Bot", "admin": "Admin"}.get(m.get("role"), m.get("role"))
         history_text += f"{who}: {m.get('text','')}\n\n"
     body = (
         f"Ny chat-henvendelse fra havoyet.no\n"
-        f"{'='*54}\n\n"
+        f"{'-'*54}\n"
         f"Navn:    {name}\n"
         f"E-post:  {email or '(ikke oppgitt)'}\n"
         f"Tid:     {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-        f"Kundens spørsmål:\n{'-'*54}\n{customer_question}\n{'-'*54}\n\n"
-        f"Samtalehistorikk:\n{'-'*54}\n{history_text}\n"
-        f"Åpne i admin: https://www.havoyet.no/admin.html#chat\n"
-        f"Session-ID: {sid}\n"
+        f"Spørsmål:\n{customer_question}\n\n"
+        f"Samtalehistorikk:\n{history_text}\n"
+        f"Åpne i admin: https://admin.havoyet.no/#chat\n"
+    )
+    html_body = _format_message_email_html(
+        source="Chat",
+        navn=name, epost=email, tlf=phone,
+        melding=customer_question,
+        session_id=sid,
+        history=session.get("messages") or [],
     )
     sent_any = False
     for to in CHAT_HUMAN_RECIPIENTS:
         try:
-            ok, _ = _send_admin_mail(to, subj, body)
+            ok, _ = _send_admin_mail(to, subj, body, html_body=html_body)
             if ok:
                 sent_any = True
         except Exception as e:
