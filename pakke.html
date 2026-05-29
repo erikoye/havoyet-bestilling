@@ -2089,8 +2089,21 @@ function renderItemQtyEditor(item, i){
   const gramsPerUnit = _extractGramsFromText(variantText);
 
   let displayQty = String(qty);
-  if (gramsPerUnit && unit !== 'stk') {
-    // Vekt-priset produkt: skaler qty × porsjons-gram. Vis kg når totalen er ≥ 1000.
+  if (unit === 'g' || unit === 'kg') {
+    // Linja er allerede lagret i vekt (etter migrasjon) — IKKE multipliser med
+    // gramsPerUnit fra variantLabel. qty er det faktiske antall g/kg.
+    const totalG = unit === 'kg' ? qty * 1000 : qty;
+    if (totalG >= 1000) {
+      const kg = totalG / 1000;
+      displayQty = (Number.isInteger(kg) ? String(kg) : kg.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');
+      unit = 'kg';
+    } else {
+      displayQty = String(Math.round(totalG));
+      unit = 'g';
+    }
+  } else if (gramsPerUnit && unit !== 'stk') {
+    // Legacy-format: qty=antall porsjoner, gramsPerUnit fra variantLabel —
+    // skaler så pillen viser total vekt. Brukes for ordrer som ikke ble migrert.
     const total = qty * gramsPerUnit;
     if (total >= 1000) {
       const kg = total / 1000;
