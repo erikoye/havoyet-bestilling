@@ -5967,14 +5967,44 @@ def api_admin_order_refund(ordrenr):
         # 2) Ikke funnet i Stripe — prøv Vipps
         vipps_ref, vipps_rec = _find_vipps_reference_for_order(ordrenr)
     if not pi_id and not vipps_ref:
-        return jsonify({
-            "ok": False,
-            "error": f"Fant ingen Stripe- eller Vipps-betaling for ordre {ordrenr}. "
-                     f"Refusjon kan kun utføres for kortbetaling (Stripe) eller Vipps-betaling gjort via nettsiden."
-        }), 404
+        # Ingen API-referanse — la admin velge "manuell refusjon" eksplisitt
+        # via ?manual=1. Da logges refusjonen kun lokalt på ordren slik at
+        # regnskap og status stemmer; admin må selv refundere i Vipps-appen
+        # eller via kortets bakkanal.
+        if not body.get("manual"):
+            return jsonify({
+                "ok": False,
+                "error": f"Fant ingen Stripe- eller Vipps-betaling for ordre {ordrenr}. "
+                         f"Vipps-betalingen ble importert manuelt (CSV/PDF) og kan ikke refunderes via Vipps API. "
+                         f"Refunder via Vipps-appen og bruk 'Logg manuell refusjon'.",
+                "needs_manual": True,
+                "betaling": (next((str((o.get('kunde') or {}).get('betaling') or '') for o in _manual_orders if str(o.get('ordrenr') or '').strip() == str(ordrenr).strip()), '')),
+            }), 404
 
     refund_record = None
-    if pi_id:
+    paid_amount = 0
+    if not pi_id and not vipps_ref and body.get("manual"):
+        # Manuell refusjon — ingen ekstern API-kall. Admin har gjort refusjonen
+        # selv (f.eks. via Vipps-appen) og logger her for at admin-historikken
+        # og REFUNDED-status skal bli riktig.
+        refund_record = {
+            "id":             f"manual-{ordrenr}-{int(time.time())}",
+            "amount_ore":     amount_ore,
+            "amount_kr":      round(amount_ore / 100, 2),
+            "reason":         reason,
+            "note":           note,
+            "lines":          lines,
+            "status":         "manual_logged",
+            "provider":       "manual",
+            "created_at":     time.time(),
+            "by":             (user or {}).get("email"),
+        }
+        # Hent ordrens totalsum for å avgjøre om dette er full refusjon
+        for o in _manual_orders:
+            if str(o.get("ordrenr") or "").strip() == str(ordrenr).strip():
+                paid_amount = int(round(float(o.get("sum") or o.get("total") or 0) * 100))
+                break
+    elif pi_id:
         if not _stripe_configured():
             return jsonify({"ok": False, "error": "Stripe ikke konfigurert"}), 503
         try:
@@ -5997,8 +6027,8 @@ def api_admin_order_refund(ordrenr):
             "by":             (user or {}).get("email"),
         }
         paid_amount = int((payment_rec or {}).get("amount") or 0)
-    else:
-        # Vipps refusjon
+    elif vipps_ref:
+        # Vipps refusjon via ePayment API
         if not _vipps_configured():
             return jsonify({"ok": False, "error": "Vipps ikke konfigurert"}), 503
         ok, vbody, status = _vipps_refund(vipps_ref, amount_ore, idem_suffix=str(int(time.time()*1000)))
