@@ -1104,6 +1104,11 @@ const KASSE_SLUG_TO_TYPE = {
   'din-skalldyrkasse':       'custom',
 };
 
+// slug → optionPrices for variant-produkter (f.eks. Krabbeskjell 200 g / 150 g).
+// Fylles fra /api/products/overrides slik at pakke-visningen kan utlede valgt
+// størrelse fra linjas pris og vise den i varenavnet («Krabbeskjell 200 g»).
+const PRODUCT_OPTION_PRICES = {};
+
 // Hent admin-definerte kasseInnhold fra Flask og overstyr KASSE_RECIPES.
 // Tåler at endepunktet ikke svarer — da beholdes default-oppskriftene.
 async function loadKasseRecipesFromOverrides() {
@@ -1112,6 +1117,12 @@ async function loadKasseRecipesFromOverrides() {
     if (!r.ok) return;
     const overrides = await r.json();
     if (!overrides || typeof overrides !== 'object') return;
+    // Bygg variant-pris-map for alle produkter med optionPrices.
+    Object.entries(overrides).forEach(([slug, ov]) => {
+      if (ov && ov.optionPrices && typeof ov.optionPrices === 'object') {
+        PRODUCT_OPTION_PRICES[slug] = ov.optionPrices;
+      }
+    });
     Object.entries(KASSE_SLUG_TO_TYPE).forEach(([slug, type]) => {
       const ov = overrides[slug];
       if (!ov || !Array.isArray(ov.kasseInnhold) || !ov.kasseInnhold.length) return;
@@ -1921,12 +1932,32 @@ function variantChips(item) {
   </div>`;
 }
 
+// Utleder størrelses-etikett ("200 g") for variant-produkter fra linjas slug + pris
+// matchet mot produktets optionPrices. Variant-nøkkelen kan være beskrivende
+// ("Krabbeklør 200 g") — vi trekker ut bare vekten.
+function variantSizeLabel(item) {
+  if (!item || !item.slug) return '';
+  const op = PRODUCT_OPTION_PRICES[item.slug];
+  if (!op) return '';
+  const keys = Object.keys(op);
+  if (!keys.length) return '';
+  const qty = Number(item.qty || item.quantity) || 0;
+  const perUnit = Number(item.price) || (Number(item.pris) && qty ? Number(item.pris) / qty : 0);
+  if (!perUnit) return '';
+  const key = keys.find(k => Number(op[k]) === perUnit);
+  if (!key) return '';
+  const wm = String(key).match(/(\d+(?:[.,]\d+)?)\s*(kg|g)\b/i);
+  return wm ? `${wm[1]} ${wm[2].toLowerCase()}` : key;
+}
+
 function formatItemName(item) {
+  const sz = variantSizeLabel(item);
+  const withSize = s => (sz && !s.includes(sz)) ? `${s} ${sz}` : s;
   const name = stripWeightSuffix(item.name || '');
   const unit = item.unit || '';
-  if (!unit) return name;
+  if (!unit) return withSize(name);
   // Finn tall i parentes, f.eks. "(2300)" eller "(2300 – uten skinn)"
-  return name.replace(/\((\d+(?:[.,]\d+)?)(\s*[–\-].*?)?\)/, (match, num, rest) => {
+  return withSize(name.replace(/\((\d+(?:[.,]\d+)?)(\s*[–\-].*?)?\)/, (match, num, rest) => {
     const val = parseFloat(num.replace(',', '.'));
     const restStr = rest || '';
     if (unit === 'g' && val >= 1000) {
@@ -1934,7 +1965,7 @@ function formatItemName(item) {
       return `(${kg} kg${restStr})`;
     }
     return `(${num} ${unit}${restStr})`;
-  });
+  }));
 }
 
 // Sikrer at ordren har items-array. Manuelle ordre kan ankomme i admin-shape (varer) —
