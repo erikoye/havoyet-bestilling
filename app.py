@@ -9199,17 +9199,20 @@ def _fmt_levdag_for_eta(iso_str: str) -> tuple[str, str]:
     return full, kort
 
 
-def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str) -> tuple[bool, str]:
+def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str,
+                                 ignore_enabled: bool = False) -> tuple[bool, str]:
     """Send leveringstids-varsling til en kunde basert på route_eta-mal.
 
     Sender KUN e-post (Resend, med SMTP-fallback). SMS-kanal er fjernet for
     denne varslingstypen — admin trykker «Send melding til kunder» på Rute-
     siden og forventer at det «bare skal funke» som mail.
+
+    ignore_enabled=True hopper over enabled-sjekken (brukes av test-endepunktet).
     """
     if not isinstance(order, dict):
         return False, "no-order"
     cfg = (_customer_notify_config or {}).get("route_eta") or {}
-    if not cfg.get("enabled", True):
+    if not ignore_enabled and not cfg.get("enabled", True):
         return False, "disabled-by-config"
 
     kunde = order.get("kunde") or {}
@@ -9233,9 +9236,7 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str)
         "leveringsdato": leveringsdato_full,
         "leveringsdato_kort": leveringsdato_kort,
     }
-    subject = _kv_render(cfg.get("subject"), **tmpl_vars) or (
-        f"Estimert leveringstid for bestilling #{nr} — Havøyet"
-    )
+    subject = "Din leveringstid — Havøyet"
     body_template = cfg.get("body") or (
         "Hei {navn},\n\nVi leverer bestillingen din #{ordrenr} {leveringsdato_kort} "
         "ca. kl. {eta_clock}.\n\nFølg live: {tracking_url}\n\n— Havøyet"
@@ -9245,38 +9246,43 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str)
     if not (RESEND_API_KEY or (SMTP_USER and SMTP_PASS)):
         return False, "no-mail-config"
 
-    # Strukturert HTML — oversiktlig + tilpasset BÅDE lys og mørk modus via
-    # prefers-color-scheme. Lys: hvitt kort, svart tekst. Mørk: mørkt kort, hvit
-    # tekst. color-scheme signaliserer at vi støtter begge (hindrer auto-inversjon).
+    # Låst MØRK HTML-mail (mørk bakgrunn + helt hvit tekst, alle moduser). Robust mot
+    # Apple Mail: (1) bakgrunnsfargene er 1x1 background-image (Apple recolorer ikke
+    # bilde-bakgrunner → kortet forblir ekte mørkt), (2) usynlige zero-width-tegn etter
+    # tall hindrer auto-lenking av dato/tid (ellers blir de blå med ulik farge).
     def _esc(s):
         return str(s if s is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    def _nodetect(s):
+        out = []
+        for ch in str(s if s is not None else ""):
+            out.append(ch)
+            if ch.isdigit():
+                out.append("​")
+        return "".join(out)
     _konto = tmpl_vars["kontolenke"]
-    # Låst MØRK design (ikke adaptiv): mørk bakgrunn + helt hvit tekst i alle moduser.
-    # color-scheme:dark + light-mode-override hindrer at e-postklienter lyser den opp.
+    _PAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPgkhAHAABpADotZXrpAAAAAElFTkSuQmCC"
+    _CARD = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQl5UGAACeAFD/7Uz0AAAAAElFTkSuQmCC"
+    _CHIP = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPgFxECAABrADbKNvMVAAAAAElFTkSuQmCC"
     _head = (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"color-scheme\" content=\"dark\">"
         "<meta name=\"supported-color-schemes\" content=\"dark\">"
-        "<style>"
-        ":root{color-scheme:dark;supported-color-schemes:dark;}"
-        "a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !important;font-weight:inherit !important;}"
-        "@media (prefers-color-scheme:light){.hv-page{background:#0A1817 !important;}.hv-card{background:#171D1B !important;}.hv-chip{background:#0F1412 !important;}}"
-        "[data-ogsc] .hv-card{background:#171D1B !important;}"
-        "</style></head>"
+        "<meta name=\"format-detection\" content=\"telephone=no,date=no,address=no,email=no\">"
+        "<style>a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !important;font-weight:inherit !important;}</style></head>"
     )
     html_body = (
         _head +
-        '<body class="hv-page" style="margin:0;background:#0A1817">'
+        f'<body style="margin:0;background:#0A1817;background-image:url({_PAGE})">'
         '<div style="padding:24px 12px;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">'
-        '<div class="hv-card" style="max-width:520px;margin:0 auto;background:#171D1B;border:1px solid #2C3632;border-radius:14px;overflow:hidden">'
+        f'<div style="max-width:520px;margin:0 auto;background:#171D1B;background-image:url({_CARD});border:1px solid #2C3632;border-radius:14px;overflow:hidden">'
         '<div style="background:#0E3A38;padding:18px 28px"><span style="color:#FFFFFF;font-weight:700;font-size:18px">Havøyet</span></div>'
         '<div style="padding:28px 28px 10px">'
         f'<p style="font-size:15px;color:#FFFFFF;margin:0 0 16px">Hei {_esc(navn or "kunde")},</p>'
         '<p style="font-size:15px;color:#FFFFFF;margin:0 0 18px">Leveringen din er satt opp:</p>'
-        '<div class="hv-chip" style="background:#0F1412;border-radius:12px;padding:18px;text-align:center;margin:0 0 20px">'
+        f'<div style="background:#0F1412;background-image:url({_CHIP});border-radius:12px;padding:18px;text-align:center;margin:0 0 20px">'
         f'<div style="font-size:12px;color:#FFFFFF;text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Bestilling #{_esc(nr)}</div>'
-        f'<div style="font-size:20px;font-weight:700;color:#FFFFFF;margin-top:8px">{_esc(tmpl_vars["leveringsdato"])}</div>'
-        f'<div style="font-size:30px;font-weight:800;color:#41C1BA;margin-top:2px">ca. kl. {_esc(eta_clock or "—")}</div>'
+        f'<div style="font-size:20px;font-weight:700;color:#FFFFFF;margin-top:8px">{_nodetect(_esc(tmpl_vars["leveringsdato"]))}</div>'
+        f'<div style="font-size:30px;font-weight:800;color:#41C1BA;margin-top:2px">ca. kl. {_nodetect(_esc(eta_clock or "—"))}</div>'
         '</div>'
         '<p style="font-size:14px;line-height:1.6;color:#FFFFFF;margin:0 0 18px">Tidspunktet er et estimat — vi kan komme litt før eller senere avhengig av trafikken og rekkefølgen på dagens stopp. Skulle vi måtte omrokere ruten mye, gir vi deg beskjed så fort vi vet nytt tidspunkt.</p>'
         f'<div style="text-align:center;margin:0 0 20px"><a href="{_esc(_konto)}" style="display:inline-block;background:#41C1BA;color:#0A1817;font-weight:700;font-size:15px;padding:14px 30px;border-radius:10px;text-decoration:none">Følg leveringen live &rarr;</a></div>'
@@ -9297,6 +9303,25 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str)
         )
 
     return mail_ok, f"mail={mail_detail}"
+
+
+@app.route("/api/_test-route-eta", methods=["GET"])
+def _test_route_eta():
+    """Midlertidig: send en EKTE rute-ETA-mail (samme funksjon som rute-siden bruker)
+    til erik@havoyet.no, slik at design kan verifiseres. Gated av en delt nøkkel.
+    Kan fjernes etter verifisering."""
+    if request.args.get("key") != "hv-eta-test-9f2a":
+        return jsonify({"error": "forbidden"}), 403
+    order = {
+        "ordrenr": request.args.get("nr", "1042"),
+        "kunde": {"navn": "Erik", "epost": "erik@havoyet.no",
+                  "leveringsdag": request.args.get("dag", "2026-06-02")},
+    }
+    ok, detail = _send_route_eta_notification(
+        order, request.args.get("eta", "15:20"), "https://havoyet.no/konto",
+        ignore_enabled=True,
+    )
+    return jsonify({"ok": ok, "detail": detail, "subject": "Din leveringstid — Havøyet"})
 
 
 # ── ABAX ETA-integrasjon (kunder ser "X minutter til levering") ──────────
