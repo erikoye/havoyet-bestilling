@@ -3289,14 +3289,10 @@ def api_contact():
         source="Kontaktskjema",
         navn=navn, epost=epost, melding=melding, emne=emne,
     )
+    # Kun ÉN varsling: den dedikerte kontakt-mailen (Reply-To peker til kunden).
+    # Tidligere sendte vi også _notify_admins("new_message", …) som ga en dublett
+    # ([Havøyet] Ny melding) i innboksen — fjernet på brukerønske.
     ok, detail = _send_contact_mail(epost, navn, emne, body, html_body=html_body)
-    # Send også varsel til registrerte admin-mottakere
-    _notify_admins(
-        "new_message",
-        f"[Havøyet] Ny melding fra {navn}",
-        body,
-        html_body=html_body,
-    )
     return jsonify({"ok": ok, "detail": detail})
 
 
