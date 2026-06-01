@@ -9245,26 +9245,41 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str)
     if not (RESEND_API_KEY or (SMTP_USER and SMTP_PASS)):
         return False, "no-mail-config"
 
-    # Strukturert HTML-versjon — fremhevet dato/tid + «Følg leveringen»-knapp,
-    # så mailen er oversiktlig (ikke en vegg av tekst). Plain-text `body` er fallback.
+    # Strukturert HTML — oversiktlig + tilpasset BÅDE lys og mørk modus via
+    # prefers-color-scheme. Lys: hvitt kort, svart tekst. Mørk: mørkt kort, hvit
+    # tekst. color-scheme signaliserer at vi støtter begge (hindrer auto-inversjon).
     def _esc(s):
         return str(s if s is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     _konto = tmpl_vars["kontolenke"]
+    _style = (
+        "<style>"
+        ":root{color-scheme:light dark;supported-color-schemes:light dark;}"
+        "@media (prefers-color-scheme:dark){"
+        ".hv-card{background:#171D1B !important;border-color:#2C3632 !important;}"
+        ".hv-chip{background:#0F1412 !important;}"
+        ".hv-main{color:#FFFFFF !important;}"
+        ".hv-body{color:#C7CECC !important;}"
+        ".hv-muted{color:#8C9794 !important;}"
+        ".hv-date{color:#FFFFFF !important;}"
+        "}"
+        "</style>"
+    )
     html_body = (
-        '<div style="background:#FBFAF7;padding:24px 12px;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">'
-        '<div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #E6E1D6">'
+        _style +
+        '<div style="padding:24px 12px;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">'
+        '<div class="hv-card" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #E6E1D6">'
         '<div style="background:#0E3A38;padding:18px 28px"><span style="color:#ffffff;font-weight:700;font-size:18px">Havøyet</span></div>'
         '<div style="padding:28px 28px 10px">'
-        f'<p style="font-size:15px;color:#080A09;margin:0 0 16px">Hei {_esc(navn or "kunde")},</p>'
-        '<p style="font-size:15px;color:#5A5A55;margin:0 0 18px">Leveringen din er satt opp:</p>'
-        '<div style="background:#F2EFE8;border-radius:12px;padding:18px;text-align:center;margin:0 0 20px">'
-        f'<div style="font-size:12px;color:#8C8A82;text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Bestilling #{_esc(nr)}</div>'
-        f'<div style="font-size:20px;font-weight:700;color:#0E3A38;margin-top:8px">{_esc(tmpl_vars["leveringsdato"])}</div>'
+        f'<p class="hv-main" style="font-size:15px;color:#080A09;margin:0 0 16px">Hei {_esc(navn or "kunde")},</p>'
+        '<p class="hv-body" style="font-size:15px;color:#5A5A55;margin:0 0 18px">Leveringen din er satt opp:</p>'
+        '<div class="hv-chip" style="background:#F2EFE8;border-radius:12px;padding:18px;text-align:center;margin:0 0 20px">'
+        f'<div class="hv-muted" style="font-size:12px;color:#8C8A82;text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Bestilling #{_esc(nr)}</div>'
+        f'<div class="hv-date" style="font-size:20px;font-weight:700;color:#0E3A38;margin-top:8px">{_esc(tmpl_vars["leveringsdato"])}</div>'
         f'<div style="font-size:30px;font-weight:800;color:#2FA6A0;margin-top:2px">ca. kl. {_esc(eta_clock or "—")}</div>'
         '</div>'
-        '<p style="font-size:14px;line-height:1.6;color:#5A5A55;margin:0 0 18px">Tidspunktet er et estimat — vi kan komme litt før eller senere avhengig av trafikken og rekkefølgen på dagens stopp. Skulle vi måtte omrokere ruten mye, gir vi deg beskjed så fort vi vet nytt tidspunkt.</p>'
+        '<p class="hv-body" style="font-size:14px;line-height:1.6;color:#5A5A55;margin:0 0 18px">Tidspunktet er et estimat — vi kan komme litt før eller senere avhengig av trafikken og rekkefølgen på dagens stopp. Skulle vi måtte omrokere ruten mye, gir vi deg beskjed så fort vi vet nytt tidspunkt.</p>'
         f'<div style="text-align:center;margin:0 0 20px"><a href="{_esc(_konto)}" style="display:inline-block;background:#41C1BA;color:#0A1817;font-weight:700;font-size:15px;padding:14px 30px;border-radius:10px;text-decoration:none">Følg leveringen live &rarr;</a></div>'
-        '<p style="font-size:13px;line-height:1.6;color:#8C8A82;margin:0">Minuttene oppdateres fra bilens posisjon så snart sjåføren er ute på ruten. Har du spørsmål, svar gjerne på denne e-posten.</p>'
+        '<p class="hv-muted" style="font-size:13px;line-height:1.6;color:#8C8A82;margin:0">Minuttene oppdateres fra bilens posisjon så snart sjåføren er ute på ruten. Har du spørsmål, svar gjerne på denne e-posten.</p>'
         '</div></div></div>'
     )
 
