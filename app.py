@@ -9305,25 +9305,6 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str,
     return mail_ok, f"mail={mail_detail}"
 
 
-@app.route("/api/_test-route-eta", methods=["GET"])
-def _test_route_eta():
-    """Midlertidig: send en EKTE rute-ETA-mail (samme funksjon som rute-siden bruker)
-    til erik@havoyet.no, slik at design kan verifiseres. Gated av en delt nøkkel.
-    Kan fjernes etter verifisering."""
-    if request.args.get("key") != "hv-eta-test-9f2a":
-        return jsonify({"error": "forbidden"}), 403
-    order = {
-        "ordrenr": request.args.get("nr", "1042"),
-        "kunde": {"navn": "Erik", "epost": "erik@havoyet.no",
-                  "leveringsdag": request.args.get("dag", "2026-06-02")},
-    }
-    ok, detail = _send_route_eta_notification(
-        order, request.args.get("eta", "15:20"), "https://havoyet.no/konto",
-        ignore_enabled=True,
-    )
-    return jsonify({"ok": ok, "detail": detail, "subject": "Din leveringstid — Havøyet"})
-
-
 # ── ABAX ETA-integrasjon (kunder ser "X minutter til levering") ──────────
 def _driver_set_order_status(order_id, new_status):
     """Kalles fra sjåfør-appen (tracking_routes) når et stopp markeres som levert
