@@ -6159,8 +6159,8 @@ def api_admin_order_refund(ordrenr):
         paid_amount = int((vipps_rec or {}).get("amount") or 0)
 
     # Logg refusjonen mot ordren i _manual_orders så den vises i admin
+    # (kun lesing + mutasjon av elementer — ingen rebinding, så ingen `global`)
     try:
-        global _manual_orders
         for o in _manual_orders:
             if str(o.get("ordrenr") or "").strip() == str(ordrenr).strip():
                 refunds = o.setdefault("refunds", [])
@@ -6966,6 +6966,23 @@ def _analytics_admin_required():
         return None, (jsonify({"ok": False, "error": "Bare admin"}), 403)
     return user, None
 
+def _client_geo():
+    """Grov geolokasjon fra Vercel-edge-headere (videresendes ved proxy til
+    Render). Vi lagrer KUN land/region/by — aldri IP — så vi holder løftet om
+    anonym analyse i samtykkebanneret."""
+    h = request.headers
+    country = (h.get("x-vercel-ip-country") or "").strip().upper()
+    region  = (h.get("x-vercel-ip-country-region") or "").strip()
+    city    = (h.get("x-vercel-ip-city") or "").strip()
+    if city:
+        try:
+            from urllib.parse import unquote
+            city = unquote(city)
+        except Exception:
+            pass
+    return {"country": country, "region": region, "city": city}
+
+
 @app.route("/api/analytics/event", methods=["POST", "OPTIONS"])
 def api_analytics_event():
     """Offentlig endpoint — godtar batch eller enkel event fra nettside-tracker.
@@ -6987,6 +7004,8 @@ def api_analytics_event():
     if not isinstance(events, list):
         return jsonify({"ok": False, "error": "events må være liste"}), 400
     ua = (request.headers.get("User-Agent") or "")[:200]
+    geo = _client_geo()
+    seen_sids = set()
     accepted = 0
     for raw in events[:100]:
         if not isinstance(raw, dict):
@@ -7032,8 +7051,17 @@ def api_analytics_event():
                 ev["referrer"] = str(raw.get("referrer") or "")[:200]
         except Exception:
             continue
+        if ev.get("sid"):
+            seen_sids.add(ev["sid"])
         _analytics_record_event(ev)
         accepted += 1
+    # Fest grov geo (land/by) på sesjonene i denne batchen — kun hvis ikke satt.
+    if geo.get("country") and seen_sids:
+        with ANALYTICS_LOCK:
+            for _sid in seen_sids:
+                _s = _analytics["sessions"].get(_sid)
+                if _s and not _s.get("geo"):
+                    _s["geo"] = geo
     return jsonify({"ok": True, "accepted": accepted})
 
 def _range_to_ms_window(rng: str, from_iso: str = "", to_iso: str = "") -> tuple[int, int] | None:
@@ -7311,6 +7339,41 @@ def api_analytics_dropoff():
         cnt[p] = cnt.get(p, 0) + 1
     rows = sorted(cnt.items(), key=lambda kv: -kv[1])[:20]
     return jsonify({"ok": True, "rows": [{"path": p, "count": n} for p, n in rows]})
+
+@app.route("/api/analytics/geo", methods=["GET"])
+def api_analytics_geo():
+    """Hvor besøkende kommer fra (grov plassering fra Vercel-edge). Aggregert
+    pr. by for Norge + land-fordeling for utenlandsk trafikk. Ingen IP lagres."""
+    user, err = _analytics_admin_required()
+    if err: return err
+    window = _analytics_range_window()
+    if window is None:
+        return jsonify({"ok": False, "error": "ugyldig range"}), 400
+    sessions, _ = _filtered_analytics(window)
+    by_city, by_country = {}, {}
+    no_count = foreign = unknown = total = 0
+    for s in sessions.values():
+        total += 1
+        g = s.get("geo") or {}
+        country = (g.get("country") or "").upper()
+        if not country:
+            unknown += 1
+            continue
+        if country == "NO":
+            no_count += 1
+            city = (g.get("city") or "").strip() or "Ukjent by"
+            by_city[city] = by_city.get(city, 0) + 1
+        else:
+            foreign += 1
+            by_country[country] = by_country.get(country, 0) + 1
+    cities    = sorted(by_city.items(),    key=lambda kv: -kv[1])[:20]
+    countries = sorted(by_country.items(), key=lambda kv: -kv[1])[:10]
+    return jsonify({
+        "ok": True, "total": total,
+        "norway": no_count, "foreign": foreign, "unknown": unknown,
+        "cities":    [{"name": n, "count": c} for n, c in cities],
+        "countries": [{"code": n, "count": c} for n, c in countries],
+    })
 
 @app.route("/api/analytics/pages", methods=["GET"])
 def api_analytics_pages():
