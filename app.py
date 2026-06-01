@@ -9381,7 +9381,9 @@ try:
         state_dir=STATE_DIR,
         admin_check=_user_from_request,
         sms_sender=_send_admin_sms,
-        route_eta_sender=_send_route_eta_notification,
+        # «Send tidspunkt til kunden» på rute-siden skal ALLTID sende mailen når den
+        # trykkes — derfor ignore_enabled=True (uavhengig av route_eta-bryteren).
+        route_eta_sender=(lambda o, e, u: _send_route_eta_notification(o, e, u, ignore_enabled=True)),
         tracking_base_url=os.environ.get("TRACKING_PUBLIC_URL", "https://bestilling.havoyet.no"),
         status_hook=_driver_set_order_status,
         admin_notifier=_notify_admins,
