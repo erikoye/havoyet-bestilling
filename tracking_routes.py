@@ -23,6 +23,7 @@ from abax import AbaxClient, AbaxError, AbaxNotConnected
 from eta import (
     compute_eta,
     fallback_eta,
+    haversine_km,
     geocode,
     google_directions_fixed_order,
     matrix_one_to_many,
@@ -1054,9 +1055,22 @@ def public_order_eta(order_id: str):
 
     eta = compute_eta(position["lat"], position["lon"], dest[0], dest[1])
 
+    # «På vei» = sjåføren har faktisk kjørt ut. Vi viser ikke ETA før bilen er
+    # LIVE fra ABAX OG enten er i bevegelse eller har forlatt depotet. Uten dette
+    # regnet vi alltid ut en ETA (også fra depot/parkert bil) og viste «X min unna»
+    # selv om sjåføren ikke var i bilen ennå.
+    _speed = position.get("speed_kmh") or 0
+    _depot = _state.get("depot")
+    _dist_depot = (haversine_km(position["lat"], position["lon"], _depot[0], _depot[1])
+                   if _depot else None)
+    en_route = (source == "abax") and (
+        _speed > 3 or (_dist_depot is not None and _dist_depot > 0.6)
+    )
+
     return jsonify({
         "order_id": order_id,
         "status": order.get("status"),
+        "en_route": bool(en_route),
         "minutes": int(round(eta["duration_min"])),
         "duration_min": eta["duration_min"],
         "distance_km": eta["distance_km"],
