@@ -3477,8 +3477,9 @@ def _overlay_packing_avail(o):
     keys = [str(o.get("id") or ""), str(o.get("ordrenr") or "")]
     pstate = None
     for k in keys:
-        if k and isinstance(_packing_state.get(k), dict):
-            pstate = _packing_state[k]
+        cand = _packing_state.get(k)
+        if k and isinstance(cand, (dict, list)):
+            pstate = cand
             break
     if not pstate:
         return o
@@ -3488,7 +3489,12 @@ def _overlay_packing_avail(o):
     new_varer = []
     for i, v in enumerate(varer):
         vv = dict(v) if isinstance(v, dict) else v
-        meta = pstate.get(str(i)) or pstate.get(i)
+        # packing-state per ordre kan være en LISTE ([{...}, ...]) eller et
+        # objekt keyet på indeks ("0","1"). Håndter begge.
+        if isinstance(pstate, list):
+            meta = pstate[i] if i < len(pstate) else None
+        else:
+            meta = pstate.get(str(i)) or pstate.get(i)
         if isinstance(vv, dict) and isinstance(meta, dict):
             if meta.get("avail"):
                 vv["avail"] = meta["avail"]
