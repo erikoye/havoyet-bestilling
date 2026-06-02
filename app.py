@@ -3469,17 +3469,55 @@ def api_resend_customer_confirmation(ordrenr):
 
 
 # ── KUNDE-KONTO: ordrehistorikk + favoritter (identifiseres via e-post) ──────
+def _overlay_packing_avail(o):
+    """Returner en kopi av ordren der hver varelinjes `avail` (og veide vekt)
+    speiler packing-state fra pakke-/admin-flyten. Uten dette viste kundesiden
+    ordrelinjas opprinnelige `avail` (ofte 'unsure'/Bekreftes) selv om admin
+    hadde markert varen Tilgjengelig i pakke-staten → admin og nettside usynk."""
+    keys = [str(o.get("id") or ""), str(o.get("ordrenr") or "")]
+    pstate = None
+    for k in keys:
+        if k and isinstance(_packing_state.get(k), dict):
+            pstate = _packing_state[k]
+            break
+    if not pstate:
+        return o
+    varer = o.get("varer") or []
+    if not isinstance(varer, list):
+        return o
+    new_varer = []
+    for i, v in enumerate(varer):
+        vv = dict(v) if isinstance(v, dict) else v
+        meta = pstate.get(str(i)) or pstate.get(i)
+        if isinstance(vv, dict) and isinstance(meta, dict):
+            if meta.get("avail"):
+                vv["avail"] = meta["avail"]
+                vv["avail_confirmed"] = True   # admin/pakke har eksplisitt satt status → autoritativ
+
+            if meta.get("weight") not in (None, ""):
+                vv["packed_weight"] = meta["weight"]
+                if meta.get("weightUnit"):
+                    vv["packed_weight_unit"] = meta["weightUnit"]
+            if meta.get("confirmedReplacement"):
+                vv["confirmedReplacement"] = meta["confirmedReplacement"]
+        new_varer.append(vv)
+    oc = dict(o)
+    oc["varer"] = new_varer
+    return oc
+
+
 def _orders_for_email(email):
     """Samler alle ordre som matcher en e-postadresse."""
     email = (email or "").strip().lower()
     if not email:
         return []
     orders = []
-    # Manuelle ordre lagret via checkout-skjema
+    # Manuelle ordre lagret via checkout-skjema. Speil packing-state-avail inn
+    # på varelinjene så kundesiden viser samme tilgjengelighet som admin/pakke.
     for o in _manual_orders:
         kunde_epost = ((o.get("kunde") or {}).get("epost") or "").lower()
         if kunde_epost == email:
-            orders.append(o)
+            orders.append(_overlay_packing_avail(o))
     # Sorter nyeste først
     def _key(o):
         return o.get("dato") or o.get("created_at") or ""
