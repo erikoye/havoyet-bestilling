@@ -1067,10 +1067,34 @@ def public_order_eta(order_id: str):
         _speed > 3 or (_dist_depot is not None and _dist_depot > 0.6)
     )
 
+    # Rute-tilstand for trinnvis kunde-visning:
+    #   ikke godkjent      → frontend viser bare dato + valgt vindu
+    #   godkjent (ca-tid)  → "ca. {estimated_eta_clock}"
+    #   på vei + kø        → "{stops_before} leveringer før deg"
+    #   på vei + nest/først→ live GPS-minutter
+    route_date = order.get("route_date")
+    my_idx = order.get("route_stop_index")
+    day = _get_day_state(route_date) if route_date else {}
+    estimated_eta_clock = order.get("estimated_eta_clock") or ""
+    approved = bool(day.get("approved")) or bool(estimated_eta_clock)
+    stops_before = None
+    if route_date is not None and my_idx is not None:
+        cnt = 0
+        for o in (_state["orders_ref"]() or []):
+            if (o.get("route_date") == route_date
+                    and isinstance(o.get("route_stop_index"), int)
+                    and o["route_stop_index"] < my_idx
+                    and not _is_delivered(o)):
+                cnt += 1
+        stops_before = cnt
+
     return jsonify({
         "order_id": order_id,
         "status": order.get("status"),
         "en_route": bool(en_route),
+        "approved": approved,
+        "estimated_eta_clock": estimated_eta_clock,
+        "stops_before": stops_before,
         "minutes": int(round(eta["duration_min"])),
         "duration_min": eta["duration_min"],
         "distance_km": eta["distance_km"],
@@ -1831,6 +1855,10 @@ def _run_route_notify(date_iso: str, start_time_arg: str = "") -> tuple[dict, st
         cum += _break_min_before_stop(i, breaks_list, stops)
         eta_clock = _eta_clock_for_stop(start_hh, start_mm, cum)
         order["estimated_eta_clock"] = eta_clock
+        # Lagre stopp-posisjon + dato billig på ordren, så kunde-ETA kan regne ut
+        # «X leveringer før deg» uten å bygge hele ruten på hvert poll.
+        order["route_stop_index"] = i
+        order["route_date"] = date_iso
 
         track_url = f"{base}/track/{order_id}?token={order['track_token']}"
 
