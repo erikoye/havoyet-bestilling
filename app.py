@@ -470,14 +470,22 @@ def _order_cost_kr(order, cost_map):
                     continue
         except (TypeError, ValueError):
             pass
-        # 2) Enhets-kost × qty (når lineCost mangler men cost er snapshotet)
+        # 2) Enhets-kost × mengde (når lineCost mangler men cost er snapshotet).
+        #    `cost` lagres som kr/kg for vektvarer (unit='g'/'kg') og kr/stk for
+        #    stk-varer. For unit='g' er qty i GRAM — da må vi dele på 1000, ellers
+        #    blir fiskekost ~1000× for høy (kr/kg × gram). Stemmer med lineCost:
+        #    f.eks. cost 301,24 kr/kg × 400 g / 1000 = 120,50 = lagret lineCost.
         try:
             unit_cost = it.get("cost")
             if unit_cost is not None:
                 uc = float(unit_cost)
                 if uc > 0:
                     qty = float(it.get("qty") or it.get("quantity") or 1)
-                    total += uc * qty
+                    unit = (it.get("unit") or "").strip().lower()
+                    if unit in ("g", "gram", "grams"):
+                        total += uc * qty / 1000.0   # kr/kg × kg
+                    else:
+                        total += uc * qty             # stk/kg: cost er per enhet
                     continue
         except (TypeError, ValueError):
             pass
