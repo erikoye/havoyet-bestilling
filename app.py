@@ -442,15 +442,42 @@ def _build_product_cost_map():
     return out
 
 
-def _order_cost_kr(order, cost_map):
-    """Beregn innkjøpskostnad for én ordre. Prioritetsrekkefølge per linje:
+def _effective_kg(name, qty, unit):
+    """kg-ekvivalent for en ordrelinje. g→kg, kg→kg, sjøkreps stk→0,25 kg/stk.
+    Returnerer None for vanlige stk-varer (kan ikke konverteres til kg)."""
+    try:
+        q = float(qty)
+    except (TypeError, ValueError):
+        return None
+    u = (unit or "").strip().lower()
+    if u in ("g", "gram", "grams"):
+        return q / 1000.0
+    if u == "kg":
+        return q
+    n = (name or "").lower()
+    if "sjøkreps" in n or "sjokreps" in n:
+        return q * 0.25
+    return None
 
-    1) `item.lineCost` — eksakt linje-kost lagret ved ordretidspunkt (best,
-       overlever produkt-rename og prisendringer i etterkant).
-    2) `item.cost` × qty — snapshot av enhets-kost lagret ved opprettelse,
-       men kun hvis ingen lineCost finnes.
-    3) Proporsjonal fallback (line.pris × cost_map[name].ratio) for gamle
-       ordrer fra før vi begynte å snapshote kost på linja."""
+
+# Standard kost-andel for varer uten registrert innkjøpspris — Eriks faste
+# antagelse (45 % kost / 55 % margin), lik frontendens _orderCostBreakdown.
+_COST_AVG_RATIO = 0.45
+
+
+def _order_cost_kr(order, cost_map):
+    """Beregn innkjøpskostnad for én ordre — speiler frontendens
+    `_orderCostBreakdown` (admin.html). Kost regnes PROPORSJONALT fra salgsprisen:
+
+        linjekost = salgsverdi × ratio,  ratio = innkjøpspris/utsalgspris (cost_map)
+
+    Dette er enhets-uavhengig (likt for kr/kg-fisk og stk-varer, fordi ratio
+    nuller ut enheten) og immun mot to historiske feller:
+      • gram/kg-miks — `cost` (kr/kg) × `qty` (gram) ga ~1000× for høy fiskekost.
+      • korrupte ×1000-`lineCost`-snapshots fra bug-æraen (f.eks. Reker ferske
+        med lineCost 86 310 i stedet for 86 kr).
+    Derfor brukes IKKE linjas lagrede `lineCost`/`cost` her — kun gjeldende
+    innkjøpspris fra cost_map, med 45 % fallback for varer uten registrert kost."""
     if not isinstance(order, dict):
         return 0.0
     items = order.get("varer") or order.get("prods") or order.get("items") or []
@@ -460,54 +487,29 @@ def _order_cost_kr(order, cost_map):
     for it in items:
         if not isinstance(it, dict):
             continue
-        # 1) Lagret linje-kost — eksakt, beste kilde
-        try:
-            stored_line = it.get("lineCost")
-            if stored_line is not None:
-                v = float(stored_line)
-                if v > 0:
-                    total += v
-                    continue
-        except (TypeError, ValueError):
-            pass
-        # 2) Enhets-kost × mengde (når lineCost mangler men cost er snapshotet).
-        #    `cost` lagres som kr/kg for vektvarer (unit='g'/'kg') og kr/stk for
-        #    stk-varer. For unit='g' er qty i GRAM — da må vi dele på 1000, ellers
-        #    blir fiskekost ~1000× for høy (kr/kg × gram). Stemmer med lineCost:
-        #    f.eks. cost 301,24 kr/kg × 400 g / 1000 = 120,50 = lagret lineCost.
-        try:
-            unit_cost = it.get("cost")
-            if unit_cost is not None:
-                uc = float(unit_cost)
-                if uc > 0:
-                    qty = float(it.get("qty") or it.get("quantity") or 1)
-                    unit = (it.get("unit") or "").strip().lower()
-                    if unit in ("g", "gram", "grams"):
-                        total += uc * qty / 1000.0   # kr/kg × kg
-                    else:
-                        total += uc * qty             # stk/kg: cost er per enhet
-                    continue
-        except (TypeError, ValueError):
-            pass
-        # 3) Proporsjonal fallback (gamle ordrer uten cost-snapshot)
         name = (it.get("name") or it.get("navn") or it.get("title") or "").strip().lower()
-        info = cost_map.get(name)
-        if not info:
-            continue
-        line_price = it.get("pris")
-        if line_price is None:
-            try:
-                qty = float(it.get("qty") or it.get("quantity") or 1)
-                unit_price = float(it.get("price") or 0)
-                line_price = qty * unit_price
-            except (TypeError, ValueError):
-                line_price = 0
+        info = cost_map.get(name) if name else None
+        # Salgsverdi for linja: bruk lagret `pris` når den finnes, ellers utled
+        # fra qty × kr/kg (med kg-konvertering) eller qty × stk-pris.
         try:
-            line_price = float(line_price)
+            line_price = float(it.get("pris")) if it.get("pris") is not None else 0.0
         except (TypeError, ValueError):
             line_price = 0.0
-        if line_price > 0:
-            total += line_price * info["ratio"]
+        if line_price <= 0:
+            try:
+                qty = float(it.get("qty") or it.get("quantity") or 1)
+            except (TypeError, ValueError):
+                qty = 1.0
+            try:
+                unit_price = float(it.get("price") or 0)
+            except (TypeError, ValueError):
+                unit_price = 0.0
+            kg = _effective_kg(name, qty, it.get("unit"))
+            line_price = (kg * unit_price) if kg is not None else (qty * unit_price)
+        if line_price <= 0:
+            continue
+        ratio = info["ratio"] if info else _COST_AVG_RATIO
+        total += line_price * ratio
     return total
 
 
