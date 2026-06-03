@@ -466,51 +466,60 @@ _COST_AVG_RATIO = 0.45
 
 
 def _order_cost_kr(order, cost_map):
-    """Beregn innkjøpskostnad for én ordre — speiler frontendens
-    `_orderCostBreakdown` (admin.html). Kost regnes PROPORSJONALT fra salgsprisen:
+    """Beregn innkjøpskostnad for én ordre — robust mot korrupte ×1000-verdier.
 
-        linjekost = salgsverdi × ratio,  ratio = innkjøpspris/utsalgspris (cost_map)
-
-    Dette er enhets-uavhengig (likt for kr/kg-fisk og stk-varer, fordi ratio
-    nuller ut enheten) og immun mot to historiske feller:
+    Ordredataen har flere feilkilder fra bug-æraen, og de KAN ikke stoles på som
+    absoluttverdier:
+      • korrupt `pris` ×1000 på erstatnings-linjer (#HBU13UB «Kveite steak»
+        pris=260000 i stedet for 260; én ordre blåste linjesum til 581 090 kr).
+      • korrupt `lineCost` ×1000 («Reker ferske» lineCost=86 310 i stedet for 86).
       • gram/kg-miks — `cost` (kr/kg) × `qty` (gram) ga ~1000× for høy fiskekost.
-      • korrupte ×1000-`lineCost`-snapshots fra bug-æraen (f.eks. Reker ferske
-        med lineCost 86 310 i stedet for 86 kr).
-    Derfor brukes IKKE linjas lagrede `lineCost`/`cost` her — kun gjeldende
-    innkjøpspris fra cost_map, med 45 % fallback for varer uten registrert kost."""
+
+    Vi unngår ALLE ved aldri å gange opp en lagret absoluttverdi:
+      1) Forankre i ordrens RENE totalsum (`sum`/`total` — samme autoritative felt
+         som omsetningen bruker; ukorrupt).
+      2) Beregn en verdivektet kost-RATIO fra produktmiksen (cost_map-ratio =
+         innkjøpspris/utsalgspris, 45 % fallback), vektet med rene strukturerte
+         linjeverdier (qty/unit/price via _effective_kg — IKKE den korrupte `pris`).
+      3) COGS = totalsum × ratio. Ratioen er begrenset til [0,1], så ingen korrupt
+         verdi kan blåse opp tallet (HBU13UB blir 1149 × ~0,5 ≈ 575 kr, ikke 261k)."""
     if not isinstance(order, dict):
         return 0.0
+    try:
+        order_total = float(order.get("sum") or order.get("total") or 0)
+    except (TypeError, ValueError):
+        order_total = 0.0
     items = order.get("varer") or order.get("prods") or order.get("items") or []
     if not isinstance(items, list):
-        return 0.0
-    total = 0.0
+        items = []
+    num = 0.0   # Σ linjeverdi × ratio
+    den = 0.0   # Σ linjeverdi
     for it in items:
         if not isinstance(it, dict):
             continue
         name = (it.get("name") or it.get("navn") or it.get("title") or "").strip().lower()
-        info = cost_map.get(name) if name else None
-        # Salgsverdi for linja: bruk lagret `pris` når den finnes, ellers utled
-        # fra qty × kr/kg (med kg-konvertering) eller qty × stk-pris.
         try:
-            line_price = float(it.get("pris")) if it.get("pris") is not None else 0.0
+            qty = float(it.get("qty") or it.get("quantity") or 1)
         except (TypeError, ValueError):
-            line_price = 0.0
-        if line_price <= 0:
-            try:
-                qty = float(it.get("qty") or it.get("quantity") or 1)
-            except (TypeError, ValueError):
-                qty = 1.0
-            try:
-                unit_price = float(it.get("price") or 0)
-            except (TypeError, ValueError):
-                unit_price = 0.0
-            kg = _effective_kg(name, qty, it.get("unit"))
-            line_price = (kg * unit_price) if kg is not None else (qty * unit_price)
-        if line_price <= 0:
+            qty = 1.0
+        try:
+            unit_price = float(it.get("price") or 0)
+        except (TypeError, ValueError):
+            unit_price = 0.0
+        # Strukturert linjeverdi (kg×kr/kg for vekt, qty×pris for stk) — ren,
+        # uavhengig av den korrupte `pris`. Brukes KUN til ratio-vekting.
+        kg = _effective_kg(name, qty, it.get("unit"))
+        line_val = (kg * unit_price) if kg is not None else (qty * unit_price)
+        if line_val <= 0:
             continue
+        info = cost_map.get(name) if name else None
         ratio = info["ratio"] if info else _COST_AVG_RATIO
-        total += line_price * ratio
-    return total
+        num += line_val * ratio
+        den += line_val
+    ratio = (num / den) if den > 0 else _COST_AVG_RATIO
+    ratio = min(0.95, max(0.05, ratio))   # sikkerhetsnett mot korrupt data
+    base = order_total if order_total > 0 else den
+    return base * ratio
 
 
 def _settled_ordrenrs():
