@@ -130,6 +130,10 @@
       box-shadow: 0 12px 40px rgba(0,0,0,0.20), 0 0 0 1px rgba(0,0,0,0.10);
       background: #fff; border-radius: 4px; overflow: hidden;
     }
+    .preview-actions {
+      flex-shrink: 0; padding: 12px 16px; background: var(--rail);
+      border-top: 1px solid var(--border); display: flex; justify-content: center;
+    }
     .preview-foot {
       flex-shrink: 0; padding: 10px 16px; background: var(--rail);
       border-top: 1px solid var(--border);
@@ -277,6 +281,12 @@
       <div class="preview-frame" id="previewFrame">
         <!-- label rendered here -->
       </div>
+    </div>
+    <div class="preview-actions">
+      <button class="btn btn-primary" type="button" onclick="printLabel()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        Skriv ut denne etiketten
+      </button>
     </div>
     <div class="preview-foot">
       <div class="stage-info">
