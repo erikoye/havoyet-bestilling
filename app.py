@@ -9728,7 +9728,7 @@ def api_print_label():
             pass
     return jsonify({
         "ok": True, "mode": "queue", "job": job["id"],
-        "message": ("Lagt i kø — skrives ut snart" if worker_active
+        "message": ("Skriver ut nå …" if worker_active
                     else "Lagt i kø, men ingen worker tilkoblet — sjekk at print_worker.py kjører på Pi"),
         "worker_active": worker_active,
     })
