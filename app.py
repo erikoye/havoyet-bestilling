@@ -1038,7 +1038,27 @@ def api_manual_orders():
         # Uten dette filteret ville slettede ordre dukke opp igjen på neste sync.
         if _order_tombstones and isinstance(new_list, list):
             new_list = [o for o in new_list if not (_order_keys(o) & set(_order_tombstones.keys()))]
-        # Finn ordre som er nye i innkommende liste
+        # MERGE i stedet for full-replace: en utdatert klient (annen enhet/iPad,
+        # eller etter en server-restart uten persistent disk) kjenner kanskje ikke
+        # til alle ordre. Tidligere overskrev dens POST hele lista → ordre forsvant
+        # (særlig manuelle Nesttun-hente-ordre). Nå beholder vi eksisterende ordre
+        # som ikke finnes i innkommende liste og ikke er slettet (tombstone).
+        # Innkommende vinner ved id-konflikt (har nyeste redigering).
+        if isinstance(new_list, list):
+            incoming_keys = set()
+            for o in new_list:
+                incoming_keys |= _order_keys(o)
+            tomb = set(_order_tombstones.keys()) if _order_tombstones else set()
+            merged = list(new_list)
+            for o in _manual_orders:
+                keys = _order_keys(o)
+                if keys & incoming_keys:
+                    continue            # innkommende har en (nyere) versjon
+                if keys & tomb:
+                    continue            # ordren er slettet
+                merged.append(o)        # behold ordre klienten ikke kjente til
+            new_list = merged
+        # Finn ordre som er nye (ikke fantes på serveren fra før) → varsle om dem
         added = [o for o in new_list
                  if str(o.get("ordrenr") or o.get("id")) not in old_ids]
         _manual_orders = new_list
@@ -2492,9 +2512,26 @@ def _format_order_email_html(order, change_summary="", event=""):
             return None
         return int(round(n * 1000)) if m.group(2) == "kg" else int(round(n))
 
+    def _amount_from_parens(text):
+        """Tall oppgitt i parentes UTEN enhet, f.eks. "Reker (400)" → 400,
+        "Sjøkreps (2)" → 2, "Torsk (2 – uten skinn)" → 2. Returnerer None hvis
+        parentesen ikke starter med et tall (f.eks. "(ca. 500 g)" håndteres av
+        _grams_from_text i stedet)."""
+        if not text:
+            return None
+        m = _re.search(r"\(\s*(\d+(?:[.,]\d+)?)", str(text))
+        if not m:
+            return None
+        try:
+            return float(m.group(1).replace(",", "."))
+        except ValueError:
+            return None
+
     def _qty_text(item):
-        """Vis faktisk bestilt mengde i stedet for "×1" — for f.eks. "Laks filet
-        (ca. 500 g)" med qty=1 blir det "500 g". Stk-varer beholder "×N stk"."""
+        """Vis faktisk bestilt mengde til høyre i stedet for "×1". Tallet i
+        parentes er mengden: "Reker (400)" med enhet g → "400 g", "Sjøkreps (2)"
+        med enhet stk → "2 stk". Eksplisitt vekt i navnet ("(ca. 500 g)") støttes
+        også via _grams_from_text."""
         qty = item.get("qty") or item.get("quantity") or item.get("antall") or 1
         try:
             qty = float(qty)
@@ -2503,20 +2540,35 @@ def _format_order_email_html(order, change_summary="", event=""):
         unit = (item.get("unit") or "").lower()
         variant = item.get("variantLabel") or item.get("variant") or item.get("name") or ""
         grams = _grams_from_text(variant)
-        if grams and unit != "stk":
-            total = qty * grams
-            if total >= 1000:
-                kg = total / 1000
-                kg_s = f"{kg:.2f}".rstrip("0").rstrip(".").replace(".", ",")
-                return f"{kg_s} kg"
-            return f"{int(total)} g"
-        # Fallback: stk-vare eller manglende vekt — vis qty + enhet
+        parens = _amount_from_parens(variant)
+        if unit != "stk":
+            # Vekt-vare: bruk eksplisitt gram fra navnet, ellers tallet i parentes.
+            per = grams if grams else parens
+            if per:
+                total = qty * per
+                if total >= 1000:
+                    kg_s = f"{total/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+                    return f"{kg_s} kg"
+                return f"{int(round(total))} g"
+        else:
+            # Stk-vare: tallet i parentes er antallet ("Sjøkreps (2)" → 2 stk).
+            count = parens if parens else qty
+            count_int = int(count) if count == int(count) else count
+            return f"{count_int} stk"
+        # Fallback: manglende mengde-info — vis qty + enhet
         qty_int = int(qty) if qty == int(qty) else qty
         return f"{qty_int} {unit or 'stk'}".strip()
 
+    def _strip_amount_parens(text):
+        """Fjern mengde-parentes fra slutten av navnet ("Reker (400)" → "Reker")
+        slik at mengden kun vises i egen kolonne til høyre. Beholder parenteser
+        som ikke starter med et tall (f.eks. "(ca. 500 g)")."""
+        cleaned = _re.sub(r"\s*\(\s*\d[^)]*\)\s*$", "", str(text or "")).strip()
+        return cleaned or str(text or "")
+
     rows = []
     for v in varer:
-        name = esc(v.get("name") or v.get("navn") or "?")
+        name = esc(_strip_amount_parens(v.get("name") or v.get("navn") or "?"))
         price = v.get("price") if v.get("price") is not None else v.get("pris")
         qty_str = esc(_qty_text(v))
         rows.append(

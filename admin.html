@@ -3379,14 +3379,17 @@ function _notifyOrdersChanged(){
 
 async function refreshOrders(){
   try {
+    // NFV-ordre (Nesttun Fisk & Vilt) er IKKE Havøyet sine — de hører til den
+    // egne butikken og skal aldri vises (eller telles i omsetning) i Havøyet-admin.
+    const _isNesttun = o => String((o && o.store) || '') === 'Nesttun Fisk & Vilt';
     const r1 = await fetch(`${_orderApiBase()}/api/manual-orders`, { cache: 'no-store' });
-    const manual = r1.ok ? await r1.json() : [];
+    const manual = (r1.ok ? await r1.json() : []).filter(o => !_isNesttun(o));
     let shopify = [];
     try {
       const r2 = await fetch(`${_orderApiBase()}/api/orders`, { cache: 'no-store' });
       if (r2.ok) {
         const d = await r2.json();
-        shopify = d.orders || [];
+        shopify = (d.orders || []).filter(o => !_isNesttun(o));
       }
     } catch {}
     // /api/orders og /api/manual-orders leser fra samme _manual_orders i backend

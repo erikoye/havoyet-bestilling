@@ -344,6 +344,8 @@
     .delete-btn { opacity: 0; background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; color: var(--hv-fg-3); transition: opacity 150ms; }
     .ordre-rad:hover .delete-btn { opacity: 1; }
     .delete-btn:hover { color: var(--red); }
+    .pickup-btn { background: var(--hv-teal, #2bb3a3); color: #fff; border: none; cursor: pointer; padding: 6px 11px; border-radius: 7px; font-size: 12px; font-weight: 600; margin-right: 8px; white-space: nowrap; transition: filter 150ms; }
+    .pickup-btn:hover { filter: brightness(1.08); }
     .dot        { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
     .mini-bar-wrap { width: 60px; height: 4px; background: var(--hv-line); border-radius: 2px; overflow: hidden; display: inline-block; vertical-align: middle; margin-left: 6px; }
@@ -959,6 +961,7 @@ function renderAll(){
         <div class="mini-bar-wrap"><div class="mini-bar ${cls}" style="width:${pct}%"></div></div>
       </td>
       <td onclick="event.stopPropagation()">
+        ${o.store === 'Nesttun Fisk & Vilt' ? `<button class="pickup-btn" onclick="markPaidPickedUp('${o.id}')" title="Marker som betalt og hentet">✓ Betalt og hentet</button>` : ''}
         <button class="delete-btn" onclick="deleteOrder('${o.id}')" title="Slett bestilling">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
         </button>
@@ -1065,11 +1068,38 @@ function deleteOrder(id) {
     hidden = JSON.parse(localStorage.getItem('havøyet_hidden_orders') || '[]');
     if (!hidden.includes(id)) { hidden.push(id); localStorage.setItem('havøyet_hidden_orders', JSON.stringify(hidden)); }
   } catch(e) {}
-  // Sync til server
+  // Sync til server. Kall DELETE-endepunktet så det opprettes en tombstone —
+  // nødvendig nå som /api/manual-orders POST MERGER (ikke full-replace): uten
+  // tombstone ville den slettede ordren overlevd merge-en og dukket opp igjen.
+  fetch(`${FLASK_BASE}/api/manual-orders/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(()=>{});
   serverSaveManualOrders(manual);
   serverSaveHiddenOrders(hidden);
   ORDERS = ORDERS.filter(o => o.id !== id);
   renderAll();
+}
+
+// Nesttun-hente-ordre: kunden har kommet og hentet varen → marker betalt + ferdig.
+// Setter status=DONE og paymentStatus=paid, så ordren regnes som oppgjort og
+// forsvinner fra aktiv-lista (men beholdes i historikken/serveren).
+async function markPaidPickedUp(id) {
+  if (!confirm('Marker bestillingen som betalt og hentet?')) return;
+  // Oppdater lokalt umiddelbart (optimistisk)
+  const o = ORDERS.find(x => x.id === id || x.ordrenr === id);
+  if (o) { o.status = 'DONE'; o.paymentStatus = 'paid'; }
+  try {
+    const manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]');
+    manual.forEach(m => { if (m.id === id || m.ordrenr === id) { m.status = 'DONE'; m.paymentStatus = 'paid'; } });
+    localStorage.setItem('havøyet_manual_orders', JSON.stringify(manual));
+  } catch(e) {}
+  renderAll();
+  // Persister til server
+  try {
+    await fetch(`${FLASK_BASE}/api/manual-orders/${encodeURIComponent(id)}`, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ status: 'DONE', paymentStatus: 'paid' }),
+    });
+    if (window.HavoyetOrdersSync) window.HavoyetOrdersSync.notify();
+  } catch(e) {}
 }
 
 async function loadFromFlask(){
