@@ -1953,19 +1953,15 @@ function variantSizeLabel(item) {
 function formatItemName(item) {
   const sz = variantSizeLabel(item);
   const withSize = s => (sz && !s.includes(sz)) ? `${s} ${sz}` : s;
-  const name = stripWeightSuffix(item.name || '');
-  const unit = item.unit || '';
-  if (!unit) return withSize(name);
-  // Finn tall i parentes, f.eks. "(2300)" eller "(2300 – uten skinn)"
-  return withSize(name.replace(/\((\d+(?:[.,]\d+)?)(\s*[–\-].*?)?\)/, (match, num, rest) => {
-    const val = parseFloat(num.replace(',', '.'));
-    const restStr = rest || '';
-    if (unit === 'g' && val >= 1000) {
-      const kg = (val / 1000).toLocaleString('nb-NO', { maximumFractionDigits: 3 }).replace(/,?0+$/, '');
-      return `(${kg} kg${restStr})`;
-    }
-    return `(${num} ${unit}${restStr})`;
-  }));
+  let name = stripWeightSuffix(item.name || '');
+  // Fjern mengde-parentes fra navnet — mengden vises i egen pille til høyre
+  // (renderItemQtyEditor). "Reker (400)" → "Reker", "Sjøkreps (2)" → "Sjøkreps".
+  // Et evt. notat beholdes: "Lyr filet (3000 – Uten bein)" → "Lyr filet (Uten bein)".
+  // Vekt-parenteser med enhet ("(1,5 kg)") matcher ikke og beholdes.
+  name = name.replace(/\s*\((\d+(?:[.,]\d+)?)(?:\s*[–\-]\s*([^)]*?))?\)/, (m, num, note) =>
+    note ? ` (${note.trim()})` : ''
+  ).trim();
+  return withSize(name);
 }
 
 // Sikrer at ordren har items-array. Manuelle ordre kan ankomme i admin-shape (varer) —
@@ -2105,6 +2101,13 @@ function renderItemQtyEditor(item, i){
   // hvor produktet f.eks. heter "Laks filet (ca. 500 g)" og kunden bestilte 1
   // porsjon, viser vi "500 g" (qty × porsjonsvekt). For stk-varer viser vi qty.
   const qty = Number((item && (item.qty ?? item.quantity)) ?? 1) || 1;
+  // Manuelle ordre (og skalldyrkasse-linjer) lagrer ekte mengde i parentes med
+  // qty=1, f.eks. "Reker (400)" eller "Ørret (2000)". Bruk tallet i parentesen
+  // som faktisk mengde når qty ikke bærer det. Tallet må følges av ")" eller "–"
+  // så vekt-parenteser med enhet ("(1,5 kg)") ikke matcher — de tas av _extractGramsFromText.
+  const _parenM = String((item && item.name) || '').match(/\(\s*(\d+(?:[.,]\d+)?)\s*(?:[–\-]|\))/);
+  const parenAmount = _parenM ? parseFloat(_parenM[1].replace(',', '.')) : null;
+  const effQty = (qty === 1 && parenAmount != null) ? parenAmount : qty;
   // Stk-produkter (kind:"unit" m/ unitLabel:"stk" i data2.jsx) skal ALLTID vises som stk,
   // selv om legacy-ordre tilfeldigvis ble lagret med unit='kg' eller tom.
   const isStkProduct = (item && (item.kind === 'unit' || item.unitLabel === 'stk'));
@@ -2118,11 +2121,11 @@ function renderItemQtyEditor(item, i){
   );
   const gramsPerUnit = _extractGramsFromText(variantText);
 
-  let displayQty = String(qty);
+  let displayQty = String(effQty);
   if (unit === 'g' || unit === 'kg') {
     // Linja er allerede lagret i vekt (etter migrasjon) — IKKE multipliser med
-    // gramsPerUnit fra variantLabel. qty er det faktiske antall g/kg.
-    const totalG = unit === 'kg' ? qty * 1000 : qty;
+    // gramsPerUnit fra variantLabel. effQty er det faktiske antall g/kg.
+    const totalG = unit === 'kg' ? effQty * 1000 : effQty;
     if (totalG >= 1000) {
       const kg = totalG / 1000;
       displayQty = (Number.isInteger(kg) ? String(kg) : kg.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');
@@ -2134,7 +2137,7 @@ function renderItemQtyEditor(item, i){
   } else if (gramsPerUnit && unit !== 'stk') {
     // Legacy-format: qty=antall porsjoner, gramsPerUnit fra variantLabel —
     // skaler så pillen viser total vekt. Brukes for ordrer som ikke ble migrert.
-    const total = qty * gramsPerUnit;
+    const total = effQty * gramsPerUnit;
     if (total >= 1000) {
       const kg = total / 1000;
       displayQty = (Number.isInteger(kg) ? String(kg) : kg.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');

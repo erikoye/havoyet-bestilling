@@ -2514,12 +2514,12 @@ def _format_order_email_html(order, change_summary="", event=""):
 
     def _amount_from_parens(text):
         """Tall oppgitt i parentes UTEN enhet, f.eks. "Reker (400)" → 400,
-        "Sjøkreps (2)" → 2, "Torsk (2 – uten skinn)" → 2. Returnerer None hvis
-        parentesen ikke starter med et tall (f.eks. "(ca. 500 g)" håndteres av
-        _grams_from_text i stedet)."""
+        "Sjøkreps (2)" → 2, "Torsk (2 – uten skinn)" → 2. Tallet må følges av
+        ")" eller "–" (notat), så vekt-parenteser som "(1,5 kg)" / "(ca. 500 g)"
+        IKKE matcher — de håndteres av _grams_from_text."""
         if not text:
             return None
-        m = _re.search(r"\(\s*(\d+(?:[.,]\d+)?)", str(text))
+        m = _re.search(r"\(\s*(\d+(?:[.,]\d+)?)\s*(?:[–\-]|\))", str(text))
         if not m:
             return None
         try:
@@ -2560,10 +2560,11 @@ def _format_order_email_html(order, change_summary="", event=""):
         return f"{qty_int} {unit or 'stk'}".strip()
 
     def _strip_amount_parens(text):
-        """Fjern mengde-parentes fra slutten av navnet ("Reker (400)" → "Reker")
-        slik at mengden kun vises i egen kolonne til høyre. Beholder parenteser
-        som ikke starter med et tall (f.eks. "(ca. 500 g)")."""
-        cleaned = _re.sub(r"\s*\(\s*\d[^)]*\)\s*$", "", str(text or "")).strip()
+        """Fjern mengde-parentes fra slutten av navnet ("Reker (400)" → "Reker",
+        "Torsk (2 – uten skinn)" → "Torsk") slik at mengden kun vises i egen
+        kolonne til høyre. Beholder vekt-parenteser med enhet ("(1,5 kg)",
+        "(ca. 500 g)") — de er en del av produktnavnet."""
+        cleaned = _re.sub(r"\s*\(\s*\d+(?:[.,]\d+)?\s*(?:[–\-][^)]*)?\s*\)\s*$", "", str(text or "")).strip()
         return cleaned or str(text or "")
 
     rows = []
@@ -3498,7 +3499,12 @@ def api_orders_new():
     lines.append("Ordren er også synlig i admin-panelet.")
 
     emne = f"[Bestilling {data['ordrenr']}] {navn} – {data.get('sum', 0)} kr"
-    ok, detail = _send_contact_mail(epost, navn, emne, "\n".join(lines))
+    # Send som strukturert HTML (samme pene mal som admin-varselet) så e-posten
+    # blir oversiktlig i Gmail/Outlook. Ren tekst (lines) beholdes som fallback.
+    ok, detail = _send_contact_mail(
+        epost, navn, emne, "\n".join(lines),
+        html_body=_format_order_email_html(data, "Det er kommet inn en ny bestilling.", "new_order"),
+    )
 
     # Send admin-varsel (e-post / SMS / ntfy / Telegram) til registrerte mottakere.
     # Dette er separat fra kvitterings-mailen som går til kunden via _send_contact_mail.
