@@ -7,6 +7,7 @@
   <link rel="icon" type="image/png" href="https://havoyet.no/assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Montserrat:wght@700;900&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -270,6 +271,14 @@
     }
 
     /* ── PRINT ── */
+    .label-print-btn {
+      margin: 0 14px 14px; padding: 10px 14px; width: calc(100% - 28px);
+      border: none; border-radius: 8px; background: #0d9488; color: #fff;
+      font-family: 'DM Sans', sans-serif; font-weight: 600; font-size: 13px; cursor: pointer;
+      transition: background .15s;
+    }
+    .label-print-btn:hover { background: #0f766e; }
+    .label-print-btn:disabled { opacity: .6; cursor: default; }
     @media print {
       @page { size: 50mm 103mm; margin: 0; }
       body { background: none !important; }
@@ -279,6 +288,7 @@
       .label-card-header { display: none !important; }
       .capture-toggle { display: none !important; }
       .label { width: 50mm !important; height: 103mm !important; }
+      .label-print-btn { display: none !important; }
     }
   </style>
 </head>
@@ -684,8 +694,37 @@ function renderCards() {
         <button class="cap-btn ${cap==='oppdrett'?'active':''}" data-val="oppdrett" onclick="setCapture(${idx},'oppdrett')">Oppdrett</button>
         <button class="cap-btn ${cap==='ingen'?'active':''}" data-val="ingen" onclick="setCapture(${idx},'ingen')">Ingen</button>
       </div>
+      <button class="label-print-btn" id="lp-${idx}" onclick="printOne(${idx})">Skriv ut denne</button>
     </div>`;
   }).join('');
+}
+
+async function printOne(idx) {
+  const card = document.getElementById('lc-' + idx);
+  const label = card && card.querySelector('.label');
+  const btn = document.getElementById('lp-' + idx);
+  if (!label) { if (btn) btn.textContent = 'Fant ikke etikett'; return; }
+  const lbl = labels[idx];
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Render…'; }
+  try {
+    const canvas = await html2canvas(label, { scale: 3.125, backgroundColor: '#ffffff', useCORS: true, logging: false });
+    if (btn) btn.textContent = 'Sender…';
+    const png = canvas.toDataURL('image/png');
+    const r = await fetch(`${FLASK_BASE}/api/print/label`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ png, product: lbl.name, order_id: (lbl.order && lbl.order.id) || null }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok) {
+      if (btn) { btn.textContent = '✓ Sendt'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2500); }
+    } else {
+      if (btn) { btn.textContent = '✗ ' + (j.error || j.message || 'Feil'); setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3500); }
+    }
+  } catch (e) {
+    console.error(e);
+    if (btn) { btn.textContent = '✗ Render-feil'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3500); }
+  }
 }
 
 init();
