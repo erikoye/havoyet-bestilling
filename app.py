@@ -1944,17 +1944,21 @@ def _normalize_phone(raw):
     return None
 
 
-def _send_admin_mail(to_email, subject, body, html_body=None):
+def _send_admin_mail(to_email, subject, body, html_body=None, reply_to=None):
     """Send én e-post til en admin-mottaker. Bruker Resend → SMTP → log.
-    `html_body` (valgfritt) lar deg sende rik HTML istedenfor auto-konvertert."""
+    `html_body` (valgfritt) lar deg sende rik HTML istedenfor auto-konvertert.
+    `reply_to` (valgfritt) setter Reply-To (f.eks. kundens adresse på
+    «Ny melding»-varsler, så admin kan svare kunden direkte)."""
     if RESEND_API_KEY:
         ok, detail = _send_via_resend("", "Admin-varsel", subject, body,
-                                      to_email=to_email, html_body=html_body)
+                                      to_email=to_email, reply_to=reply_to,
+                                      html_body=html_body)
         if ok:
             return True, detail
     if SMTP_USER and SMTP_PASS:
         ok, detail = _send_via_smtp("", "Admin-varsel", subject, body,
-                                    to_email=to_email, html_body=html_body)
+                                    to_email=to_email, reply_to=reply_to,
+                                    html_body=html_body)
         if ok:
             return True, detail
     return False, "no-mail-service"
@@ -2298,16 +2302,21 @@ def _event_channels_for(notifier, event):
     return fallback
 
 
-def _notify_admins(event, subject, body, html_body=None):
+def _notify_admins(event, subject, body, html_body=None, reply_to=None):
     """Send varsel til alle admin-mottakere som har valgt `event`. Hver mottaker
     kan styre per varseltype hvilke kanaler som fyrer (event_channels).
     Bakoverkompat: hvis event_channels ikke er satt, brukes alle konfigurerte
     kanaler (e-post + SMS + push + telegram).
 
     `html_body` (valgfritt) gir rik HTML for e-post-kanalen. Plain-text-`body`
-    brukes fortsatt for SMS, push og som fallback-tekst i e-postene."""
+    brukes fortsatt for SMS, push og som fallback-tekst i e-postene.
+    `reply_to` (valgfritt) setter Reply-To på e-postene (kundens adresse på
+    «Ny melding» så admin kan svare direkte).
+
+    Returnerer antall leverte varsler (alle kanaler) så kallere kan falle
+    tilbake til andre kanaler hvis ingen mottakere fikk varselet."""
     if event not in ADMIN_EVENTS:
-        return
+        return 0
 
     matching = [n for n in _admin_notifiers if event in (n.get("events") or [])]
 
@@ -2334,7 +2343,7 @@ def _notify_admins(event, subject, body, html_body=None):
         ntfy  = (n.get("ntfy_topic") or "").strip()
         tg    = (n.get("telegram_chat_id") or "").strip()
         if email and "email" in allowed:
-            ok, detail = _send_admin_mail(email, subject, body, html_body=html_body)
+            ok, detail = _send_admin_mail(email, subject, body, html_body=html_body, reply_to=reply_to)
             if ok: mail_sent += 1
             else:
                 mail_failed += 1
@@ -2367,6 +2376,7 @@ def _notify_admins(event, subject, body, html_body=None):
           f"sms={sms_sent}/{sms_sent+sms_failed}, "
           f"push={push_sent}/{push_sent+push_failed}, "
           f"telegram={tg_sent}/{tg_sent+tg_failed}")
+    return mail_sent + sms_sent + push_sent + tg_sent
 
 
 def _format_message_email_html(source, navn, epost, melding, *, tlf="", emne="", session_id="", history=None):
@@ -3367,9 +3377,25 @@ def api_contact():
         source="Kontaktskjema",
         navn=navn, epost=epost, melding=melding, emne=emne,
     )
-    # Kun ÉN varsling: den dedikerte kontakt-mailen (Reply-To peker til kunden).
-    # Tidligere sendte vi også _notify_admins("new_message", …) som ga en dublett
-    # ([Havøyet] Ny melding) i innboksen — fjernet på brukerønske.
+    # Send via varselssystemet så ALLE admin-mottakere med «Ny melding» avkrysset
+    # får den — e-post med Reply-To til kunden (svar går direkte til kunden),
+    # pluss SMS/push/telegram etter mottakerens kanal-avkrysninger. Fortsatt kun
+    # ÉN e-post per mottaker (den gamle dubletten oppsto fordi både kontakt-mail
+    # og varsel gikk til samme adresse). Logger til disk som før (backup).
+    try:
+        with open(CONTACT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "at": datetime.now().isoformat(),
+                "from": epost, "name": navn,
+                "subject": emne, "body": body, "to": "admin-mottakere (new_message)",
+            }, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"[CONTACT] Kunne ikke logge: {e}")
+    sent = _notify_admins("new_message", emne, body, html_body=html_body, reply_to=epost)
+    if sent:
+        return jsonify({"ok": True, "detail": f"sent-to-{sent}-admin-channels"})
+    # Fallback: ingen mottakere registrert (eller alle sendinger feilet) —
+    # bruk den gamle faste kontakt-mailen til CONTACT_TO så meldingen aldri mistes.
     ok, detail = _send_contact_mail(epost, navn, emne, body, html_body=html_body)
     return jsonify({"ok": ok, "detail": detail})
 
@@ -8235,13 +8261,23 @@ def _send_human_handoff_mail(session, customer_question):
         history=session.get("messages") or [],
     )
     sent_any = False
-    for to in CHAT_HUMAN_RECIPIENTS:
-        try:
-            ok, _ = _send_admin_mail(to, subj, body, html_body=html_body)
-            if ok:
-                sent_any = True
-        except Exception as e:
-            print(f"[CHAT] mail til {to} feilet: {e}")
+    # Send via varselssystemet så alle admin-mottakere med «Ny melding» avkrysset
+    # får chat-handoff-en (e-post med Reply-To til kunden + SMS/push/telegram
+    # etter kanal-avkrysningene). CHAT_HUMAN_RECIPIENTS beholdes kun som
+    # fallback hvis ingen mottakere er registrert eller alle sendinger feiler.
+    try:
+        if _notify_admins("new_message", subj, body, html_body=html_body, reply_to=(email or None)):
+            sent_any = True
+    except Exception as e:
+        print(f"[CHAT] varsel via mottaker-liste feilet: {e}")
+    if not sent_any:
+        for to in CHAT_HUMAN_RECIPIENTS:
+            try:
+                ok, _ = _send_admin_mail(to, subj, body, html_body=html_body)
+                if ok:
+                    sent_any = True
+            except Exception as e:
+                print(f"[CHAT] mail til {to} feilet: {e}")
     return sent_any
 
 
