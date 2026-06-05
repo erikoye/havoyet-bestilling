@@ -2565,6 +2565,18 @@ def _format_order_email_html(order, change_summary="", event=""):
         except (TypeError, ValueError):
             qty = 1
         unit = (item.get("unit") or "").lower()
+        # Kanonisk totalvekt fra checkout (`grams` = vekt × antall, satt av
+        # havoyet.no) — autoritativ når den finnes. Allerede total, skal ikke
+        # skaleres med qty.
+        try:
+            canon = float(item.get("grams") or 0)
+        except (TypeError, ValueError):
+            canon = 0
+        if canon > 0 and unit != "stk":
+            if canon >= 1000:
+                kg_s = f"{canon/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+                return f"{kg_s} kg"
+            return f"{int(round(canon))} g"
         variant = item.get("variantLabel") or item.get("variant") or item.get("name") or ""
         grams = _grams_from_text(variant)
         parens = _amount_from_parens(variant)
