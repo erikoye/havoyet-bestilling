@@ -9361,7 +9361,7 @@ function _ecRenderTable(){
   const body = document.getElementById('ecVippsBody');
   if (!body) return;
   // Slå sammen Vipps-transaksjoner + Shopify-ordre, sorter desc på dato+tid
-  const all = [..._ecAllItems, ...(window._ecShopifyItems || [])].slice();
+  const all = [..._ecAllItems, ...(window._ecShopifyItems || []), ...(window._ecWebOrderItems || [])].slice();
   all.sort((a, b) => {
     const ka = (a.date || '') + ' ' + (a.time || '');
     const kb = (b.date || '') + ' ' + (b.time || '');
@@ -9369,7 +9369,7 @@ function _ecRenderTable(){
   });
   let items = all;
   if (_ecChannelFilter === 'direct')  items = items.filter(r => r.payment_channel === 'direct');
-  if (_ecChannelFilter === 'website') items = items.filter(r => r.payment_channel === 'website');
+  if (_ecChannelFilter === 'website') items = items.filter(r => r.payment_channel === 'website' || r.payment_channel === 'web_order');
   if (_ecChannelFilter === 'shopify') items = items.filter(r => r.payment_channel === 'shopify');
   if (!items.length) {
     const msg = all.length === 0
@@ -9384,11 +9384,13 @@ function _ecRenderTable(){
       ? '<span class="badge orange" title="Vipps direkte til oss">Direkte</span>'
       : ch === 'shopify'
         ? '<span class="badge teal" title="Importert fra Shopify orders_export.csv">Shopify</span>'
-        : '<span class="badge teal" title="Via ny.havoyet.no/kasse">Nettside</span>';
-    const onclickAttr = (ch === 'shopify' && r.ordrenr)
+        : ch === 'web_order'
+          ? '<span class="badge green" title="Betalt bestilling fra ny.havoyet.no/kasse">Bestilling</span>'
+          : '<span class="badge teal" title="Via ny.havoyet.no/kasse">Nettside</span>';
+    const onclickAttr = ((ch === 'shopify' || ch === 'web_order') && r.ordrenr)
       ? `onclick="openOrderDrawer('${String(r.ordrenr).replace(/'/g, "\\'")}')" style="cursor:pointer;"`
       : '';
-    const deleteBtn = (ch === 'shopify')
+    const deleteBtn = (ch === 'shopify' || ch === 'web_order')
       ? '' // Shopify-ordre slettes via ordrelisten, ikke her
       : `<button class="del-btn" onclick="ecDeleteVipps('${(r.transaction_id||'').replace(/'/g,'')}')">×</button>`;
     return `
@@ -9472,8 +9474,10 @@ async function refreshEconomy(){
     const vippsKr    = (_ecAllItems || []).reduce((s, r) => s + (Number(r.amount_kr) || 0), 0);
     const shopCount  = (window._ecShopifyItems || []).length;
     const shopKr     = (window._ecShopifyItems || []).reduce((s, r) => s + (Number(r.amount_kr) || 0), 0);
-    const totalCount = vippsCount + shopCount;
-    const totalKr    = vippsKr + shopKr;
+    const webOCount  = (window._ecWebOrderItems || []).length;
+    const webOKr     = (window._ecWebOrderItems || []).reduce((s, r) => s + (Number(r.amount_kr) || 0), 0);
+    const totalCount = vippsCount + shopCount + webOCount;
+    const totalKr    = vippsKr + shopKr + webOKr;
     document.getElementById('ecImportedCount').textContent =
       `${totalCount} transaksjoner · ${_ecFmtKr(totalKr)} totalt`;
     _ecRenderTable();
@@ -9512,6 +9516,38 @@ async function _renderShopifyImported(){
       transaction_id: 'shopify-' + (o.ordrenr || ''),
     };
   });
+  // Nettside-bestillinger (registrert betalt) — samme sett som «Nettside»-kortet
+  // teller. Ekskluderer Shopify-rader (vises allerede over) og dedupes mot
+  // Vipps-ePay-rader fra CSV-import (samme dato + beløp = samme betaling).
+  const isPaidOrder = o => {
+    const ps = String(o.paymentStatus || '').toLowerCase();
+    const st = String(o.status || '').toUpperCase();
+    return ps === 'paid' || st === 'PAID' || st === 'PAID_OUT';
+  };
+  const isShopifyish = o => {
+    const kilde = String(o.kilde || '').toLowerCase();
+    return o.source === 'shopify' || kilde.includes('shopify') || kilde.includes('import');
+  };
+  const vippsKeys = new Set((_ecAllItems || [])
+    .filter(r => r.payment_channel !== 'direct')
+    .map(r => `${(r.date || '').slice(0, 10)}|${Math.round(Number(r.amount_kr) || 0)}`));
+  window._ecWebOrderItems = (orders || [])
+    .filter(o => o && isPaidOrder(o) && !isShopifyish(o))
+    .filter(o => !vippsKeys.has(`${(o.dato || '').slice(0, 10)}|${Math.round(Number(o.sum || o.total || 0))}`))
+    .map(o => {
+      const k = o.kunde || {};
+      return {
+        date: (o.dato || '').slice(0, 10),
+        time: (o.tid || '').slice(0, 5),
+        payment_channel: 'web_order',
+        type: 'Kjøp',
+        name: k.navn || '',
+        phone: k.tlf || k.epost || '',
+        amount_kr: Number(o.sum || o.total || 0),
+        ordrenr: o.ordrenr,
+        transaction_id: 'web-' + (o.ordrenr || o.id || ''),
+      };
+    });
 }
 
 async function ecDeleteVipps(txId){
