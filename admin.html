@@ -3124,6 +3124,10 @@ function _ordListQtyText(p){
   if (unit === 'stk') return `${qty} stk`;
   if (unit === 'kg' && qty) return qty === Math.floor(qty) ? `${qty} kg` : `${qty.toString().replace('.', ',')} kg`;
   if (unit === 'g'  && qty) return `${qty} g`;
+  // Kanonisk totalvekt fra checkout (`grams` = vekt × antall) — autoritativ
+  // for nettside-ordre. Allerede total, skal IKKE skaleres med qty.
+  const canonG = Number(p && p.grams) || 0;
+  if (canonG > 0) return _ordListFormatGrams(canonG);
   // Storefront-flyt: kunden plukker vekt i PDP, og varen lagres som qty=1 + rik metadata.
   // PDP-valgt vekt (selectedOpts.vekt) har høyest forrang, så variantLabel, så stk for unit-kind.
   const vekt = p && p.selectedOpts && (p.selectedOpts.vekt || p.selectedOpts.Vekt);
@@ -3196,6 +3200,8 @@ function normalizeOrder(o){
       variantLabel: v.variantLabel || '',
       unitLabel: v.unitLabel || '',
       kind: v.kind || '',
+      // Kanonisk totalvekt fra checkout — autoritativ mengde for nettside-ordre
+      grams: Number(v.grams) || 0,
     };
   });
   const total = Number(
