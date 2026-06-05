@@ -9825,9 +9825,11 @@ except Exception as _e:
 #      print_worker.py (kjører som systemd-tjeneste på Pi).
 import base64 as _b64
 import shutil as _shutil
+import struct as _struct
 import subprocess as _sp
 import tempfile as _tempfile
 import uuid as _uuid
+import zlib as _zlib
 import threading as _threading
 
 LABEL_TEMPLATES_FILE = os.path.join(STATE_DIR, "label_templates.json")
@@ -9964,6 +9966,50 @@ def _print_lp_print(raw_png, job_id):
         try: os.remove(fpath)
         except Exception: pass
 
+# Etikettene er designet 50 × 103 mm (591 × 1217 px @ 300 dpi). For at CUPS på
+# Pi-en (driverless «everywhere»-kø) skal printe i NØYAKTIG fysisk størrelse —
+# og aldri en lang strimmel — må PNG-en bære dpi-info (pHYs-chunk), noe
+# html2canvas ikke setter.
+LABEL_DPI          = 300
+LABEL_ASPECT       = 103.0 / 50.0   # høyde/bredde = 2.06
+LABEL_ASPECT_SLACK = 0.55           # godta 1.51–2.61 (avrundingsslakk)
+
+def _png_dimensions(raw):
+    """Les bredde/høyde fra IHDR. Returner (w, h) eller (None, None)."""
+    try:
+        if raw[:8] == b"\x89PNG\r\n\x1a\n" and raw[12:16] == b"IHDR":
+            return _struct.unpack(">II", raw[16:24])
+    except Exception:
+        pass
+    return None, None
+
+def _png_set_dpi(raw, dpi=LABEL_DPI):
+    """Sett/erstatt pHYs-chunk (piksler per meter) så fysisk størrelse er
+    entydig for CUPS. Returnerer original uendret ved enhver feil."""
+    try:
+        if raw[:8] != b"\x89PNG\r\n\x1a\n":
+            return raw
+        ppm  = int(round(dpi / 0.0254))
+        body = _struct.pack(">II", ppm, ppm) + b"\x01"
+        phys = (_struct.pack(">I", len(body)) + b"pHYs" + body +
+                _struct.pack(">I", _zlib.crc32(b"pHYs" + body) & 0xFFFFFFFF))
+        out, pos, inserted = bytearray(raw[:8]), 8, False
+        while pos + 12 <= len(raw):
+            length = _struct.unpack(">I", raw[pos:pos+4])[0]
+            ctype  = raw[pos+4:pos+8]
+            end    = pos + 12 + length
+            if ctype == b"pHYs":          # dropp eksisterende
+                pos = end
+                continue
+            if not inserted and ctype != b"IHDR":   # rett etter IHDR
+                out += phys
+                inserted = True
+            out += raw[pos:end]
+            pos = end
+        return bytes(out) if inserted else raw
+    except Exception:
+        return raw
+
 def _print_worker_heartbeat_read():
     if not os.path.exists(PRINT_HEARTBEAT_FILE):
         return None
@@ -10021,6 +10067,22 @@ def api_print_label():
         return jsonify({"ok": False, "error": f"Ugyldig base64: {e}"}), 400
     if len(raw) > 4 * 1024 * 1024:
         return jsonify({"ok": False, "error": "Bilde for stort (>4 MB)"}), 413
+
+    # Vern mot «lang strimmel»: etiketten skal være ~50×103 mm (h/b ≈ 2.06).
+    # Alt med helt andre proporsjoner (f.eks. en hel side fanget i ett bilde)
+    # avvises før det når skriveren.
+    w, h = _png_dimensions(raw)
+    if w and h:
+        ratio = h / w
+        if abs(ratio - LABEL_ASPECT) > LABEL_ASPECT_SLACK:
+            return jsonify({
+                "ok": False,
+                "error": (f"Feil etikett-proporsjoner ({w}×{h} px, h/b={ratio:.2f}). "
+                          "Forventet ~50×103 mm — bruk «Skriv ut denne»-knappen per etikett."),
+            }), 400
+
+    # Stemple 300 dpi inn i PNG-en → CUPS printer nøyaktig 50×103 mm
+    raw = _png_set_dpi(raw)
 
     product = data.get("product") or "—"
     ordr    = data.get("order_id") or ""

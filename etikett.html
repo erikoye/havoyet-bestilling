@@ -313,7 +313,7 @@
       </svg>
       P-touch Editor
     </a>
-    <button class="btn-print-all" onclick="window.print()">
+    <button class="btn-print-all" id="printAllBtn" onclick="printAll()">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 6 2 18 2 18 9"/>
         <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
@@ -724,6 +724,24 @@ async function printOne(idx) {
   } catch (e) {
     console.error(e);
     if (btn) { btn.textContent = '✗ Render-feil'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3500); }
+  }
+}
+
+// «Skriv ut etiketter» sender hver etikett som egen 50×103mm-jobb gjennom
+// print-køen (samme vei som «Skriv ut denne»). ALDRI window.print() her —
+// AirPrint av hele siden til QL-1110NWB gir én lang strimmel med all teksten.
+async function printAll() {
+  const btn = document.getElementById('printAllBtn');
+  if (!labels.length) return;
+  const origHtml = btn ? btn.innerHTML : '';
+  if (btn) btn.disabled = true;
+  for (let i = 0; i < labels.length; i++) {
+    if (btn) btn.textContent = `Skriver ut ${i + 1} av ${labels.length}…`;
+    await printOne(i);
+  }
+  if (btn) {
+    btn.textContent = `✓ ${labels.length} sendt til skriver`;
+    setTimeout(() => { btn.innerHTML = origHtml; btn.disabled = false; }, 3000);
   }
 }
 
