@@ -7484,6 +7484,236 @@ def api_analytics_funnel():
         })
     return jsonify({"ok": True, "steps": rows})
 
+@app.route("/api/analytics/deepdive", methods=["GET"])
+def api_analytics_deepdive():
+    """«Mer data» for Daglig rapport — alt vi kan utlede av analytics-sesjoner
+    + ordrehistorikk for valgt periode, i ett kall. Blokker:
+      visitors (nye/tilbakevendende/ukjente), devices, browsers, engagement,
+      referrers, top_products, cart_products, clicks, hours, geo, buyers."""
+    import re
+    user, err = _analytics_admin_required()
+    if err: return err
+    window = _analytics_range_window()
+    if window is None:
+        return jsonify({"ok": False, "error": "ugyldig range"}), 400
+    start_ms, end_ms = window
+    sessions, events = _filtered_analytics(window)
+
+    # — Nye vs tilbakevendende besøkende —
+    # Stabil enhets-ID (did) finnes kun hos besøkende med statistikk-samtykke.
+    # Anonyme får per-fane-ID («anon-…») og kan ikke gjenkjennes på tvers av
+    # økter — de rapporteres ærlig som «ukjent».
+    first_seen = {}
+    for s2 in (_analytics.get("sessions", {}) or {}).values():
+        d2 = s2.get("did") or ""
+        if not d2 or d2.startswith("anon"):
+            continue
+        t2 = s2.get("started_at") or 0
+        if d2 not in first_seen or t2 < first_seen[d2]:
+            first_seen[d2] = t2
+    vis_new = vis_ret = vis_unknown = 0
+    for s in sessions.values():
+        did = s.get("did") or ""
+        if not did or did.startswith("anon"):
+            vis_unknown += 1
+        elif (s.get("started_at") or 0) > first_seen.get(did, 0):
+            vis_ret += 1
+        else:
+            vis_new += 1
+
+    # — Enheter + nettlesere (fra User-Agent) —
+    dev = {"mobil": 0, "nettbrett": 0, "desktop": 0}
+    brw = {}
+    for s in sessions.values():
+        ua = s.get("user_agent") or ""
+        if re.search(r"iPad|Tablet", ua, re.I):
+            dev["nettbrett"] += 1
+        elif re.search(r"Mobi|Android.+Mobile|iPhone", ua, re.I):
+            dev["mobil"] += 1
+        else:
+            dev["desktop"] += 1
+        if "Edg/" in ua:
+            b = "Edge"
+        elif "OPR/" in ua or "Opera" in ua:
+            b = "Opera"
+        elif "Firefox/" in ua:
+            b = "Firefox"
+        elif "Chrome/" in ua or "CriOS" in ua:
+            b = "Chrome"
+        elif "Safari/" in ua:
+            b = "Safari"
+        else:
+            b = "Annet"
+        brw[b] = brw.get(b, 0) + 1
+
+    # — Engasjement —
+    durs, page_counts = [], []
+    bounce = 0
+    for s in sessions.values():
+        d_ms = max(0, (s.get("last_event_at") or 0) - (s.get("started_at") or 0))
+        if d_ms > 0:
+            durs.append(d_ms)
+        n_pages = len(s.get("pages") or [])
+        page_counts.append(n_pages)
+        if n_pages <= 1:
+            bounce += 1
+    scrolls = [ev.get("max_scroll") or 0 for ev in events if ev.get("type") == "exit"]
+    n_sess = len(sessions) or 1
+    engagement = {
+        "avg_duration_s":  round(sum(durs) / len(durs) / 1000.0, 1) if durs else 0,
+        "avg_pages":       round(sum(page_counts) / n_sess, 1),
+        "bounce_pct":      round(bounce / n_sess * 100, 1),
+        "avg_scroll_pct":  round(sum(scrolls) / len(scrolls), 1) if scrolls else 0,
+        "total_time_min":  round(sum(durs) / 1000.0 / 60.0, 1),
+    }
+
+    # — Trafikk-kilder (referrer per økt) —
+    refs = {}
+    for s in sessions.values():
+        r = (s.get("referrer") or "").strip()
+        if not r:
+            label = "Direkte / bokmerke"
+        else:
+            m = re.match(r"https?://([^/]+)", r)
+            host = (m.group(1) if m else r).lower().replace("www.", "")
+            if "havoyet" in host or "havøyet" in host:
+                label = "Internt (havoyet.no)"
+            elif "google" in host:
+                label = "Google"
+            elif "facebook" in host or "fb." in host:
+                label = "Facebook"
+            elif "instagram" in host:
+                label = "Instagram"
+            elif "bing" in host:
+                label = "Bing"
+            else:
+                label = host[:60]
+        refs[label] = refs.get(label, 0) + 1
+    referrers = sorted(refs.items(), key=lambda kv: -kv[1])[:12]
+
+    # — Mest sette produkter (pageviews på /produkt/<slug>) —
+    prod = {}
+    for ev in events:
+        if ev.get("type") != "pageview":
+            continue
+        m = re.match(r"^/produkt/([^/?#]+)", ev.get("path") or "")
+        if m:
+            slug = m.group(1)[:60]
+            prod[slug] = prod.get(slug, 0) + 1
+    top_products = sorted(prod.items(), key=lambda kv: -kv[1])[:12]
+
+    # — Lagt i kurv (meta-tekst fra add_to_cart-events) —
+    cart = {}
+    for ev in events:
+        if ev.get("type") == "funnel_step" and ev.get("step") == "add_to_cart":
+            meta = (ev.get("meta") or "").strip()
+            label = meta[:60] if meta else "(ukjent produkt)"
+            cart[label] = cart.get(label, 0) + 1
+    cart_products = sorted(cart.items(), key=lambda kv: -kv[1])[:12]
+
+    # — Mest klikkede elementer —
+    clk = {}
+    for ev in events:
+        if ev.get("type") == "click" and ev.get("target"):
+            t = str(ev["target"])[:80]
+            clk[t] = clk.get(t, 0) + 1
+    top_clicks = sorted(clk.items(), key=lambda kv: -kv[1])[:12]
+
+    # — Aktivitet per time (Oslo-tid) —
+    hours = [0] * 24
+    for s in sessions.values():
+        ts = s.get("started_at") or 0
+        if ts:
+            h = datetime.fromtimestamp(ts / 1000.0, _OSLO_TZ).hour
+            hours[h] += 1
+
+    # — Geografi (fra Vercel-edge-geo på sesjonene) —
+    geo_cnt = {}
+    for s in sessions.values():
+        g = s.get("geo") or {}
+        city = (g.get("city") or "").strip()
+        country = (g.get("country") or "").strip()
+        if city:
+            label = city if country in ("NO", "Norway", "Norge", "") else f"{city} ({country})"
+        elif country:
+            label = country
+        else:
+            label = "Ukjent"
+        geo_cnt[label] = geo_cnt.get(label, 0) + 1
+    geo_rows = sorted(geo_cnt.items(), key=lambda kv: -kv[1])[:12]
+
+    # — Kjøpere: førstegang vs gjentakende —
+    # Matcher dagens betalte nettside-ordre mot HELE ordrehistorikken
+    # (inkl. gamle Shopify-importer) på normalisert telefon/epost.
+    def _cust_keys(o):
+        k = o.get("kunde") or {}
+        keys = set()
+        tlf = re.sub(r"\D", "", str(k.get("tlf") or ""))
+        if len(tlf) >= 8:
+            keys.add("t:" + tlf[-8:])
+        ep = str(k.get("epost") or "").strip().lower()
+        if ep:
+            keys.add("e:" + ep)
+        return keys
+    paid = _paid_ordrenrs()
+    buyers = []
+    for o in (_manual_orders or []):
+        if not isinstance(o, dict):
+            continue
+        nr = str(o.get("ordrenr") or o.get("id") or "")
+        if nr not in paid:
+            continue
+        d = str(o.get("dato") or o.get("created_at") or "")[:10]
+        try:
+            ts = int(datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=_OSLO_TZ).timestamp() * 1000)
+        except (ValueError, TypeError):
+            continue
+        if not (start_ms <= ts < end_ms):
+            continue
+        keys = _cust_keys(o)
+        prior = 0
+        if keys:
+            for o2 in (_manual_orders or []):
+                if not isinstance(o2, dict) or o2 is o:
+                    continue
+                d2 = str(o2.get("dato") or o2.get("created_at") or "")[:10]
+                if not d2 or d2 >= d:
+                    continue
+                if keys & _cust_keys(o2):
+                    prior += 1
+        buyers.append({
+            "ordrenr":    o.get("ordrenr"),
+            "navn":       (o.get("kunde") or {}).get("navn") or "",
+            "sum":        float(o.get("sum") or o.get("total") or 0),
+            "first_time": prior == 0,
+            "prior_orders": prior,
+        })
+    buyers_summary = {
+        "first_time": sum(1 for b in buyers if b["first_time"]),
+        "returning":  sum(1 for b in buyers if not b["first_time"]),
+    }
+
+    return jsonify({
+        "ok": True,
+        "visitors": {
+            "total":     len(sessions),
+            "new":       vis_new,
+            "returning": vis_ret,
+            "unknown":   vis_unknown,
+        },
+        "devices":      dev,
+        "browsers":     sorted(brw.items(), key=lambda kv: -kv[1]),
+        "engagement":   engagement,
+        "referrers":    [{"label": l, "count": n} for l, n in referrers],
+        "top_products": [{"slug": s_, "views": n} for s_, n in top_products],
+        "cart_products": [{"label": l, "count": n} for l, n in cart_products],
+        "top_clicks":   [{"target": t, "count": n} for t, n in top_clicks],
+        "hours":        hours,
+        "geo":          [{"label": l, "count": n} for l, n in geo_rows],
+        "buyers":       {"orders": buyers, "summary": buyers_summary},
+    })
+
+
 @app.route("/api/analytics/dropoff", methods=["GET"])
 def api_analytics_dropoff():
     user, err = _analytics_admin_required()
