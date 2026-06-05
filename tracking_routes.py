@@ -1151,18 +1151,49 @@ def _stop_items(order: dict) -> list[dict]:
     slik at checklist-state kan persisteres uten å trenge et unikt linje-felt."""
     varer = order.get("varer") or order.get("items") or []
     out = []
+
+    def _fmt_w(total_g):
+        if total_g >= 1000:
+            s = f"{total_g/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+            return f"{s} kg"
+        return f"{int(round(total_g))} g"
+
     for idx, v in enumerate(varer):
         variant = v.get("variant") or v.get("variantStr") or v.get("variantLabel") or ""
         if not variant:
             sel = v.get("selectedOpts")
             if isinstance(sel, dict) and sel:
                 variant = " · ".join(str(x) for x in sel.values() if x)
+        qty = v.get("qty") or v.get("quantity") or 1
+        unit = str(v.get("unit") or "").lower()
+        # Ferdig formatert mengde — samme prioritering som admin/pakke:
+        # eksplisitt enhet (qty bærer mengden) → kanonisk grams fra checkout →
+        # antall. Unngår rått "2000× g" for admin-førte vektlinjer.
+        try:
+            qty_n = float(qty)
+        except (TypeError, ValueError):
+            qty_n = 1
+        try:
+            canon_g = float(v.get("grams") or 0)
+        except (TypeError, ValueError):
+            canon_g = 0
+        if unit == "g":
+            mengde = _fmt_w(qty_n)
+        elif unit == "kg":
+            mengde = _fmt_w(qty_n * 1000)
+        elif unit == "stk":
+            mengde = f"{int(qty_n) if qty_n == int(qty_n) else qty_n} stk"
+        elif canon_g > 0:
+            mengde = _fmt_w(canon_g)
+        else:
+            mengde = f"{int(qty_n) if qty_n == int(qty_n) else qty_n}×"
         out.append({
             "line_id": str(idx),
             "name": v.get("name") or v.get("navn") or v.get("title") or v.get("productName") or "",
-            "qty": v.get("qty") or v.get("quantity") or 1,
+            "qty": qty,
             "variant": variant,
             "unit": v.get("unit") or "",
+            "mengde": mengde,
         })
     return out
 
