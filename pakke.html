@@ -2174,7 +2174,12 @@ function renderItemQtyEditor(item, i){
     return fmtWeight(explicitUnit === 'kg' ? effQty * 1000 : effQty);
   }
 
-  // 2) Storefront: PDP-valgt vekt (selectedOpts.vekt) × kurv-antall — samme som admin
+  // 2) Kanonisk totalvekt fra checkout (`grams` = vekt × antall, satt av
+  //    havoyet.no ved bestilling) — autoritativ når den finnes.
+  const canonG = Number(item && item.grams) || 0;
+  if (canonG > 0) return fmtWeight(canonG);
+
+  // 2b) Storefront: PDP-valgt vekt (selectedOpts.vekt) × kurv-antall — samme som admin
   const vekt = item && item.selectedOpts && (item.selectedOpts.vekt || item.selectedOpts.Vekt);
   const vektG = _extractGramsFromText(vekt);
   if (vektG) return fmtWeight(vektG * qty);
