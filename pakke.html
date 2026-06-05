@@ -399,6 +399,9 @@
     .kasse-progress { font-size: 11px; color: var(--muted); padding: 4px 9px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; white-space: nowrap; flex-shrink: 0; font-family: 'DM Mono', monospace; }
     .kasse-progress.green { background: #f0fdf4; color: var(--avail-ok); border-color: #bbf7d0; }
     .kasse-empty { font-size: 12px; color: var(--muted); padding: 12px; background: var(--surface); border: 1px dashed var(--border); border-radius: 8px; text-align: center; }
+    .kasse-tilbehor { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+    .kasse-tilbehor-lbl { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .kasse-tilbehor-chip { font-size: 12px; font-weight: 600; padding: 3px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; }
     .kasse-components { display: flex; flex-direction: column; gap: 8px; }
     .kasse-card .item-card { margin-bottom: 0; background: var(--surface); }
     .item-card.status-ok     { border-left: 4px solid var(--avail-ok); }
@@ -1166,6 +1169,27 @@ function parseKasseInfo(name) {
 // For klassisk/eksklusiv/premium leser vi fra KASSE_RECIPES (kommer fra
 // admin-overrides eller default).
 function initKasseComponents(kasseInfo, item) {
+  // Eksakt valgt innhold fra storefront-PDP (innholdValgt: {id, label, perPerson,
+  // total, unit} der total = perPerson × personer, inkl. kundens egne
+  // +/−-justeringer). Foretrekkes ALLTID over oppskrift/kasseInnhold, som kan
+  // være en utdatert pakkeliste.
+  if (item && Array.isArray(item.innholdValgt) && item.innholdValgt.length) {
+    const comps = item.innholdValgt
+      .filter(it => it && (Number(it.total) || 0) > 0)
+      .map(it => {
+        const unit  = (it.unit === 'stk') ? 'stk' : 'g';
+        const total = Math.round((Number(it.total) || 0) * 100) / 100;
+        return {
+          name: String(it.label || it.id || '').trim(),
+          weight: '', expiry: '',
+          weightUnit: unit,
+          avail: 'unsure', replacements: [], confirmedReplacement: null,
+          expected: `${String(total).replace('.', ',')} ${unit}`,
+        };
+      })
+      .filter(c => c.name);
+    if (comps.length) return comps;
+  }
   if (kasseInfo.type === 'custom' && item && Array.isArray(item.boxSelection) && item.boxSelection.length) {
     return item.boxSelection.map(s => {
       const navn = String(s.navn || s.name || '').trim();
@@ -1195,6 +1219,17 @@ function initKasseComponents(kasseInfo, item) {
   });
 }
 
+// True når ingen komponenter i en kasse-entry har registrert noe som helst —
+// da er det trygt å bygge komponentlisten på nytt fra oppdatert kilde.
+function _kasseComponentsUntouched(entry) {
+  return (entry.components || []).every(c => c
+    && (!c.weight || !String(c.weight).trim())
+    && (!c.expiry || !String(c.expiry).trim())
+    && (c.avail === 'unsure' || c.avail == null)
+    && !(Array.isArray(c.replacements) && c.replacements.length)
+    && !c.confirmedReplacement && !c.suggestedReplacement);
+}
+
 function initState(orders) {
   orders.forEach(o => {
     _ensureItems(o);
@@ -1215,6 +1250,17 @@ function initState(orders) {
         const k = parseKasseInfo(item.name);
         if (k && (!entry || !entry.isKasse)) {
           STATE[o.id][i] = { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k, item), itemComment: entry?.itemComment || '' };
+        } else if (k && entry && entry.isKasse && _kasseComponentsUntouched(entry)) {
+          // Selvreparasjon: komponentlisten ble bygget fra en utdatert oppskrift
+          // og INGENTING er registrert ennå (ingen vekt/holdbarhet/status/erstatning).
+          // Bygg på nytt så riktige produkter + mengder vises. Rører aldri kasser
+          // der butikken har begynt å registrere.
+          const fresh = initKasseComponents(k, item);
+          const sig = a => (a || []).map(c => `${c.name}|${c.expected || ''}`).join(';');
+          if (fresh.length && sig(fresh) !== sig(entry.components)) {
+            entry.components = fresh;
+            entry.persons = k.persons;
+          }
         } else if (!entry) {
           STATE[o.id][i] = { weight:'', expiry:'', weightUnit: item.unit || 'g', avail:'unsure', replacements:[], confirmedReplacement:null, itemComment:'' };
         }
@@ -1411,6 +1457,8 @@ function _normalizeManualOrder(o){
       kind: v.kind || '',
       tilbehorValgt: v.tilbehorValgt || v.tilbehor_valgt || [],
       boxSelection: v.boxSelection || [],
+      // Eksakt valgt kasse-innhold fra storefront (total = perPerson × personer)
+      innholdValgt: Array.isArray(v.innholdValgt) ? v.innholdValgt : [],
     };
   });
   // Bevar paymentStatus fra admin-shape — brukes til "skjul betalt+levert"-filteret.
@@ -2322,6 +2370,12 @@ function renderKasseCard(item, i, s) {
     ? components.map((c, ci) => renderComponentCard(c, i, ci)).join('')
     : `<div class="kasse-empty">Komponenter ikke registrert ennå. ${escHtml(cleanedItemName)} ble ikke pipet gjennom checkout med komponentliste — registrer manuelt eller pakk som én vare.</div>`;
 
+  // Valgt tilbehør fra storefront (tilbehorValgt: ["Sitron", "Majones", …]).
+  const tilbehor = (Array.isArray(item.tilbehorValgt) ? item.tilbehorValgt : [])
+    .map(t => String(t || '').trim()).filter(Boolean);
+  const tilbehorHtml = tilbehor.length
+    ? `<div class="kasse-tilbehor"><span class="kasse-tilbehor-lbl">Tilbehør:</span>${tilbehor.map(t => `<span class="kasse-tilbehor-chip">${escHtml(t)}</span>`).join('')}</div>`
+    : '';
   return `
   <div class="kasse-card" id="kasse-${i}">
     <div class="kasse-head">
@@ -2331,6 +2385,7 @@ function renderKasseCard(item, i, s) {
       </div>
       ${total > 0 ? `<span class="kasse-progress${allDone ? ' green' : ''}">${confirmed}/${total} bekreftet</span>` : ''}
     </div>
+    ${tilbehorHtml}
     <div class="kasse-components">${componentsHtml}</div>
     <div class="item-comment-row" style="margin-top:10px">
       <textarea class="item-comment-input" id="item-comment-${i}" rows="1"
@@ -2352,7 +2407,20 @@ function renderComponentCard(c, i, ci) {
     if (c.avail !== val) return 'avail-btn';
     return `avail-btn active-${val === 'ok' ? 'ok' : val === 'unsure' ? 'unsure' : 'no'}`;
   };
-  const expectedHint = c.expected ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(forv. ${escHtml(c.expected)})</span>` : '';
+  // Bestilt mengde som lese-pille til venstre for Tilgjengelig — samme plassering
+  // som mengde-pillen på vanlige varelinjer. Parser c.expected ("600 g"/"2 stk"/
+  // "0,5 stk"); g ≥ 1000 vises som kg. Faller tilbake til (forv. …)-hint i navnet
+  // hvis expected ikke lar seg parse.
+  const _expM = String(c.expected || '').trim().match(/^(\d+(?:[.,]\d+)?)\s*(g|kg|stk)$/i);
+  let qtyPill = '';
+  if (_expM) {
+    let num = parseFloat(_expM[1].replace(',', '.'));
+    let unit = _expM[2].toLowerCase();
+    if (unit === 'g' && num >= 1000) { num = num / 1000; unit = 'kg'; }
+    const disp = (Number.isInteger(num) ? String(num) : num.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');
+    qtyPill = `<div class="item-qty-edit readonly" title="Bestilt mengde"><span class="qty-num">${disp}</span><span class="qty-unit">${unit}</span></div>`;
+  }
+  const expectedHint = (!qtyPill && c.expected) ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(forv. ${escHtml(c.expected)})</span>` : '';
   const suggestedKey = c.suggestedReplacement ? _replKey(c.suggestedReplacement) : null;
   const confirmedKey = c.confirmedReplacement ? _replKey(c.confirmedReplacement) : null;
   const selectedChips = replacements.map(r => {
@@ -2377,6 +2445,7 @@ function renderComponentCard(c, i, ci) {
   <div class="item-card ${statusClass}" id="card-${i}-${ci}">
     <div class="item-top">
       <div class="item-name" id="comp-name-${i}-${ci}">${escHtml(c.name)}${expectedHint}${variantOptionBadges(c)}</div>
+      ${qtyPill}
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'ok')">Tilgjengelig</button>
         <button class="${chipClass('unsure')}" onclick="setComponentAvail('${currentOrderId}',${i},${ci},'unsure')">Avventer fiskebåt</button>

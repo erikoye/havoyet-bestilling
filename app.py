@@ -166,6 +166,8 @@ def _normalize_manual_order(o):
             "kind":         v.get("kind") or "",
             "tilbehorValgt": v.get("tilbehorValgt") or v.get("tilbehor_valgt") or [],
             "boxSelection":  v.get("boxSelection") or [],
+            # Eksakt valgt kasse-innhold fra storefront (total = perPerson × personer)
+            "innholdValgt":  v.get("innholdValgt") or [],
         })
     return {
         "id":         o.get("ordrenr") or o.get("id"),
