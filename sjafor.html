@@ -1112,7 +1112,9 @@ function _renderChecklistCard(data, stops){
       ? items.map(it => {
           const isChecked = checkedSet.has(String(it.line_id));
           const variant = it.variant ? `<div class="cl-line-variant">${_escapeHtml(it.variant)}</div>` : "";
-          const unit = it.unit ? ` ${_escapeHtml(it.unit)}` : "";
+          // `mengde` er ferdig formatert av backend (samme regler som admin/pakke).
+          // Fallback til gammelt qty×unit-format for cached/eldre API-svar.
+          const qtyLabel = it.mengde ? `${_escapeHtml(it.mengde)} ` : `${_escapeHtml(it.qty)}×${it.unit ? ' ' + _escapeHtml(it.unit) : ''}`;
           return `
             <div class="cl-line${isChecked ? ' checked' : ''}"
                  data-order="${_escapeHtml(s.order_id)}"
@@ -1120,7 +1122,7 @@ function _renderChecklistCard(data, stops){
                  role="checkbox" aria-checked="${isChecked}" tabindex="0">
               <div class="cl-checkbox" aria-hidden="true">${isChecked ? '✓' : ''}</div>
               <div class="cl-line-text">
-                <div class="cl-line-name"><span class="qty">${_escapeHtml(it.qty)}×${unit}</span>${_escapeHtml(it.name || '(uten navn)')}</div>
+                <div class="cl-line-name"><span class="qty">${qtyLabel}</span>${_escapeHtml(it.name || '(uten navn)')}</div>
                 ${variant}
               </div>
             </div>`;
