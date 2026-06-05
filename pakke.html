@@ -2145,57 +2145,56 @@ function _orderIsManual(orderId){
 
 function renderItemQtyEditor(item, i){
   // Mengde og enhet er kun-lesbar her — endringer gjøres i admin-panelet.
-  // Pillen skal vise FAKTISK bestilt mengde, ikke `qty=1`. For fisk/skalldyr
-  // hvor produktet f.eks. heter "Laks filet (ca. 500 g)" og kunden bestilte 1
-  // porsjon, viser vi "500 g" (qty × porsjonsvekt). For stk-varer viser vi qty.
+  // Pillen viser FAKTISK bestilt mengde med SAMME prioritering som admin
+  // (_ordListQtyText): eksplisitt enhet → PDP-valgt vekt × qty → stk-produkter
+  // → variantLabel-vekt × qty → navne-vekt (allerede total via multiplyWeight).
+  // VIKTIG: enhet GJETTES ALDRI fra navnet for så å tolke qty som vektmengde —
+  // det var det som ga "1 g" for "Speket ørret (250 g)" med qty=1.
   const qty = Number((item && (item.qty ?? item.quantity)) ?? 1) || 1;
-  // Manuelle ordre (og skalldyrkasse-linjer) lagrer ekte mengde i parentes med
-  // qty=1, f.eks. "Reker (400)" eller "Ørret (2000)". Bruk tallet i parentesen
-  // som faktisk mengde når qty ikke bærer det. Tallet må følges av ")" eller "–"
-  // så vekt-parenteser med enhet ("(1,5 kg)") ikke matcher — de tas av _extractGramsFromText.
-  const _parenM = String((item && item.name) || '').match(/\(\s*(\d+(?:[.,]\d+)?)\s*(?:[–\-]|\))/);
-  const parenAmount = _parenM ? parseFloat(_parenM[1].replace(',', '.')) : null;
-  const effQty = (qty === 1 && parenAmount != null) ? parenAmount : qty;
-  // Stk-produkter (kind:"unit" m/ unitLabel:"stk" i data2.jsx) skal ALLTID vises som stk,
-  // selv om legacy-ordre tilfeldigvis ble lagret med unit='kg' eller tom.
-  const isStkProduct = (item && (item.kind === 'unit' || item.unitLabel === 'stk'));
-  let unit;
-  if (isStkProduct) unit = 'stk';
-  else unit = (item && item.unit) || _guessUnitFromName(item && item.name) || 'stk';
-
-  // Forsøk å hente porsjonsvekt fra variant-felt eller (parantesen i) navnet.
-  const variantText = String(
-    (item && (item.variantLabel || item.variant)) || (item && item.name) || ''
-  );
-  const gramsPerUnit = _extractGramsFromText(variantText);
-
-  let displayQty = String(effQty);
-  if (unit === 'g' || unit === 'kg') {
-    // Linja er allerede lagret i vekt (etter migrasjon) — IKKE multipliser med
-    // gramsPerUnit fra variantLabel. effQty er det faktiske antall g/kg.
-    const totalG = unit === 'kg' ? effQty * 1000 : effQty;
+  const pill = (disp, unit) =>
+    `<div class="item-qty-edit readonly" title="Endres i admin-panelet"><span class="qty-num">${disp}</span><span class="qty-unit">${unit}</span></div>`;
+  const fmtWeight = (totalG) => {
     if (totalG >= 1000) {
       const kg = totalG / 1000;
-      displayQty = (Number.isInteger(kg) ? String(kg) : kg.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');
-      unit = 'kg';
-    } else {
-      displayQty = String(Math.round(totalG));
-      unit = 'g';
+      return pill((Number.isInteger(kg) ? String(kg) : kg.toFixed(2).replace(/\.?0+$/, '')).replace('.', ','), 'kg');
     }
-  } else if (gramsPerUnit && unit !== 'stk') {
-    // Legacy-format: qty=antall porsjoner, gramsPerUnit fra variantLabel —
-    // skaler så pillen viser total vekt. Brukes for ordrer som ikke ble migrert.
-    const total = effQty * gramsPerUnit;
-    if (total >= 1000) {
-      const kg = total / 1000;
-      displayQty = (Number.isInteger(kg) ? String(kg) : kg.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');
-      unit = 'kg';
-    } else {
-      displayQty = String(total);
-      unit = 'g';
-    }
+    return pill(String(Math.round(totalG)), 'g');
+  };
+
+  // 1) Eksplisitt enhet på linja (admin/manuell flow): qty BÆRER mengden
+  //    (admin lagrer qty=gram/kg/stk). Skalldyrkasse-/manuelle linjer med qty=1
+  //    har ekte mengde i parentes — "Reker (400)" — tallet må følges av ")"
+  //    eller "–" så vekt-parenteser med enhet ("(1,5 kg)") ikke matcher.
+  const explicitUnit = String((item && item.unit) || '').toLowerCase();
+  if (explicitUnit === 'g' || explicitUnit === 'kg' || explicitUnit === 'stk') {
+    const _parenM = String((item && item.name) || '').match(/\(\s*(\d+(?:[.,]\d+)?)\s*(?:[–\-]|\))/);
+    const parenAmount = _parenM ? parseFloat(_parenM[1].replace(',', '.')) : null;
+    const effQty = (qty === 1 && parenAmount != null) ? parenAmount : qty;
+    if (explicitUnit === 'stk') return pill(String(effQty), 'stk');
+    return fmtWeight(explicitUnit === 'kg' ? effQty * 1000 : effQty);
   }
-  return `<div class="item-qty-edit readonly" title="Endres i admin-panelet"><span class="qty-num">${displayQty}</span><span class="qty-unit">${unit}</span></div>`;
+
+  // 2) Storefront: PDP-valgt vekt (selectedOpts.vekt) × kurv-antall — samme som admin
+  const vekt = item && item.selectedOpts && (item.selectedOpts.vekt || item.selectedOpts.Vekt);
+  const vektG = _extractGramsFromText(vekt);
+  if (vektG) return fmtWeight(vektG * qty);
+
+  // 3) Stk-produkter (kind:"unit" / unitLabel:"stk" i data2.jsx) → alltid stk
+  if (item && (item.kind === 'unit' || item.unitLabel === 'stk')) return pill(String(qty), 'stk');
+
+  // 4) variantLabel/variant-vekt × kurv-antall (legacy storefront-linjer)
+  const vlG = _extractGramsFromText(item && (item.variantLabel || item.variantStr || item.variant));
+  if (vlG) return fmtWeight(vlG * qty);
+
+  // 5) Vekt i navnet — normalizeOrder har allerede multiplisert med qty
+  //    (multiplyWeight), så tallet er TOTAL og skal IKKE skaleres igjen.
+  const nameG = _extractGramsFromText(item && item.name);
+  if (nameG) return fmtWeight(nameG);
+
+  // 6) Fallback: kasser/stk-hint fra navnet → "N stk"; ellers bare antallet
+  //    (aldri fiktiv vekt-enhet på et kurv-antall).
+  if (_guessUnitFromName(item && item.name) === 'stk') return pill(String(qty), 'stk');
+  return pill(String(qty), '');
 }
 
 let _qtySaveTimers = {};
