@@ -7418,6 +7418,35 @@ def _filtered_analytics(window):
     return sessions, events
 
 
+def _web_orders_completed_in_window(window):
+    """Antall ekte nettside-ordre (kasse-checkout) registrert betalt med
+    ordredato i vinduet. Brukes som gulv for «Fullført ordre»-steget i
+    funnelen — klient-tracking underteller (adblock/avslått samtykke)."""
+    start_ms, end_ms = window
+    paid = _paid_ordrenrs()
+    n = 0
+    for o in (_manual_orders or []):
+        if not isinstance(o, dict) or o.get("manual"):
+            continue
+        src   = (o.get("source") or "").lower()
+        kilde = (o.get("kilde") or "").lower()
+        if src in ("admin", "shopify") or "shopify" in kilde or "import" in kilde:
+            continue
+        store = o.get("store")
+        if store and store != "Havøyet":
+            continue
+        if str(o.get("ordrenr") or o.get("id") or "") not in paid:
+            continue
+        d = str(o.get("dato") or o.get("created_at") or "")[:10]
+        try:
+            ts = int(datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=_OSLO_TZ).timestamp() * 1000)
+        except (ValueError, TypeError):
+            continue
+        if start_ms <= ts < end_ms:
+            n += 1
+    return n
+
+
 @app.route("/api/analytics/funnel", methods=["GET"])
 def api_analytics_funnel():
     user, err = _analytics_admin_required()
@@ -7434,6 +7463,15 @@ def api_analytics_funnel():
         for s in steps[1:]:
             if s in f:
                 counts[s] += 1
+    # «Fullført ordre» skal speile virkeligheten: bruk ekte betalte
+    # nettside-ordre i perioden som gulv (klient-events blokkeres av
+    # adblock / avslått samtykke / Vipps-app-retur).
+    try:
+        real_orders = _web_orders_completed_in_window(window)
+        if real_orders > counts["order_complete"]:
+            counts["order_complete"] = real_orders
+    except Exception:
+        pass
     rows = []
     base = counts[steps[0]] or 1
     for i, s in enumerate(steps):
