@@ -1899,6 +1899,13 @@ def _send_contact_mail(from_email, from_name, subject, body, html_body=None):
 ADMIN_EVENTS = ("new_order", "order_updated", "order_delivered", "new_message", "tracking_health", "product_changed")
 ADMIN_NOTIFY_LOG = os.path.join(os.path.dirname(_BASE_DIR), "admin_notifications.jsonl")
 
+# ── SMS PÅ PAUSE (Eriks beslutning 2026-06-05) ──────────────────────────────
+# Vi har ikke noe fungerende SMS-system/leverandør ennå, så ALL SMS-utsending
+# (admin-varsler, kunde-statusmeldinger, testvarsler) hoppes over. E-post er
+# primær varslingskanal (+ push/Telegram der det er konfigurert).
+# Gjenåpne SMS ved å sette env SMS_PAUSED=0 på Render når leverandør er klar.
+SMS_PAUSED = os.environ.get("SMS_PAUSED", "1").strip() not in ("0", "false", "False")
+
 # Sveve (primær SMS-leverandør — norsk, gratis sender-ID-godkjenning)
 SVEVE_USER   = os.environ.get("SVEVE_USER", "").strip()
 SVEVE_PASS   = os.environ.get("SVEVE_PASS", "").strip()
@@ -2124,6 +2131,8 @@ def _send_via_sveve(to_phone, msg, sender):
 def _send_admin_sms(to_phone, body):
     """Send SMS — prøver Sveve først (primær), så Twilio (fallback).
     Trimmer til 1 SMS-segment (160 tegn) for å holde kostnaden lav."""
+    if SMS_PAUSED:
+        return False, "sms-paused (ingen aktiv SMS-leverandør — sett SMS_PAUSED=0 for å gjenåpne)"
     msg = body if len(body) <= 160 else body[:157] + "…"
 
     # 1) Sveve (primær)
@@ -2348,7 +2357,9 @@ def _notify_admins(event, subject, body, html_body=None, reply_to=None):
             else:
                 mail_failed += 1
                 print(f"[ADMIN-NOTIFY] mail {email}: {detail}")
-        if phone and "sms" in allowed:
+        if phone and "sms" in allowed and SMS_PAUSED:
+            pass  # SMS er på pause — hopp over uten å telle som feil
+        elif phone and "sms" in allowed:
             normalized = _normalize_phone(phone)
             if not normalized:
                 sms_failed += 1
