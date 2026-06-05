@@ -568,7 +568,11 @@ def _paid_ordrenrs():
                 continue
             try:
                 ps = o.get("paymentStatus") or ""
-                if str(ps).lower() == "paid":
+                st = str(o.get("status") or "").strip().upper()
+                # status PAID/PAID_OUT settes av Vipps/Stripe-callbacks og
+                # nettside-sync — teller som betalt selv om paymentStatus
+                # mangler (samme regel som _all_orders_normalized).
+                if str(ps).lower() == "paid" or st in ("PAID", "PAID_OUT"):
                     ordrenr = str(o.get("ordrenr") or o.get("id") or "").strip()
                     if ordrenr:
                         paid.add(ordrenr)
