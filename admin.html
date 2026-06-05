@@ -9532,7 +9532,7 @@ async function _renderShopifyImported(){
     .filter(r => r.payment_channel !== 'direct')
     .map(r => `${(r.date || '').slice(0, 10)}|${Math.round(Number(r.amount_kr) || 0)}`));
   window._ecWebOrderItems = (orders || [])
-    .filter(o => o && isPaidOrder(o) && !isShopifyish(o))
+    .filter(o => o && o.ordrenr && Number(o.sum || o.total || 0) > 0 && isPaidOrder(o) && !isShopifyish(o) && (!o.store || o.store === 'Havøyet'))
     .filter(o => !vippsKeys.has(`${(o.dato || '').slice(0, 10)}|${Math.round(Number(o.sum || o.total || 0))}`))
     .map(o => {
       const k = o.kunde || {};
