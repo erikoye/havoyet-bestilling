@@ -2271,7 +2271,7 @@ function renderItemQtyEditor(item, i){
     const _parenM = String((item && item.name) || '').match(/\(\s*(\d+(?:[.,]\d+)?)\s*(?:[–\-]|\))/);
     const parenAmount = _parenM ? parseFloat(_parenM[1].replace(',', '.')) : null;
     const effQty = (qty === 1 && parenAmount != null) ? parenAmount : qty;
-    if (explicitUnit === 'stk') return pill(String(effQty), 'stk');
+    if (explicitUnit === 'stk') return pill(String(effQty).replace('.', ','), 'stk');
     return fmtWeight(explicitUnit === 'kg' ? effQty * 1000 : effQty);
   }
 
@@ -2297,10 +2297,14 @@ function renderItemQtyEditor(item, i){
   const nameG = _extractGramsFromText(item && item.name);
   if (nameG) return fmtWeight(nameG);
 
-  // 6) Fallback: kasser/stk-hint fra navnet → "N stk"; ellers bare antallet
-  //    (aldri fiktiv vekt-enhet på et kurv-antall).
-  if (_guessUnitFromName(item && item.name) === 'stk') return pill(String(qty), 'stk');
-  return pill(String(qty), '');
+  // 6) Fallback: kasser/stk-hint fra navnet → "N stk". Manuelle admin-linjer
+  //    uten enhet arver admins default (ENHET-selecten viser 'stk' når unit
+  //    er tom) — vis derfor «0,5 stk», ikke et nakent tall. Ellers bare
+  //    antallet (aldri fiktiv vekt-enhet på et kurv-antall).
+  const qtyDisp = String(qty).replace('.', ',');
+  if (_guessUnitFromName(item && item.name) === 'stk') return pill(qtyDisp, 'stk');
+  if (_orderIsManual(currentOrderId)) return pill(qtyDisp, 'stk');
+  return pill(qtyDisp, '');
 }
 
 let _qtySaveTimers = {};
