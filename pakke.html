@@ -1193,14 +1193,22 @@ function initKasseComponents(kasseInfo, item) {
   if (kasseInfo.type === 'custom' && item && Array.isArray(item.boxSelection) && item.boxSelection.length) {
     return item.boxSelection.map(s => {
       const navn = String(s.navn || s.name || '').trim();
+      // Variant (f.eks. "150 g pakke") inkluderes så samme navn med ulike
+      // størrelser ikke ser identiske ut i pakkelisten.
+      const variant = s.variant ? ` (${String(s.variant).trim()})` : '';
       const qty  = Number(s.qty || s.quantity || 1) || 1;
-      const unit = (s.unit === 'stk' || s.unit === 'kg' || s.unit === 'g') ? s.unit : 'stk';
+      const unit = (s.unit === 'stk' || s.unit === 'kg' || s.unit === 'g' || s.unit === 'pakke') ? s.unit : 'stk';
+      // Storefront sender valgt mengde per art: g-arter i gram, stk/pakke i antall.
+      const grams = unit === 'kg' ? qty * 1000 : (unit === 'g' ? qty : 0);
+      const expected = grams
+        ? (grams >= 1000 ? `${String(Math.round(grams / 10) / 100).replace('.', ',')} kg` : `${grams} g`)
+        : (unit === 'pakke' ? `${qty} pk` : `${qty} stk`);
       return {
-        name: navn,
+        name: navn + variant,
         weight: '', expiry: '',
-        weightUnit: unit === 'kg' ? 'g' : unit,
+        weightUnit: grams ? 'g' : 'stk',
         avail: 'unsure', replacements: [], confirmedReplacement: null,
-        expected: qty > 1 ? `${qty} ${unit}` : (unit === 'stk' ? '1 stk' : ''),
+        expected,
       };
     });
   }
@@ -2243,6 +2251,10 @@ function onItemQtyChange(orderId, i, field, val){
 async function persistManualOrder(o, lineIdx){
   let manual = [];
   try { manual = JSON.parse(localStorage.getItem('havøyet_manual_orders') || '[]'); } catch(e) {}
+  // Stemple ordren som faktisk redigert NÅ — backend-mergen bruker updatedAt
+  // til å la nyeste versjon vinne. Uten stempel ville en stale iPad-kopi
+  // rulle tilbake varer admin nettopp la til via PATCH.
+  o.updatedAt = Math.floor(Date.now() / 1000);
   const oid = o.id || o.ordrenr;
   const idx = manual.findIndex(x => (x.id || x.ordrenr) === oid);
   if (idx >= 0) manual[idx] = o; else manual.push(o);

@@ -4909,12 +4909,21 @@ function _formatVariants(v){
       if (!s) return;
       const navn = s.navn || s.name;
       if (!navn) return;
-      // boxSelection har egen qty per valg — multipliser med line-qty
-      const totQty = (Number(s.qty) || 1) * qty;
       // Variant (f.eks. "150 g pakke") inkluderes så samme navn med ulike
       // størrelser ikke ser identisk ut i admin/sjåfør-visning.
       const label = navn + (s.variant ? ` (${s.variant})` : '');
-      push(label + (totQty > 1 ? ` ×${totQty}` : ''));
+      // boxSelection har egen qty + unit per valg — multipliser med line-qty.
+      // Vekt-enheter (g/kg) vises som mengde («Reker 400 g»), ikke ×N.
+      const unit = String(s.unit || '').toLowerCase();
+      const q = (Number(s.qty) || 0) * qty;
+      if (q > 0 && (unit === 'g' || unit === 'kg')) {
+        const grams = unit === 'kg' ? q * 1000 : q;
+        const txt = grams >= 1000 ? `${String(Math.round(grams / 10) / 100).replace('.', ',')} kg` : `${Math.round(grams)} g`;
+        push(`${label} ${txt}`);
+      } else {
+        const totQty = (Number(s.qty) || 1) * qty;
+        push(label + (totQty > 1 ? ` ×${totQty}` : ''));
+      }
     });
   }
   return parts;
@@ -5048,7 +5057,11 @@ async function _fetchPackingState(){
     if (!data || typeof data !== 'object') return;
     _packingState = data;
     // Hvis drawer er åpen, oppdater varelinjene så endringer fra pakke.html vises live.
-    if (_editingOrder && document.getElementById('dr')?.classList.contains('open')) {
+    // MEN: aldri re-render mens admin skriver i et felt i vare-listen — innerHTML-
+    // erstatningen dreper fokus midt i skrivingen («lar meg ikke skrive mer»-buggen).
+    const ae = document.activeElement;
+    const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA') && ae.closest('#edVarer');
+    if (_editingOrder && !typing && document.getElementById('dr')?.classList.contains('open')) {
       _renderEditLines();
     }
   } catch(e) { /* offline */ }
@@ -5294,7 +5307,9 @@ function _renderEditLines(){
     const packingAvail = packingLine && packingLine.avail;
     const availRaw = packingAvail || v.avail || 'unsure';
     const avail = availRaw === 'maybe' ? 'unsure' : availRaw;
-    const isNew = !v.name;  // tom rad — la admin redigere navn også
+    // Redigerbart navn for tomme rader OG nylagte manuelle rader (_manual).
+    // Tidligere bare !v.name — da låste feltet seg ved første re-render.
+    const isNew = !v.name || v._manual;
     // Hvis det ikke er strukturerte varianter, prøv å parse fra navnet ("Navn - 2 / Med is / Med tilbehør")
     let displayName = v.name || '';
     if (!variants.length) {
@@ -5413,7 +5428,11 @@ function addEditLine(){
   // Nye linjer starter som "Avventer fiskebåt" — admin må aktivt bekrefte at varen
   // er tilgjengelig. Forhindrer at en nylagt vare blir feilaktig markert
   // som klar uten faktisk verifisering.
-  _editingOrder.varer.push({ name: '', qty: 1, price: 0, avail: 'unsure' });
+  // _manual: true holder navnefeltet redigerbart selv etter re-render (15s
+  // packing-poll, avail-klikk osv.). Uten flagget ble input byttet til statisk
+  // tekst så snart navnet var ikke-tomt — admin fikk ikke skrevet ferdig
+  // («rekesmørbrød»-buggen). Flagget strippes ved lagring.
+  _editingOrder.varer.push({ name: '', qty: 1, price: 0, avail: 'unsure', _manual: true });
   _renderEditLines();
 }
 

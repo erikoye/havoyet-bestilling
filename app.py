@@ -1033,6 +1033,16 @@ def _order_keys(o):
     """Begge mulige nøkler en ordre identifiseres med (kan være ulike i edge-cases)."""
     return {str(o.get("id") or "").strip(), str(o.get("ordrenr") or "").strip()} - {""}
 
+
+def _order_updated_at(o):
+    """Epoch-tidsstempel for siste reelle redigering av ordren (0 hvis ukjent).
+    Settes av admin-PATCH (server-side) og pakke.html persistManualOrder
+    (klient-side). Brukes i POST-mergen så nyeste versjon vinner."""
+    try:
+        return float(o.get("updatedAt") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
 @app.route("/api/manual-orders", methods=["GET", "POST"])
 def api_manual_orders():
     global _manual_orders
@@ -1049,17 +1059,29 @@ def api_manual_orders():
         # til alle ordre. Tidligere overskrev dens POST hele lista → ordre forsvant
         # (særlig manuelle Nesttun-hente-ordre). Nå beholder vi eksisterende ordre
         # som ikke finnes i innkommende liste og ikke er slettet (tombstone).
-        # Innkommende vinner ved id-konflikt (har nyeste redigering).
+        # Ved id-konflikt vinner versjonen med nyest updatedAt — en stale iPad-
+        # kopi skal IKKE rulle tilbake varer admin nettopp la til via PATCH.
+        # (Mangler begge stempel → innkommende vinner, som før.)
         if isinstance(new_list, list):
             incoming_keys = set()
             for o in new_list:
                 incoming_keys |= _order_keys(o)
             tomb = set(_order_tombstones.keys()) if _order_tombstones else set()
-            merged = list(new_list)
+            existing_by_key = {}
+            for o in _manual_orders:
+                for k in _order_keys(o):
+                    existing_by_key[k] = o
+            merged = []
+            for o in new_list:
+                srv = next((existing_by_key[k] for k in _order_keys(o) if k in existing_by_key), None)
+                if srv is not None and _order_updated_at(srv) > _order_updated_at(o):
+                    merged.append(srv)  # server-versjonen er nyere redigert — behold den
+                else:
+                    merged.append(o)
             for o in _manual_orders:
                 keys = _order_keys(o)
                 if keys & incoming_keys:
-                    continue            # innkommende har en (nyere) versjon
+                    continue            # konflikten er allerede avgjort over
                 if keys & tomb:
                     continue            # ordren er slettet
                 merged.append(o)        # behold ordre klienten ikke kjente til
@@ -3543,7 +3565,16 @@ def api_orders_new():
         lines.append(f"  {qty} × {navn_v:<32} {qty * pris:>6} kr")
         if v.get("boxSelection"):
             for s in v["boxSelection"]:
-                lines.append(f"      + {s.get('navn','')}")
+                navn_s = s.get("navn") or s.get("name") or ""
+                if s.get("variant"):
+                    navn_s += f" ({s['variant']})"
+                # Valgt mengde per art fra builderen (qty + unit): g-arter i
+                # gram, stk/pakke i antall — vis «Reker 400 g», «Østers 4 stk».
+                q = s.get("qty")
+                if q:
+                    u = {"g": "g", "kg": "kg", "stk": "stk", "pakke": "pk"}.get(s.get("unit") or "", "")
+                    navn_s += f" — {q} {u}".rstrip()
+                lines.append(f"      + {navn_s}")
     lines.append("-" * 54)
     lines.append(f"{'Subtotal':<44} {data.get('total', 0):>6} kr")
     lines.append(f"{'Levering':<44} {data.get('fee', 0):>6} kr")
@@ -3711,6 +3742,7 @@ def api_order_update_status(order_id):
         if str(o.get("ordrenr") or o.get("id")) == str(order_id):
             old_status = o.get("status", "")
             o["status"] = new_status
+            o["updatedAt"] = int(time.time())
             _save_sync_state()
             nr = o.get("ordrenr") or o.get("id") or "?"
             change_summary = f"Status endret fra '{old_status}' til '{new_status}'."
@@ -3766,6 +3798,9 @@ def api_order_patch(order_id):
                 if k in ("kunde", "varer"):
                     continue
                 o[k] = v
+            # Stemple redigeringen — POST-mergen bruker updatedAt til å hindre
+            # at en stale iPad-liste overskriver denne endringen.
+            o["updatedAt"] = int(time.time())
             _save_sync_state()
             nr = o.get("ordrenr") or o.get("id") or "?"
             new_status = o.get("status", "")
