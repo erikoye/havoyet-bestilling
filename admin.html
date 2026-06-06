@@ -4921,8 +4921,9 @@ function _formatVariants(v){
         const txt = grams >= 1000 ? `${String(Math.round(grams / 10) / 100).replace('.', ',')} kg` : `${Math.round(grams)} g`;
         push(`${label} ${txt}`);
       } else {
+        // Stk-komponenter: vis mengden som «4 stk», aldri «×4».
         const totQty = (Number(s.qty) || 1) * qty;
-        push(label + (totQty > 1 ? ` ×${totQty}` : ''));
+        push(label + (totQty > 1 ? ` ${totQty} stk` : ''));
       }
     });
   }
@@ -4931,23 +4932,17 @@ function _formatVariants(v){
 
 // Skalerer en variant-verdi med qty:
 //  • Hvis verdien er et rent tall (f.eks. "2" i personer-feltet): multipliserer
-//  • Ellers: legger til "×N" når qty > 1 så admin ser at det skal pakkes flere
+//  • Ellers: vis verdien som den er. ALDRI "×N"-hale eller "(2× 1)"-parentes —
+//    antallet vises allerede i ANTALL-feltet, og for vekt-varer er chip-en
+//    («2 kg») som regel selve totalmengden (qty = kg).
 function _scaleChip(val, qty, key){
   const s = String(val).trim();
-  if (qty <= 1) {
-    // Vis pent: "2" → "2 personer" hvis nøkkelen tilsier det
-    if (/^\d+$/.test(s) && /pers/i.test(key || '')) return `${s} personer`;
-    return s;
-  }
-  // qty > 1
   if (/^\d+$/.test(s)) {
-    // Numeriske valg multipliseres
-    const n = parseInt(s, 10) * qty;
-    if (/pers/i.test(key || '')) return `${n} personer (${qty}× ${s})`;
-    return `${n} (${qty}× ${s})`;
+    const n = parseInt(s, 10) * Math.max(1, Number(qty) || 1);
+    if (/pers/i.test(key || '')) return `${n} personer`;
+    return `${n}`;
   }
-  // Ikke-numerisk: legg til ×qty
-  return `${s} ×${qty}`;
+  return s;
 }
 
 // Splitter et navn som "Klassisk Skalldyrkasse (549kr pr pers) - 2 / Med is / Med tilbehør"
@@ -4968,18 +4963,16 @@ function _parseEmbeddedVariants(name, qty){
   // Del opt-blokken på " / "
   const chips = optBlock ? optBlock.split(' / ').map(s => s.trim()).filter(Boolean) : [];
   const chipsLabeled = chips.map((c, i) => {
-    // Første chip antas å være personer/antall hvis ren tallverdi
+    // Første chip antas å være personer/antall hvis ren tallverdi.
+    // Numeriske chips multipliseres til total — men ALDRI "×N"/"(2× 1)"-haler,
+    // antallet vises allerede i ANTALL-feltet på linjen.
     if (i === 0 && /^\d+$/.test(c)) {
-      const n = parseInt(c, 10);
-      const tot = n * q;
-      return q > 1 ? `${tot} personer (${q}× ${n})` : `${n} personer`;
+      return `${parseInt(c, 10) * q} personer`;
     }
-    // Andre chips: hvis ren tall, multipliser. Ellers prepend qty× når qty > 1
     if (/^\d+$/.test(c)) {
-      const n = parseInt(c, 10);
-      return q > 1 ? `${n * q} (${q}× ${n})` : c;
+      return `${parseInt(c, 10) * q}`;
     }
-    return q > 1 ? `${c} ×${q}` : c;
+    return c;
   });
   return { base, chips: chipsLabeled };
 }
