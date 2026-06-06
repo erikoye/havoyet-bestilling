@@ -460,13 +460,21 @@ def _effective_kg(name, qty, unit, unit_price=None):
     if u == "kg":
         return q
     n = (name or "").lower()
+    # Stk-solgte skalldyr med kjent snittvekt: sjøkreps 160 g, krabbeklør 170 g
+    # (~6 stk/kg). Konverteringen gjelder kun kr/kg-prisede linjer — per stk-
+    # prisede (pris < 300) skal regnes qty × pris direkte.
+    kg_per_stk = None
     if "sjøkreps" in n or "sjokreps" in n:
+        kg_per_stk = 0.16
+    elif "krabbeklør" in n or "krabbeklor" in n:
+        kg_per_stk = 0.17
+    if kg_per_stk is not None:
         try:
             if unit_price is not None and 0 < float(unit_price) < 300:
                 return None
         except (TypeError, ValueError):
             pass
-        return q * 0.16
+        return q * kg_per_stk
     return None
 
 

@@ -3526,11 +3526,12 @@ function _defaultQtyUnit(p){
 // Mengdekonvertering for produkter som registreres som antall (stk) men prises
 // per kg. Brukes konsistent i alle salgs- og innkjøps-beregninger så stk-input
 // gir riktig kr-tall.
-// Regel: 1 sjøkreps = 160 g når unit='stk'.
-// NB: sjøkreps selges nå per stk (104 kr/stk) — konverteringen gjelder KUN
-// linjer priset i kr/kg (gamle ordre à 650 kr/kg). Se _editLineTotal.
+// Regler: 1 sjøkreps = 160 g, 1 krabbeklo = 170 g (~6 stk/kg) når unit='stk'.
+// NB: begge selges nå per stk (104/150 kr/stk) — konverteringen gjelder KUN
+// linjer priset i kr/kg (gamle ordre à 650/900 kr/kg). Se _editLineTotal.
 const _STK_AS_KG_RULES = [
-  { pattern: /sj[øo]kreps/i, kgPerStk: 0.16 },
+  { pattern: /sj[øo]kreps/i,     kgPerStk: 0.16 },
+  { pattern: /krabbekl[øo]r/i,   kgPerStk: 0.17 },
 ];
 function _stkAsKg(name){
   const n = String(name || '');
