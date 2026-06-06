@@ -1215,7 +1215,8 @@ function initKasseComponents(kasseInfo, item) {
       const oldVal = s => (Number(s.pris) || 0) * (600 * kasseInfo.persons / (catCount[s.catId] || 1)) / 1000;
       const unitInfo = s => {
         const navn = String(s.navn || s.name || '').toLowerCase();
-        if (navn.includes('lyngenfjord')) return { grams: 380, label: 'boks', perKg: true };
+        // Lyngenfjord-boks (380 g) markeres som stk, men vekten vises i parentes.
+        if (navn.includes('lyngenfjord')) return { grams: 380, label: 'stk', visGram: true, perKg: true };
         if (navn.includes('krabbeskjell')) {
           const g = (String(s.variant || '').match(/(\d+)\s*g/) || [])[1];
           return { grams: Number(g) || 150, label: 'stk', perKg: false }; // pris = kr per stykk
@@ -1234,10 +1235,8 @@ function initKasseComponents(kasseInfo, item) {
           fixedVal += count * unitPrice;
           legacyPlan[idx] = {
             grams: count * u.grams,
-            weightUnit: u.label === 'stk' ? 'stk' : 'g',
-            text: u.label === 'boks'
-              ? `${count} boks${count > 1 ? 'er' : ''} (${count * u.grams} g)`
-              : `${count} stk`,
+            weightUnit: 'stk',
+            text: u.visGram ? `${count} stk (${count * u.grams} g)` : `${count} stk`,
           };
         } else {
           loose.push({ s, idx, ov });
@@ -1274,13 +1273,22 @@ function initKasseComponents(kasseInfo, item) {
       }
       // Storefront sender valgt mengde per art: g-arter i gram, stk/pakke i antall.
       const grams = unit === 'kg' ? qty * 1000 : (unit === 'g' ? qty : 0);
-      const expected = grams
-        ? (grams >= 1000 ? `${String(Math.round(grams / 10) / 100).replace('.', ',')} kg` : `${grams} g`)
-        : (unit === 'pakke' ? `${qty} pk` : `${qty} stk`);
+      // Pakningsvarer (enhetGrams, f.eks. Lyngenfjord-boks à 380 g) markeres
+      // som stk med vekten i parentes: «1 stk (380 g)».
+      const eg = Number(s.enhetGrams) || 0;
+      let expected;
+      if (grams && eg) {
+        const n = Math.max(1, Math.round(grams / eg));
+        expected = `${n} stk (${grams} g)`;
+      } else if (grams) {
+        expected = grams >= 1000 ? `${String(Math.round(grams / 10) / 100).replace('.', ',')} kg` : `${grams} g`;
+      } else {
+        expected = unit === 'pakke' ? `${qty} pk` : `${qty} stk`;
+      }
       return {
         name: navn + variant,
         weight: '', expiry: '',
-        weightUnit: grams ? 'g' : 'stk',
+        weightUnit: (grams && !eg) ? 'g' : 'stk',
         avail: 'unsure', replacements: [], confirmedReplacement: null,
         expected,
       };
