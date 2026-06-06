@@ -3526,9 +3526,11 @@ function _defaultQtyUnit(p){
 // Mengdekonvertering for produkter som registreres som antall (stk) men prises
 // per kg. Brukes konsistent i alle salgs- og innkjøps-beregninger så stk-input
 // gir riktig kr-tall.
-// Regel: 1 sjøkreps = 250 g når unit='stk'.
+// Regel: 1 sjøkreps = 160 g når unit='stk'.
+// NB: sjøkreps selges nå per stk (104 kr/stk) — konverteringen gjelder KUN
+// linjer priset i kr/kg (gamle ordre à 650 kr/kg). Se _editLineTotal.
 const _STK_AS_KG_RULES = [
-  { pattern: /sj[øo]kreps/i, kgPerStk: 0.25 },
+  { pattern: /sj[øo]kreps/i, kgPerStk: 0.16 },
 ];
 function _stkAsKg(name){
   const n = String(name || '');
@@ -5373,12 +5375,16 @@ function _renderEditLines(){
 }
 
 // Linjepris i kr — respekterer ordrelinjens egen enhet (kg/g/stk).
-// Sjøkreps + stk regnes som 250 g per stk (via _effectiveKg).
+// Sjøkreps-stk→kg-konvertering (1 stk = 160 g via _effectiveKg) gjelder KUN
+// kr/kg-prisede linjer (gamle ordre à 650 kr/kg). Nye sjøkreps-linjer prises
+// per stk (~104 kr) — da er qty × price riktig. Heuristikk: stk-linje med
+// pris < 300 ⇒ per stk-pris, ikke kr/kg.
 function _editLineTotal(v){
   const qty = Number(v.qty) || 0;
   const price = Number(v.price) || 0;
-  const kg = _effectiveKg(v && v.name, qty, v && v.unit);
-  if (kg != null) return kg * price;
+  const unit = String(v && v.unit || '').toLowerCase();
+  const kg = _effectiveKg(v && v.name, qty, unit);
+  if (kg != null && !(unit === 'stk' && price < 300)) return kg * price;
   return qty * price;
 }
 
@@ -5716,8 +5722,10 @@ function _orderCostBreakdown(o, infoMap){
     if (info) {
       if (Number.isFinite(linePrice) && linePrice > 0) {
         kost = linePrice * info.ratio;
-      } else if (kgEq != null) {
+      } else if (kgEq != null && info.price >= 300) {
         // Linjepris mangler, men vi vet kg-ekvivalent → bruk info.cost som kr/kg.
+        // Gjelder kun kr/kg-prisede produkter (pris ≥ 300) — sjøkreps er nå
+        // stk-priset (104 kr/stk, cost 44/stk) og skal regnes qty × cost.
         kost = info.cost * kgEq;
       } else {
         kost = info.cost * qty;

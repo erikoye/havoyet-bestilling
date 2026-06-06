@@ -2219,7 +2219,8 @@ function _guessUnitFromName(name){
   // Tradisjonelle stk-varer (skjell, østers, krabbeklør, hummer, glass, kasse, abonnement)
   // Fiskekaker er IKKE stk — det er kilo-priset (kind=fish i data2.jsx).
   // Plukkfisk (Bergens plukkfisk) er stk-priset (kind=unit) → beholdes som stk-hint.
-  const stkHints = ['østers','hummer','krabbeklør','krabbeskjell','blåskjell','muslinger','kamskjell','sjøkreps levende','sjøkreps fryst','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff','plukkfisk'];
+  // Sjøkreps (alle varianter) selges per stk fra 2026-06-06 (1 stk ≈ 160 g).
+  const stkHints = ['østers','hummer','krabbeklør','krabbeskjell','blåskjell','muslinger','kamskjell','sjøkreps','sjokreps','kasse','abonnement','glass','stk','tilbehør','aioli','majones','sitron','dill','loff','surdeigsloff','plukkfisk'];
   for (const h of stkHints) if (n.includes(h)) return 'stk';
   // Fisk/skalldyr i kg er normen
   return 'kg';

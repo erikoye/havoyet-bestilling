@@ -444,9 +444,12 @@ def _build_product_cost_map():
     return out
 
 
-def _effective_kg(name, qty, unit):
-    """kg-ekvivalent for en ordrelinje. g→kg, kg→kg, sjøkreps stk→0,25 kg/stk.
-    Returnerer None for vanlige stk-varer (kan ikke konverteres til kg)."""
+def _effective_kg(name, qty, unit, unit_price=None):
+    """kg-ekvivalent for en ordrelinje. g→kg, kg→kg, sjøkreps stk→0,16 kg/stk.
+    Returnerer None for vanlige stk-varer (kan ikke konverteres til kg).
+    NB: sjøkreps selges nå per stk (104 kr/stk) — stk→kg-konverteringen gjelder
+    kun kr/kg-prisede linjer (gamle ordre à 650 kr/kg). Når unit_price er kjent
+    og < 300 antas per stk-pris, og vi returnerer None (qty × pris er riktig)."""
     try:
         q = float(qty)
     except (TypeError, ValueError):
@@ -458,7 +461,12 @@ def _effective_kg(name, qty, unit):
         return q
     n = (name or "").lower()
     if "sjøkreps" in n or "sjokreps" in n:
-        return q * 0.25
+        try:
+            if unit_price is not None and 0 < float(unit_price) < 300:
+                return None
+        except (TypeError, ValueError):
+            pass
+        return q * 0.16
     return None
 
 
@@ -510,7 +518,7 @@ def _order_cost_kr(order, cost_map):
             unit_price = 0.0
         # Strukturert linjeverdi (kg×kr/kg for vekt, qty×pris for stk) — ren,
         # uavhengig av den korrupte `pris`. Brukes KUN til ratio-vekting.
-        kg = _effective_kg(name, qty, it.get("unit"))
+        kg = _effective_kg(name, qty, it.get("unit"), unit_price)
         line_val = (kg * unit_price) if kg is not None else (qty * unit_price)
         if line_val <= 0:
             continue
