@@ -2530,6 +2530,141 @@ def _format_message_email_html(source, navn, epost, melding, *, tlf="", emne="",
     )
 
 
+# ── E-POST MENGDE-HELPERS ──────────────────────────────────────────────────
+# Delt av admin-varsel (_format_order_email_html) og kundebekreftelsen
+# (_send_customer_order_confirmation) så begge viser identiske mengder.
+import re as _re
+def _grams_from_text(text):
+    if not text:
+        return None
+    m = _re.search(r"(\d+(?:[.,]\d+)?)\s*(kg|g)\b", str(text).lower().replace(",", "."))
+    if not m:
+        return None
+    try:
+        n = float(m.group(1))
+    except ValueError:
+        return None
+    return int(round(n * 1000)) if m.group(2) == "kg" else int(round(n))
+
+def _amount_from_parens(text):
+    """Tall oppgitt i parentes UTEN enhet, f.eks. "Reker (400)" → 400,
+    "Sjøkreps (2)" → 2, "Torsk (2 – uten skinn)" → 2. Tallet må følges av
+    ")" eller "–" (notat), så vekt-parenteser som "(1,5 kg)" / "(ca. 500 g)"
+    IKKE matcher — de håndteres av _grams_from_text."""
+    if not text:
+        return None
+    m = _re.search(r"\(\s*(\d+(?:[.,]\d+)?)\s*(?:[–\-]|\))", str(text))
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", "."))
+    except ValueError:
+        return None
+
+def _qty_text(item):
+    """Vis faktisk bestilt mengde til høyre i stedet for "×1". Tallet i
+    parentes er mengden: "Reker (400)" med enhet g → "400 g", "Sjøkreps (2)"
+    med enhet stk → "2 stk". Eksplisitt vekt i navnet ("(ca. 500 g)") støttes
+    også via _grams_from_text."""
+    qty = item.get("qty") or item.get("quantity") or item.get("antall") or 1
+    try:
+        qty = float(qty)
+    except (TypeError, ValueError):
+        qty = 1
+    unit = (item.get("unit") or "").lower()
+    # Kanonisk totalvekt fra checkout (`grams` = vekt × antall, satt av
+    # havoyet.no) — autoritativ når den finnes. Allerede total, skal ikke
+    # skaleres med qty.
+    try:
+        canon = float(item.get("grams") or 0)
+    except (TypeError, ValueError):
+        canon = 0
+    if canon > 0 and unit != "stk":
+        if canon >= 1000:
+            kg_s = f"{canon/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+            return f"{kg_s} kg"
+        return f"{int(round(canon))} g"
+    variant = item.get("variantLabel") or item.get("variant") or item.get("name") or ""
+    grams = _grams_from_text(variant)
+    parens = _amount_from_parens(variant)
+    if unit != "stk":
+        # Vekt-vare: bruk eksplisitt gram fra navnet, ellers tallet i parentes.
+        per = grams if grams else parens
+        if per:
+            total = qty * per
+            if total >= 1000:
+                kg_s = f"{total/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+                return f"{kg_s} kg"
+            return f"{int(round(total))} g"
+    else:
+        # Stk-vare: tallet i parentes er antallet ("Sjøkreps (2)" → 2 stk).
+        count = parens if parens else qty
+        count_int = int(count) if count == int(count) else count
+        return f"{count_int} stk"
+    # Fallback: manglende mengde-info — vis qty + enhet
+    qty_int = int(qty) if qty == int(qty) else qty
+    return f"{qty_int} {unit or 'stk'}".strip()
+
+def _strip_amount_parens(text):
+    """Fjern mengde-parentes fra slutten av navnet ("Reker (400)" → "Reker",
+    "Torsk (2 – uten skinn)" → "Torsk") slik at mengden kun vises i egen
+    kolonne til høyre. Beholder vekt-parenteser med enhet ("(1,5 kg)",
+    "(ca. 500 g)") — de er en del av produktnavnet."""
+    cleaned = _re.sub(r"\s*\(\s*\d+(?:[.,]\d+)?\s*(?:[–\-][^)]*)?\s*\)\s*$", "", str(text or "")).strip()
+    return cleaned or str(text or "")
+
+def _fmt_mengde(q, unit):
+    """Formater komponent-mengde: g ≥1000 vises som kg («1,2 kg»),
+    ellers «400 g» / «2 stk» / «1 pk»."""
+    u = str(unit or "").lower()
+    if u in ("g", "kg"):
+        grams = q * 1000 if u == "kg" else q
+        if grams >= 1000:
+            kg_s = f"{grams/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+            return f"{kg_s} kg"
+        return f"{int(round(grams))} g"
+    lbl = {"stk": "stk", "pakke": "pk"}.get(u, u or "stk")
+    q_int = int(q) if q == int(q) else q
+    return f"{q_int} {lbl}"
+
+def _innhold_linjer(v):
+    """Komponent-linjer for kasser: custom builder (boxSelection) viser
+    kundens valgte mengde per art, faste kasser (innholdValgt) viser
+    eksakt valgt innhold. Tilbehør listes til slutt. Mengder ganges med
+    antall kasser (line-qty) — samme regel som admin-visningen."""
+    try:
+        line_qty = float(v.get("qty") or v.get("quantity") or 1)
+    except (TypeError, ValueError):
+        line_qty = 1
+    linjer = []
+    for s in (v.get("boxSelection") or []):
+        if not isinstance(s, dict):
+            continue
+        navn_s = s.get("navn") or s.get("name") or ""
+        if not navn_s:
+            continue
+        if s.get("variant"):
+            navn_s += f" ({s['variant']})"
+        try:
+            q = float(s.get("qty") or 0)
+        except (TypeError, ValueError):
+            q = 0
+        # Legacy-valg uten qty/unit: vis kun navnet
+        linjer.append(f"{navn_s} — {_fmt_mengde(q * line_qty, s.get('unit'))}" if q > 0 else navn_s)
+    for it in (v.get("innholdValgt") or []):
+        if not isinstance(it, dict) or not it.get("label"):
+            continue
+        try:
+            tot = float(it.get("total") or 0)
+        except (TypeError, ValueError):
+            tot = 0
+        linjer.append(f"{it['label']} — {_fmt_mengde(tot * line_qty, it.get('unit') or 'g')}" if tot > 0 else it["label"])
+    tilbehor = [str(t) for t in (v.get("tilbehorValgt") or []) if t]
+    if tilbehor:
+        linjer.append("Tilbehør: " + ", ".join(tilbehor))
+    return linjer
+
+
 def _format_order_email_html(order, change_summary="", event=""):
     """Pen HTML-versjon av admin-ordre-varselet — strukturert med tabeller,
     farger og tydelige seksjoner som ikke kollapser i Gmail/Outlook.
@@ -2563,137 +2698,6 @@ def _format_order_email_html(order, change_summary="", event=""):
         banner_color, banner_label = "#1A3A5C", "Ordre oppdatert"
 
     def esc(s): return _html.escape(str(s or ""))
-
-    import re as _re
-    def _grams_from_text(text):
-        if not text:
-            return None
-        m = _re.search(r"(\d+(?:[.,]\d+)?)\s*(kg|g)\b", str(text).lower().replace(",", "."))
-        if not m:
-            return None
-        try:
-            n = float(m.group(1))
-        except ValueError:
-            return None
-        return int(round(n * 1000)) if m.group(2) == "kg" else int(round(n))
-
-    def _amount_from_parens(text):
-        """Tall oppgitt i parentes UTEN enhet, f.eks. "Reker (400)" → 400,
-        "Sjøkreps (2)" → 2, "Torsk (2 – uten skinn)" → 2. Tallet må følges av
-        ")" eller "–" (notat), så vekt-parenteser som "(1,5 kg)" / "(ca. 500 g)"
-        IKKE matcher — de håndteres av _grams_from_text."""
-        if not text:
-            return None
-        m = _re.search(r"\(\s*(\d+(?:[.,]\d+)?)\s*(?:[–\-]|\))", str(text))
-        if not m:
-            return None
-        try:
-            return float(m.group(1).replace(",", "."))
-        except ValueError:
-            return None
-
-    def _qty_text(item):
-        """Vis faktisk bestilt mengde til høyre i stedet for "×1". Tallet i
-        parentes er mengden: "Reker (400)" med enhet g → "400 g", "Sjøkreps (2)"
-        med enhet stk → "2 stk". Eksplisitt vekt i navnet ("(ca. 500 g)") støttes
-        også via _grams_from_text."""
-        qty = item.get("qty") or item.get("quantity") or item.get("antall") or 1
-        try:
-            qty = float(qty)
-        except (TypeError, ValueError):
-            qty = 1
-        unit = (item.get("unit") or "").lower()
-        # Kanonisk totalvekt fra checkout (`grams` = vekt × antall, satt av
-        # havoyet.no) — autoritativ når den finnes. Allerede total, skal ikke
-        # skaleres med qty.
-        try:
-            canon = float(item.get("grams") or 0)
-        except (TypeError, ValueError):
-            canon = 0
-        if canon > 0 and unit != "stk":
-            if canon >= 1000:
-                kg_s = f"{canon/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
-                return f"{kg_s} kg"
-            return f"{int(round(canon))} g"
-        variant = item.get("variantLabel") or item.get("variant") or item.get("name") or ""
-        grams = _grams_from_text(variant)
-        parens = _amount_from_parens(variant)
-        if unit != "stk":
-            # Vekt-vare: bruk eksplisitt gram fra navnet, ellers tallet i parentes.
-            per = grams if grams else parens
-            if per:
-                total = qty * per
-                if total >= 1000:
-                    kg_s = f"{total/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
-                    return f"{kg_s} kg"
-                return f"{int(round(total))} g"
-        else:
-            # Stk-vare: tallet i parentes er antallet ("Sjøkreps (2)" → 2 stk).
-            count = parens if parens else qty
-            count_int = int(count) if count == int(count) else count
-            return f"{count_int} stk"
-        # Fallback: manglende mengde-info — vis qty + enhet
-        qty_int = int(qty) if qty == int(qty) else qty
-        return f"{qty_int} {unit or 'stk'}".strip()
-
-    def _strip_amount_parens(text):
-        """Fjern mengde-parentes fra slutten av navnet ("Reker (400)" → "Reker",
-        "Torsk (2 – uten skinn)" → "Torsk") slik at mengden kun vises i egen
-        kolonne til høyre. Beholder vekt-parenteser med enhet ("(1,5 kg)",
-        "(ca. 500 g)") — de er en del av produktnavnet."""
-        cleaned = _re.sub(r"\s*\(\s*\d+(?:[.,]\d+)?\s*(?:[–\-][^)]*)?\s*\)\s*$", "", str(text or "")).strip()
-        return cleaned or str(text or "")
-
-    def _fmt_mengde(q, unit):
-        """Formater komponent-mengde: g ≥1000 vises som kg («1,2 kg»),
-        ellers «400 g» / «2 stk» / «1 pk»."""
-        u = str(unit or "").lower()
-        if u in ("g", "kg"):
-            grams = q * 1000 if u == "kg" else q
-            if grams >= 1000:
-                kg_s = f"{grams/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
-                return f"{kg_s} kg"
-            return f"{int(round(grams))} g"
-        lbl = {"stk": "stk", "pakke": "pk"}.get(u, u or "stk")
-        q_int = int(q) if q == int(q) else q
-        return f"{q_int} {lbl}"
-
-    def _innhold_linjer(v):
-        """Komponent-linjer for kasser: custom builder (boxSelection) viser
-        kundens valgte mengde per art, faste kasser (innholdValgt) viser
-        eksakt valgt innhold. Tilbehør listes til slutt. Mengder ganges med
-        antall kasser (line-qty) — samme regel som admin-visningen."""
-        try:
-            line_qty = float(v.get("qty") or v.get("quantity") or 1)
-        except (TypeError, ValueError):
-            line_qty = 1
-        linjer = []
-        for s in (v.get("boxSelection") or []):
-            if not isinstance(s, dict):
-                continue
-            navn_s = s.get("navn") or s.get("name") or ""
-            if not navn_s:
-                continue
-            if s.get("variant"):
-                navn_s += f" ({s['variant']})"
-            try:
-                q = float(s.get("qty") or 0)
-            except (TypeError, ValueError):
-                q = 0
-            # Legacy-valg uten qty/unit: vis kun navnet
-            linjer.append(f"{navn_s} — {_fmt_mengde(q * line_qty, s.get('unit'))}" if q > 0 else navn_s)
-        for it in (v.get("innholdValgt") or []):
-            if not isinstance(it, dict) or not it.get("label"):
-                continue
-            try:
-                tot = float(it.get("total") or 0)
-            except (TypeError, ValueError):
-                tot = 0
-            linjer.append(f"{it['label']} — {_fmt_mengde(tot * line_qty, it.get('unit') or 'g')}" if tot > 0 else it["label"])
-        tilbehor = [str(t) for t in (v.get("tilbehorValgt") or []) if t]
-        if tilbehor:
-            linjer.append("Tilbehør: " + ", ".join(tilbehor))
-        return linjer
 
     rows = []
     for v in varer:
@@ -2828,19 +2832,33 @@ def _send_customer_order_confirmation(order):
     varer = order.get("varer") or []
     rows = []
     for v in varer:
-        vname = esc(v.get("name") or v.get("navn") or "?")
+        vname = esc(_strip_amount_parens(v.get("name") or v.get("navn") or "?"))
         price = v.get("price") if v.get("price") is not None else v.get("pris")
-        qty = v.get("qty") or v.get("quantity") or 1
+        # Vekt/antall per produkt (samme regler som admin-varselet: grams →
+        # vekt i navn → parentes-tall → qty + enhet)
+        qty_str = esc(_qty_text(v))
         vlabel = v.get("variantLabel") or ""
+        # Kasse-innhold: kunden skal se hvert produkt med valgt vekt/antall
+        innhold = _innhold_linjer(v)
+        line_border = "border-bottom:none" if innhold else "border-bottom:1px solid #eee"
         rows.append(
             f'<tr>'
-            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;color:#1a1a1a">{vname}'
+            f'<td style="padding:8px 10px;{line_border};color:#1a1a1a">{vname}'
             f'{"<br/><span style=font-size:12px;color:#888>" + esc(vlabel) + "</span>" if vlabel else ""}</td>'
-            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:center;color:#666">{qty}</td>'
-            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right;font-variant-numeric:tabular-nums">'
+            f'<td style="padding:8px 10px;{line_border};text-align:center;color:#0f766e;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap">{qty_str}</td>'
+            f'<td style="padding:8px 10px;{line_border};text-align:right;font-variant-numeric:tabular-nums">'
             f'{esc(price)+" kr" if price is not None else ""}</td>'
             f'</tr>'
         )
+        if innhold:
+            innhold_html = "".join(
+                f'<div style="padding:1px 0">+ {esc(l)}</div>' for l in innhold
+            )
+            rows.append(
+                f'<tr><td colspan="3" style="padding:0 10px 8px 20px;'
+                f'border-bottom:1px solid #eee;color:#555;font-size:13px;'
+                f'line-height:1.5">{innhold_html}</td></tr>'
+            )
     varer_html = "".join(rows)
 
     total = order.get("total") or 0
@@ -3664,16 +3682,12 @@ def api_orders_new():
     lines.append(f"Svar på denne e-posten for å svare {navn} direkte.")
     lines.append("Ordren er også synlig i admin-panelet.")
 
-    emne = f"[Bestilling {data['ordrenr']}] {navn} – {data.get('sum', 0)} kr"
-    # Send som strukturert HTML (samme pene mal som admin-varselet) så e-posten
-    # blir oversiktlig i Gmail/Outlook. Ren tekst (lines) beholdes som fallback.
-    ok, detail = _send_contact_mail(
-        epost, navn, emne, "\n".join(lines),
-        html_body=_format_order_email_html(data, "Det er kommet inn en ny bestilling.", "new_order"),
-    )
+    # NB: Tidligere gikk det OGSÅ en direkte «[Bestilling X]»-mail til admin her
+    # via _send_contact_mail — fjernet 2026-06-06 fordi admin da fikk to varsler
+    # for samme ordre. _notify_admins under er nå eneste admin-varsel (og bruker
+    # samme HTML-mal med kasse-innhold). Kunden får egen ordrebekreftelse.
 
     # Send admin-varsel (e-post / SMS / ntfy / Telegram) til registrerte mottakere.
-    # Dette er separat fra kvitterings-mailen som går til kunden via _send_contact_mail.
     # Hopp over hvis ordren fortsatt er i en pre-betalings-status (AWAITING_PAYMENT) —
     # da fyrer varselet først når merge-pathen oppdager pending→PAID-overgangen, eller
     # Stripe-webhooken bekrefter betalingen. Slik unngår vi falske varsler om bestillinger
@@ -3698,7 +3712,7 @@ def api_orders_new():
         except Exception as e:
             print(f"[CUSTOMER-CONFIRM] feilet (ny ordre): {e}")
 
-    return jsonify({"ok": True, "mail": detail, "ordrenr": data["ordrenr"], "order": data})
+    return jsonify({"ok": True, "mail": "admin-notify", "ordrenr": data["ordrenr"], "order": data})
 
 
 @app.route("/api/orders/<ordrenr>/resend-confirmation", methods=["POST"])
