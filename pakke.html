@@ -1191,28 +1191,89 @@ function initKasseComponents(kasseInfo, item) {
     if (comps.length) return comps;
   }
   if (kasseInfo.type === 'custom' && item && Array.isArray(item.boxSelection) && item.boxSelection.length) {
-    // Eldre ordre (før mengde-støtten 2026-06-06) mangler qty/unit per art —
-    // de ble priset etter 600 g-regelen: 600 g × personer per kategori, delt
-    // likt mellom valgte arter i kategorien. Regn ut samme mengde her så
-    // butikken pakker det kunden faktisk betalte for.
+    // Eldre ordre (før mengde-støtten 2026-06-06) mangler qty/unit per art.
+    // De ble priset etter 600 g-regelen (600 g × personer per kategori, delt
+    // likt). Regn om verdiene til ekte pakninger slik at kunden får det hun
+    // betalte for:
+    //  1) gammel verdi per art = (600 g × pers ÷ arter i kategorien) × kr/kg
+    //  2) paknings-arter får nærmeste hele antall pakninger etter verdi, minst 1
+    //     (Lyngenfjord-reker = boks à 380 g; krabbeskjell = stykk à 150 g,
+    //     pris per stykk)
+    //  3) løsvekt-artene (f.eks. krabbeklør) deler RESTEN av beløpet:
+    //     gram = restverdi ÷ kr/kg — totalen matcher det kunden betalte.
     const legacy = !item.boxSelection.some(s => s && s.qty && s.unit);
-    const catCount = {};
-    if (legacy) item.boxSelection.forEach(s => {
-      const c = s && s.catId;
-      if (c && c !== 'tilbehor') catCount[c] = (catCount[c] || 0) + 1;
-    });
-    return item.boxSelection.map(s => {
+    const legacyPlan = {};
+    if (legacy) {
+      const counting = [];
+      const catCount = {};
+      item.boxSelection.forEach((s, idx) => {
+        if (s && s.catId && s.catId !== 'tilbehor') {
+          counting.push({ s, idx });
+          catCount[s.catId] = (catCount[s.catId] || 0) + 1;
+        }
+      });
+      const oldVal = s => (Number(s.pris) || 0) * (600 * kasseInfo.persons / (catCount[s.catId] || 1)) / 1000;
+      const unitInfo = s => {
+        const navn = String(s.navn || s.name || '').toLowerCase();
+        if (navn.includes('lyngenfjord')) return { grams: 380, label: 'boks', perKg: true };
+        if (navn.includes('krabbeskjell')) {
+          const g = (String(s.variant || '').match(/(\d+)\s*g/) || [])[1];
+          return { grams: Number(g) || 150, label: 'stk', perKg: false }; // pris = kr per stykk
+        }
+        return null;
+      };
+      let totalOld = 0, fixedVal = 0;
+      const loose = [];
+      counting.forEach(({ s, idx }) => {
+        const ov = oldVal(s);
+        totalOld += ov;
+        const u = unitInfo(s);
+        if (u) {
+          const unitPrice = u.perKg ? (Number(s.pris) || 0) * u.grams / 1000 : (Number(s.pris) || 0);
+          const count = Math.max(1, Math.round(unitPrice > 0 ? ov / unitPrice : 1));
+          fixedVal += count * unitPrice;
+          legacyPlan[idx] = {
+            grams: count * u.grams,
+            weightUnit: u.label === 'stk' ? 'stk' : 'g',
+            text: u.label === 'boks'
+              ? `${count} boks${count > 1 ? 'er' : ''} (${count * u.grams} g)`
+              : `${count} stk`,
+          };
+        } else {
+          loose.push({ s, idx, ov });
+        }
+      });
+      const remaining = Math.max(0, totalOld - fixedVal);
+      const looseSum = loose.reduce((t, x) => t + x.ov, 0);
+      loose.forEach(({ s, idx, ov }) => {
+        const val = looseSum > 0 ? remaining * (ov / looseSum) : 0;
+        const grams = Math.max(0, Math.round((val / (Number(s.pris) || 1)) * 1000 / 10) * 10);
+        legacyPlan[idx] = {
+          grams,
+          weightUnit: 'g',
+          text: grams >= 1000 ? `${String(Math.round(grams / 10) / 100).replace('.', ',')} kg` : `${grams} g`,
+        };
+      });
+    }
+    return item.boxSelection.map((s, idx) => {
       const navn = String(s.navn || s.name || '').trim();
-      // Variant (f.eks. "150 g pakke") inkluderes så samme navn med ulike
+      // Variant (f.eks. "150 g") inkluderes så samme navn med ulike
       // størrelser ikke ser identiske ut i pakkelisten.
       const variant = s.variant ? ` (${String(s.variant).trim()})` : '';
       const qty  = Number(s.qty || s.quantity || 1) || 1;
       const unit = (s.unit === 'stk' || s.unit === 'kg' || s.unit === 'g' || s.unit === 'pakke') ? s.unit : 'stk';
-      // Storefront sender valgt mengde per art: g-arter i gram, stk/pakke i antall.
-      let grams = unit === 'kg' ? qty * 1000 : (unit === 'g' ? qty : 0);
-      if (legacy && s.catId && s.catId !== 'tilbehor' && catCount[s.catId]) {
-        grams = Math.round(600 * kasseInfo.persons / catCount[s.catId]);
+      const plan = legacy ? legacyPlan[idx] : null;
+      if (plan) {
+        return {
+          name: navn + variant,
+          weight: '', expiry: '',
+          weightUnit: plan.weightUnit,
+          avail: 'unsure', replacements: [], confirmedReplacement: null,
+          expected: plan.text,
+        };
       }
+      // Storefront sender valgt mengde per art: g-arter i gram, stk/pakke i antall.
+      const grams = unit === 'kg' ? qty * 1000 : (unit === 'g' ? qty : 0);
       const expected = grams
         ? (grams >= 1000 ? `${String(Math.round(grams / 10) / 100).replace('.', ',')} kg` : `${grams} g`)
         : (unit === 'pakke' ? `${qty} pk` : `${qty} stk`);
