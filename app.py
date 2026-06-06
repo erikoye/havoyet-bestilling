@@ -2636,18 +2636,82 @@ def _format_order_email_html(order, change_summary="", event=""):
         cleaned = _re.sub(r"\s*\(\s*\d+(?:[.,]\d+)?\s*(?:[–\-][^)]*)?\s*\)\s*$", "", str(text or "")).strip()
         return cleaned or str(text or "")
 
+    def _fmt_mengde(q, unit):
+        """Formater komponent-mengde: g ≥1000 vises som kg («1,2 kg»),
+        ellers «400 g» / «2 stk» / «1 pk»."""
+        u = str(unit or "").lower()
+        if u in ("g", "kg"):
+            grams = q * 1000 if u == "kg" else q
+            if grams >= 1000:
+                kg_s = f"{grams/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+                return f"{kg_s} kg"
+            return f"{int(round(grams))} g"
+        lbl = {"stk": "stk", "pakke": "pk"}.get(u, u or "stk")
+        q_int = int(q) if q == int(q) else q
+        return f"{q_int} {lbl}"
+
+    def _innhold_linjer(v):
+        """Komponent-linjer for kasser: custom builder (boxSelection) viser
+        kundens valgte mengde per art, faste kasser (innholdValgt) viser
+        eksakt valgt innhold. Tilbehør listes til slutt. Mengder ganges med
+        antall kasser (line-qty) — samme regel som admin-visningen."""
+        try:
+            line_qty = float(v.get("qty") or v.get("quantity") or 1)
+        except (TypeError, ValueError):
+            line_qty = 1
+        linjer = []
+        for s in (v.get("boxSelection") or []):
+            if not isinstance(s, dict):
+                continue
+            navn_s = s.get("navn") or s.get("name") or ""
+            if not navn_s:
+                continue
+            if s.get("variant"):
+                navn_s += f" ({s['variant']})"
+            try:
+                q = float(s.get("qty") or 0)
+            except (TypeError, ValueError):
+                q = 0
+            # Legacy-valg uten qty/unit: vis kun navnet
+            linjer.append(f"{navn_s} — {_fmt_mengde(q * line_qty, s.get('unit'))}" if q > 0 else navn_s)
+        for it in (v.get("innholdValgt") or []):
+            if not isinstance(it, dict) or not it.get("label"):
+                continue
+            try:
+                tot = float(it.get("total") or 0)
+            except (TypeError, ValueError):
+                tot = 0
+            linjer.append(f"{it['label']} — {_fmt_mengde(tot * line_qty, it.get('unit') or 'g')}" if tot > 0 else it["label"])
+        tilbehor = [str(t) for t in (v.get("tilbehorValgt") or []) if t]
+        if tilbehor:
+            linjer.append("Tilbehør: " + ", ".join(tilbehor))
+        return linjer
+
     rows = []
     for v in varer:
         name = esc(_strip_amount_parens(v.get("name") or v.get("navn") or "?"))
         price = v.get("price") if v.get("price") is not None else v.get("pris")
         qty_str = esc(_qty_text(v))
+        # Innholds-linjer (kasse-komponenter): uten dem viser e-posten bare
+        # «Din skalldyrkasse» uten hva kunden faktisk valgte.
+        innhold = _innhold_linjer(v)
+        line_border = "border-bottom:none" if innhold else "border-bottom:1px solid #eee"
         rows.append(
             f'<tr>'
-            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;color:#1a1a1a">{name}</td>'
-            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:center;color:#0f766e;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap">{qty_str}</td>'
-            f'<td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right;color:#1a1a1a;font-variant-numeric:tabular-nums">{esc(price)+" kr" if price is not None else ""}</td>'
+            f'<td style="padding:8px 10px;{line_border};color:#1a1a1a">{name}</td>'
+            f'<td style="padding:8px 10px;{line_border};text-align:center;color:#0f766e;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap">{qty_str}</td>'
+            f'<td style="padding:8px 10px;{line_border};text-align:right;color:#1a1a1a;font-variant-numeric:tabular-nums">{esc(price)+" kr" if price is not None else ""}</td>'
             f'</tr>'
         )
+        if innhold:
+            innhold_html = "".join(
+                f'<div style="padding:1px 0">+ {esc(l)}</div>' for l in innhold
+            )
+            rows.append(
+                f'<tr><td colspan="3" style="padding:0 10px 8px 20px;'
+                f'border-bottom:1px solid #eee;color:#555;font-size:13px;'
+                f'line-height:1.5">{innhold_html}</td></tr>'
+            )
     varer_html = "".join(rows) or (
         '<tr><td colspan="3" style="padding:14px;text-align:center;color:#999;font-style:italic">Ingen varer registrert</td></tr>'
     )
