@@ -1362,6 +1362,16 @@ function normalizeOrder(o) {
         selectedOpts: i.selectedOpts || null,
         unit: i.unit || '',
         qty,
+        // Kasse-metadata MÅ med her (felt-allowlist!) — ellers mister
+        // initKasseComponents kundens valgte innhold og kassen vises uten
+        // komponentliste («Komponenter ikke registrert ennå»).
+        slug: i.slug || '',
+        price: i.price,
+        grams: i.grams || 0,
+        kind: i.kind || '',
+        tilbehorValgt: i.tilbehorValgt || [],
+        boxSelection: i.boxSelection || [],
+        innholdValgt: Array.isArray(i.innholdValgt) ? i.innholdValgt : [],
       };
     }),
   };
