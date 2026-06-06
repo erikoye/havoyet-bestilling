@@ -2557,6 +2557,16 @@ function restoreState() {
             if (!entry || !entry.isKasse || !Array.isArray(entry.components)) {
               return { isKasse: true, kasseType: k.type, persons: k.persons, components: initKasseComponents(k, item), itemComment: (entry && entry.itemComment) || '' };
             }
+            // Selvreparasjon OGSÅ her (samme som initState): server-lagret
+            // state kan ha komponenter bygget av eldre kode (tom liste eller
+            // «1 stk»-mengder). Bygg på nytt når INGENTING er registrert ennå.
+            if (_kasseComponentsUntouched(entry)) {
+              const fresh = initKasseComponents(k, item);
+              const sig = a => (a || []).map(c => `${c.name}|${c.expected || ''}`).join(';');
+              if (fresh.length && sig(fresh) !== sig(entry.components)) {
+                return { ...entry, components: fresh, persons: k.persons };
+              }
+            }
             return entry;
           }
           return entry || { weight:'', expiry:'', weightUnit:'g', avail:'unsure', replacements:[], confirmedReplacement:null, itemComment:'' };
