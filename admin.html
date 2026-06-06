@@ -5579,7 +5579,7 @@ async function saveOrderEdits(nr){
   const g = id => document.getElementById(id);
   // Behold all variant-data (selectedOpts, variantLabel, boxSelection, grams, weight, slug, kind...)
   // og oppdater bare felter admin har redigert.
-  const varer = _editingOrder.varer.map(v => ({
+  const varer = _editingOrder.varer.map(({ _manual, ...v }) => ({
     ...v,
     name: (v.name || '').trim(),
     // qty kan være desimal (f.eks. 0.5 kg) — clamp kun til 0+, ikke til min:1.
