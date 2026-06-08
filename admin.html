@@ -464,6 +464,10 @@
     .ed-kasse-row-main{flex:1;min-width:160px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
     .ed-kasse-name{font-size:13px;font-weight:600;color:var(--hv-fg-1);}
     .ed-kasse-expected,.ed-kasse-weight{font-size:11px;color:var(--hv-fg-3);}
+    .ed-kasse-qty-wrap{display:inline-flex;align-items:center;gap:4px;}
+    .ed-kasse-qty{width:72px !important;font-size:12px;padding:3px 6px;}
+    .ed-kasse-qty-unit{font-size:11px;color:var(--hv-fg-3);}
+    .ed-kasse-qty-suffix{font-size:11px;color:var(--hv-fg-3);opacity:0.8;}
     .ed-kasse-weight{color:var(--hv-teal);}
     .ed-kasse-row-side{margin-left:auto;}
     .ed-kasse-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid var(--hv-line);background:#fff;color:var(--hv-fg-3);}
@@ -2116,6 +2120,9 @@
           <input id="rkProducts" type="text" placeholder="laks-filet, torsk-loin" style="width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--hv-line);border-radius:8px;background:#fff;color:var(--hv-fg-1);"></label>
         <label style="display:block;margin-top:10px;font-size:12px;color:var(--hv-fg-3);">Beskrivelse (intern)
           <input id="rkBeskrivelse" type="text" placeholder="F.eks. Sommerkampanje 2026" style="width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--hv-line);border-radius:8px;background:#fff;color:var(--hv-fg-1);"></label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--hv-fg-1);cursor:pointer;">
+          <input id="rkFreeShipping" type="checkbox" style="width:16px;height:16px;accent-color:var(--hv-teal);cursor:pointer;">
+          Gi <b>gratis frakt</b> med denne koden (i tillegg til evt. prosentrabatt)</label>
         <div style="display:flex;justify-content:flex-end;margin-top:14px;">
           <button class="btn-g" id="rkCreateBtn" onclick="rkSaveForm()">Opprett kode</button>
         </div>
@@ -5105,6 +5112,186 @@ function _kasseTypeFromName(name){
 
 const _AVAIL_LABELS_ADMIN = { ok: 'Tilgjengelig', unsure: 'Avventer fiskebåt', no: 'Ikke tilgjengelig' };
 
+function _personerForKasse(v){
+  if (!v) return null;
+  const opts = v.selectedOpts || {};
+  const raw = opts.personer ?? opts.antall ?? opts.pers;
+  if (raw != null) {
+    const m = String(raw).match(/\d+(?:[.,]\d+)?/);
+    if (m) { const n = parseFloat(m[0].replace(',', '.')); if (n > 0) return n; }
+  }
+  // Embedded i navnet: "Premium Skalldyrkasse - 2 / Med is" → første chip = personer
+  const m2 = String(v.name || '').match(/\s-\s*(\d+)\s*(?:\/|$)/);
+  if (m2) return parseInt(m2[1], 10);
+  return null;
+}
+// Formaterer totalmengde pent: gram ≥1000 vises som kg, desimaler med komma.
+function _kasseQtyText(n, unit){
+  const u = String(unit || '').toLowerCase();
+  let txt;
+  if (u === 'g' && n >= 1000) txt = `${Math.round(n / 10) / 100} kg`;
+  else if (u === 'g') txt = `${Math.round(n)} g`;
+  else if (u === 'kg') txt = `${Math.round(n * 100) / 100} kg`;
+  else if (u === 'pakke' || u === 'pk') txt = `${Math.round(n * 100) / 100} pk`;
+  else txt = `${Math.round(n * 100) / 100} ${unit || 'stk'}`;
+  return txt.replace('.', ',');
+}
+// Bygger [{name, qtyText}] med forventet innhold for kasse-linje i — eller null.
+function _expectedKasseRows(itemName, i){
+  const v = (_editingOrder && Array.isArray(_editingOrder.varer)) ? _editingOrder.varer[i] : null;
+  // 1) Eksakte valgte mengder fra storefront (total er ferdig beregnet).
+  // 0-mengder vises også (redigerbare), så admin kan justere dem opp igjen.
+  if (v && Array.isArray(v.innholdValgt) && v.innholdValgt.length) {
+    const rows = v.innholdValgt
+      .map((it, idx) => (it && (it.label || it.id)) ? {
+        name: it.label || it.id || '?',
+        qtyText: _kasseQtyText(Number(it.total) || 0, it.unit),
+        edit: { kind: 'iv', idx, val: Number(it.total) || 0,
+                unit: (it.unit === 'g' ? 'g' : (it.unit || 'stk')), step: it.unit === 'g' ? 50 : 1 },
+      } : null)
+      .filter(Boolean);
+    if (rows.length) return rows;
+  }
+  // 2) Custom builder-valg
+  if (v && Array.isArray(v.boxSelection) && v.boxSelection.length) {
+    const lineQty = Math.max(1, Number(v.qty || 1));
+    // Eldre ordre (før mengde-støtten 2026-06-06) mangler qty/unit per art.
+    // De ble priset etter 600 g-regelen (600 g × pers per kategori, delt likt).
+    // Regn om verdiene til ekte pakninger (Lyngenfjord-boks 380 g, krabbe-
+    // skjell-stykk à 150 g) — løsvekt-artene (f.eks. krabbeklør) deler RESTEN
+    // av beløpet så totalen matcher det kunden betalte.
+    const legacy = !v.boxSelection.some(s => s && s.qty && s.unit);
+    const persons = _personerForKasse(v) || 2;
+    const legacyPlan = {};
+    if (legacy) {
+      const counting = [];
+      const catCount = {};
+      v.boxSelection.forEach((s, idx) => {
+        if (s && s.catId && s.catId !== 'tilbehor') {
+          counting.push({ s, idx });
+          catCount[s.catId] = (catCount[s.catId] || 0) + 1;
+        }
+      });
+      const oldVal = s => (Number(s.pris) || 0) * (600 * persons / (catCount[s.catId] || 1)) / 1000;
+      const unitInfo = s => {
+        const navn = String(s.navn || s.name || '').toLowerCase();
+        // Lyngenfjord-boks (380 g) markeres som stk, men vekten vises i parentes.
+        if (navn.includes('lyngenfjord')) return { grams: 380, label: 'stk', visGram: true, perKg: true };
+        if (navn.includes('krabbeskjell')) {
+          const g = (String(s.variant || '').match(/(\d+)\s*g/) || [])[1];
+          return { grams: Number(g) || 150, label: 'stk', perKg: false }; // pris = kr per stykk
+        }
+        return null;
+      };
+      let totalOld = 0, fixedVal = 0;
+      const loose = [];
+      counting.forEach(({ s, idx }) => {
+        const ov = oldVal(s);
+        totalOld += ov;
+        const u = unitInfo(s);
+        if (u) {
+          const unitPrice = u.perKg ? (Number(s.pris) || 0) * u.grams / 1000 : (Number(s.pris) || 0);
+          const count = Math.max(1, Math.round(unitPrice > 0 ? ov / unitPrice : 1)) * lineQty;
+          fixedVal += count * unitPrice;
+          legacyPlan[idx] = u.visGram ? `${count} stk (${count * u.grams} g)` : `${count} stk`;
+        } else {
+          loose.push({ s, idx, ov });
+        }
+      });
+      const remaining = Math.max(0, totalOld * lineQty - fixedVal);
+      const looseSum = loose.reduce((t, x) => t + x.ov, 0);
+      loose.forEach(({ s, idx, ov }) => {
+        const val = looseSum > 0 ? remaining * (ov / looseSum) : 0;
+        const grams = Math.max(0, Math.round((val / (Number(s.pris) || 1)) * 1000 / 10) * 10);
+        legacyPlan[idx] = _kasseQtyText(grams, 'g');
+      });
+    }
+    const rows = [];
+    v.boxSelection.forEach((s, idx) => {
+      if (!s || !(s.navn || s.name)) return;
+      const name = (s.navn || s.name) + (s.variant ? ` (${s.variant})` : '');
+      let qtyText, edit = null;
+      if (legacy && legacyPlan[idx] != null) {
+        // Legacy-ordre (uten qty/unit per art): kun visning — mengden er
+        // rekonstruert fra beløpet og kan ikke redigeres trygt.
+        qtyText = legacyPlan[idx];
+      } else if ((s.unit || 'g') === 'g' && Number(s.enhetGrams) > 0) {
+        // Pakningsvarer (Lyngenfjord-boks à 380 g): markeres som stk med
+        // vekten i parentes — «1 stk (380 g)». Redigeres i antall pakninger.
+        const grams = (Number(s.qty) || 0) * lineQty;
+        const n = Math.max(grams > 0 ? 1 : 0, Math.round(grams / Number(s.enhetGrams)));
+        qtyText = `${n} stk (${grams} g)`;
+        edit = { kind: 'box', idx, val: n, unit: 'stk', step: 1, suffix: `à ${Number(s.enhetGrams)} g` };
+      } else {
+        qtyText = _kasseQtyText((Number(s.qty) || 1) * lineQty, s.unit || 'stk');
+        const u = (s.unit || 'g') === 'g' ? 'g' : ((s.unit === 'pakke' || s.unit === 'pk') ? 'pk' : 'stk');
+        edit = { kind: 'box', idx, val: (Number(s.qty) || 1) * lineQty, unit: u, step: u === 'g' ? 50 : 1 };
+      }
+      rows.push({ name, qtyText, edit });
+    });
+    if (rows.length) return rows;
+  }
+  // 3) Produktets standard-innhold × personer (kun faste kasser)
+  const type = _kasseTypeFromName(itemName);
+  if (!type || type === 'custom') return null;
+  const personer = _personerForKasse(v) || 2;
+  let prod = null;
+  try {
+    prod = mergedProducts().find(p => p && (p.cat || '') === 'Kasser' && _kasseTypeFromName(p.name) === type)
+        || mergedProducts().find(p => p && _kasseTypeFromName(p.name) === type);
+  } catch (e) { return null; }
+  if (!prod) return null;
+  // Foretrekk innhold (data2-baseline = det kunden faktisk velger fra på PDP).
+  // kasseInnhold-overriden i Flask er en eldre pakkeliste som kan avvike fra
+  // dagens salgsinnhold (verifisert 2026-06-05: Premium-override hadde Krabbeklør/
+  // Blåskjell som ikke lenger selges i kassen) — kun siste fallback.
+  const innhold = (Array.isArray(prod.innhold) && prod.innhold.length) ? prod.innhold
+                : (Array.isArray(prod.kasseInnhold) ? prod.kasseInnhold : null);
+  if (!innhold) return null;
+  const rows = innhold
+    .filter(it => it && (it.name || it.label) && (Number(it.perPerson) || 0) > 0)
+    .map(it => ({
+      name: it.name || it.label,
+      qtyText: _kasseQtyText(Number(it.perPerson) * personer, it.unit),
+      // Redigering materialiserer innholdValgt fra defaultene (kind 'def' +
+      // komponent-id) — kasseInnhold-fallback uten id forblir read-only.
+      edit: (it.id != null) ? { kind: 'def', idx: it.id, val: Number(it.perPerson) * personer,
+              unit: (it.unit === 'g' ? 'g' : 'stk'), step: it.unit === 'g' ? 50 : 1 } : null,
+    }));
+  return rows.length ? rows : null;
+}
+// Redigerbar mengde for en kasse-komponent: tall-input + enhet. Når raden
+// ikke har edit-info (legacy-ordre, kasseInnhold-fallback) vises kun teksten.
+// Linjeprisen følger endringen — se _editKasseCompQty.
+function _kasseQtyInputHtml(i, row){
+  if (!row || !row.edit) return `<span class="ed-kasse-expected">${_escAttr(row ? row.qtyText : '')}</span>`;
+  const e = row.edit;
+  const idxArg = (typeof e.idx === 'number') ? e.idx : `'${_escAttr(String(e.idx))}'`;
+  const suffix = e.suffix ? `<span class="ed-kasse-qty-suffix">${_escAttr(e.suffix)}</span>` : '';
+  return `<span class="ed-kasse-qty-wrap">
+    <input class="fi ed-kasse-qty" type="number" min="0" step="${e.step}" value="${e.val}"
+      onchange="_editKasseCompQty(${i},'${e.kind}',${idxArg},this.value)" />
+    <span class="ed-kasse-qty-unit">${_escAttr(e.unit)}</span>${suffix}
+  </span>`;
+}
+// Rendrer forventet innhold som rader med redigerbar mengde (samme layout som
+// pakke-status-radene). Prisen på linjen oppdateres i samsvar med mengden.
+function _renderExpectedKasseRows(rows, i){
+  const rowsHtml = rows.map(r => `<div class="ed-kasse-row status-pending">
+      <div class="ed-kasse-row-main">
+        <span class="ed-kasse-name">${_escAttr(r.name)}</span>
+        ${_kasseQtyInputHtml(i, r)}
+      </div>
+      <div class="ed-kasse-row-side">
+        <span class="ed-kasse-badge status-pending">Ikke vurdert</span>
+      </div>
+    </div>`).join('');
+  return `<div class="ed-kasse-wrap">
+    <div class="ed-kasse-title">Komponenter <span class="ed-kasse-hint">(mengder kan justeres — linjeprisen følger endringen)</span></div>
+    ${rowsHtml}
+  </div>`;
+}
+
 // Rendrer komponent-rader for én skalldyrkasse-linje. Hver rad viser
 // komponentnavn, forventet mengde, status fra pakke.html og evt. bekreftet
 // erstatning. Read-only — endres på bestilling.havoyet.no.
@@ -5112,6 +5299,9 @@ function _renderKasseComponents(itemName, i){
   if (!_kasseTypeFromName(itemName)) return '';
   const state = _packingForCurrent();
   if (!state || !state[i] || !state[i].isKasse || !Array.isArray(state[i].components)) {
+    // Ingen pakke-status ennå — vis forventet innhold med valgte mengder.
+    const expected = _expectedKasseRows(itemName, i);
+    if (expected) return _renderExpectedKasseRows(expected, i);
     return `<div class="ed-kasse-wrap">
       <div class="ed-kasse-title">Komponenter</div>
       <div class="ed-kasse-empty">Pakke-status er ikke registrert ennå. Statusen vises her så snart butikken registrerer komponentene på bestilling.havoyet.no.</div>
@@ -5119,18 +5309,32 @@ function _renderKasseComponents(itemName, i){
   }
   const components = state[i].components;
   if (!components.length) {
+    const expected = _expectedKasseRows(itemName, i);
+    if (expected) return _renderExpectedKasseRows(expected, i);
     return `<div class="ed-kasse-wrap">
       <div class="ed-kasse-title">Komponenter</div>
       <div class="ed-kasse-empty">Ingen komponenter registrert for denne kassen.</div>
     </div>`;
   }
+  // Forventet mengde beregnes alltid friskt fra ordrelinjens boxSelection —
+  // server-lagret pakke-state kan ha utdaterte «1 stk»-verdier bygget av
+  // eldre pakke-kode (før mengde-/pakningsstøtten). Mengden er redigerbar
+  // (linjeprisen følger endringen); statusen (tilgjengelig/avventer/
+  // erstatning) kommer fortsatt fra pakke-staten.
+  const _freshExpected = {};
+  (_expectedKasseRows(itemName, i) || []).forEach(r => {
+    _freshExpected[String(r.name || '').trim().toLowerCase()] = r;
+  });
   const rowsHtml = components.map((c, ci) => {
     const avail = c.avail || null;
     const label = avail ? _AVAIL_LABELS_ADMIN[avail] : 'Ikke vurdert';
     const cls   = avail ? `status-${avail}` : 'status-pending';
     const confirmed = c.confirmedReplacement ? _adminReplObj(c.confirmedReplacement) : null;
     const suggested = (!confirmed && c.suggestedReplacement) ? _adminReplObj(c.suggestedReplacement) : null;
-    const expected = c.expected ? `<span class="ed-kasse-expected">forv. ${_escAttr(c.expected)}</span>` : '';
+    const freshRow = _freshExpected[String(c.name || '').trim().toLowerCase()] || null;
+    const expected = freshRow
+      ? `<span class="ed-kasse-expected">forv.</span> ${_kasseQtyInputHtml(i, freshRow)}`
+      : (c.expected ? `<span class="ed-kasse-expected">forv. ${_escAttr(c.expected)}</span>` : '');
     const weight   = (c.weight && String(c.weight).trim()) ? `<span class="ed-kasse-weight">veid ${_escAttr(c.weight)} ${_escAttr(c.weightUnit || 'g')}</span>` : '';
     const confPriceStr = confirmed && (confirmed.appliedPrice != null) ? ` (+${Math.round(Number(confirmed.appliedPrice))} kr)` : '';
     const conf     = confirmed ? `<span class="ed-kasse-repl confirmed">→ ${_escAttr(confirmed.name)}${confPriceStr}</span>` : '';
@@ -5167,9 +5371,90 @@ function _renderKasseComponents(itemName, i){
     </div>`;
   }).join('');
   return `<div class="ed-kasse-wrap">
-    <div class="ed-kasse-title">Komponenter <span class="ed-kasse-hint">(status fra bestillingsside — endres på bestilling.havoyet.no)</span></div>
+    <div class="ed-kasse-title">Komponenter <span class="ed-kasse-hint">(mengder kan justeres — linjeprisen følger endringen; status fra bestilling.havoyet.no)</span></div>
     ${rowsHtml}
   </div>`;
+}
+
+// ── REDIGER KASSE-INNHOLD (mengde per komponent — prisen følger med) ───────
+// Kr per enhet for en innhold-definisjon: unit g → kr per gram (kilde-
+// produktets kr/kg ÷ 1000), unit stk → kr per stk. Live produktpris (src-slug)
+// vinner, fallback pricePerKg/pricePerStk fra def-en — samme prising som
+// _syncBox på nettsiden, så kasseprisen forblir konsistent med PDP.
+function _innholdKrPerUnit(def){
+  let prod = null;
+  try { if (def && def.src) prod = mergedProducts().find(p => p && p.slug === def.src); } catch (e) {}
+  if (def && (def.unit || 'g') === 'stk') {
+    return (prod && prod.price != null) ? Number(prod.price) : (Number(def.pricePerStk) || 0);
+  }
+  const perKg = (prod && prod.price != null) ? Number(prod.price) : (Number(def && def.pricePerKg) || 0);
+  return perKg / 1000;
+}
+// Finn kasse-produktet som matcher ordrelinjens navn (samme oppslag som
+// _expectedKasseRows bruker for forventet innhold).
+function _kasseProductForLine(itemName){
+  const type = _kasseTypeFromName(itemName);
+  if (!type) return null;
+  try {
+    return mergedProducts().find(p => p && (p.cat || '') === 'Kasser' && _kasseTypeFromName(p.name) === type)
+        || mergedProducts().find(p => p && _kasseTypeFromName(p.name) === type) || null;
+  } catch (e) { return null; }
+}
+// Admin justerer mengden for én komponent i en skalldyrkasse-linje.
+// Linjeprisen (PRIS/STK = kr per kasse) endres i samsvar med mengden:
+//   Δpris per kasse = Δmengde per kasse × kr/enhet
+//  • innholdValgt (faste kasser): kr/enhet fra kilde-produktet (som PDP).
+//  • boxSelection (Din skalldyrkasse): kr/enhet = lagret s.pris (kr/kg|stk|pk).
+//  • 'def' (linje uten lagrede mengder): innholdValgt materialiseres fra
+//    produkt-defaultene først, så behandles den som innholdValgt.
+// Input-mengden er TOTAL for linjen (alle kasser); pakninger redigeres i stk.
+function _editKasseCompQty(i, kind, idx, rawVal){
+  const v = (_editingOrder && Array.isArray(_editingOrder.varer)) ? _editingOrder.varer[i] : null;
+  if (!v) return;
+  const lineQty = Math.max(1, Number(v.qty) || 1);
+  let val = Number(String(rawVal).replace(',', '.'));
+  if (!isFinite(val) || val < 0) val = 0;
+  let deltaPerKasse = 0;
+
+  if (kind === 'def') {
+    const personer = _personerForKasse(v) || 2;
+    const prod = _kasseProductForLine(v.name || '');
+    if (!prod || !Array.isArray(prod.innhold)) return;
+    v.innholdValgt = prod.innhold
+      .filter(it => it && it.id != null && (Number(it.perPerson) || 0) > 0)
+      .map(it => ({ id: it.id, label: it.label || it.name, perPerson: Number(it.perPerson) || 0,
+                    total: +((Number(it.perPerson) || 0) * personer * lineQty).toFixed(2), unit: it.unit }));
+    kind = 'iv';
+    idx = v.innholdValgt.findIndex(it => it.id === idx);
+    if (idx < 0) { _renderEditLines(); return; }
+  }
+
+  if (kind === 'iv') {
+    const it = v.innholdValgt && v.innholdValgt[idx];
+    if (!it) return;
+    const prod = _kasseProductForLine(v.name || '');
+    const def = (prod && Array.isArray(prod.innhold)) ? prod.innhold.find(d => d && d.id === it.id) : null;
+    const kr = _innholdKrPerUnit(def || { unit: it.unit });
+    const old = Number(it.total) || 0;
+    deltaPerKasse = ((val - old) / lineQty) * kr;
+    it.total = val;
+    const personer = _personerForKasse(v) || 2;
+    it.perPerson = Math.round((val / (personer * lineQty)) * 1000) / 1000;
+  } else if (kind === 'box') {
+    const s = v.boxSelection && v.boxSelection[idx];
+    if (!s) return;
+    const unit = s.unit || 'g';
+    // Pakningsvarer (enhetGrams) redigeres i antall pakninger → regn om til gram.
+    const newTotal = (unit === 'g' && Number(s.enhetGrams) > 0) ? val * Number(s.enhetGrams) : val;
+    const newQty = newTotal / lineQty;
+    const oldQty = Number(s.qty) || 0;
+    const pris = Number(s.pris) || 0;
+    deltaPerKasse = (unit === 'g') ? ((newQty - oldQty) / 1000) * pris : (newQty - oldQty) * pris;
+    s.qty = newQty;
+  }
+
+  v.price = Math.max(0, Math.round((Number(v.price) || 0) + deltaPerKasse));
+  _renderEditLines();
 }
 
 // ── ERSTATNING: HELPERS + BEKREFT/AVSLÅ ────────────────────────────────────
@@ -8935,6 +9220,7 @@ function rkResetForm(){
   _rkEditId = null;
   ['rkCode','rkTargetEmail','rkMaxUses','rkStart','rkSlutt','rkBeskrivelse','rkProducts'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('rkProsent').value = '20';
+  document.getElementById('rkFreeShipping').checked = false;
   document.getElementById('rkAppliesTo').value = 'all';
   document.getElementById('rkTargetType').value = 'anyone';
   document.getElementById('rkProductsWrap').style.display = 'none';
@@ -8953,6 +9239,7 @@ function rkEdit(id){
   _rkEditId = id;
   document.getElementById('rkCode').value = row.code || '';
   document.getElementById('rkProsent').value = row.prosent || '';
+  document.getElementById('rkFreeShipping').checked = !!row.free_shipping;
   const a = row.applies_to || ((row.product_handles && row.product_handles.length) ? 'products' : 'all');
   document.getElementById('rkAppliesTo').value = a;
   document.getElementById('rkProductsWrap').style.display = a === 'products' ? 'block' : 'none';
@@ -8985,12 +9272,15 @@ async function rkSaveForm(){
   const slutt = document.getElementById('rkSlutt').value || '';
   const beskrivelse = (document.getElementById('rkBeskrivelse').value || '').trim();
   const productsRaw = (document.getElementById('rkProducts').value || '').trim();
-  if (!prosent || prosent <= 0 || prosent >= 100) { msg.textContent = 'Prosent må være 1–99'; msg.style.color = '#b91c1c'; return; }
+  const free_shipping = document.getElementById('rkFreeShipping').checked;
+  // 0 % er kun lov hvis koden gir gratis frakt (ren frakt-kode)
+  if (prosent >= 100 || prosent < 0 || (prosent <= 0 && !free_shipping)) {
+    msg.textContent = free_shipping ? 'Prosent må være 0–99' : 'Prosent må være 1–99'; msg.style.color = '#b91c1c'; return; }
   if (target_type === 'email' && (!target_email || !target_email.includes('@'))) { msg.textContent = 'Skriv inn en gyldig e-post'; msg.style.color = '#b91c1c'; return; }
   if (applies_to === 'products' && !productsRaw) { msg.textContent = 'Skriv inn minst én produkt-slug'; msg.style.color = '#b91c1c'; return; }
   btn.disabled = true; msg.textContent = 'Lagrer…'; msg.style.color = 'var(--hv-fg-3)';
   const body = {
-    prosent, applies_to, target_type,
+    prosent, applies_to, target_type, free_shipping,
     product_handles: applies_to === 'products' ? productsRaw.split(',').map(s => s.trim()).filter(Boolean) : [],
     beskrivelse,
   };
@@ -9211,7 +9501,7 @@ async function renderRabattkoder(force){
               ? '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Aktiv</span>'
               : '<span style="background:#fee2e2;color:#b91c1c;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Inaktiv</span>';
             return `<tr style="border-top:1px solid var(--hv-line);">
-              <td style="padding:10px 12px;font-family:monospace;font-weight:700;">${_kbEsc(d.code || '—')}</td>
+              <td style="padding:10px 12px;font-family:monospace;font-weight:700;">${_kbEsc(d.code || '—')}${d.free_shipping ? ' <span title="Gir gratis frakt" style="background:#e0f2f1;color:#00695c;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;font-family:system-ui;">🚚 Fri frakt</span>' : ''}</td>
               <td style="padding:10px 12px;">${d.prosent}</td>
               <td style="padding:10px 12px;">${_kbEsc(_rkTargetLabel(d))}</td>
               <td style="padding:10px 12px;font-size:12px;color:var(--hv-fg-3);">${_kbEsc(_rkScopeLabel(d))}</td>

@@ -7635,12 +7635,21 @@ def api_analytics_funnel():
     sessions, _ = _filtered_analytics(window)
     steps  = ["session_start", "view_pdp", "add_to_cart", "begin_checkout", "order_complete"]
     counts = {s: 0 for s in steps}
+    # Abonnement-signup (Sjømatkasse) er en EGEN flyt uten handlekurv og holdes
+    # UTENFOR produkt-trakten. «Startet kassen» = kun de som gikk videre til
+    # kassen etter å ha lagt noe i handlekurven. Abonnement rapporteres som eget
+    # tall så det ikke blåser opp kasse-steget. NB: historiske økter (før
+    # tracker-skillet 2026-06-08) lagret abonnement som begin_checkout og kan
+    # ikke skilles tilbakevirkende — skillet gjelder nye økter.
+    subscriptions = 0
     for sess in sessions.values():
         counts["session_start"] += 1
         f = sess.get("funnel") or {}
         for s in steps[1:]:
             if s in f:
                 counts[s] += 1
+        if "begin_subscription" in f:
+            subscriptions += 1
     # «Fullført ordre» skal speile virkeligheten: bruk ekte betalte
     # nettside-ordre i perioden som gulv (klient-events blokkeres av
     # adblock / avslått samtykke / Vipps-app-retur).
@@ -7660,7 +7669,7 @@ def api_analytics_funnel():
             "rate":       round(n / (counts[steps[i-1]] or 1) * 100, 1) if i > 0 else 100.0,
             "rate_total": round(n / base * 100, 1),
         })
-    return jsonify({"ok": True, "steps": rows})
+    return jsonify({"ok": True, "steps": rows, "subscriptions": subscriptions})
 
 @app.route("/api/analytics/deepdive", methods=["GET"])
 def api_analytics_deepdive():
@@ -9441,7 +9450,11 @@ def api_discounts_root():
         prosent = float(data.get("prosent") or 0)
     except (TypeError, ValueError):
         return jsonify({"error": "Ugyldig prosent"}), 400
-    if prosent <= 0 or prosent >= 100:
+    free_shipping = bool(data.get("free_shipping", False))
+    if prosent < 0 or prosent >= 100:
+        return jsonify({"error": "Prosent må være mellom 1 og 99"}), 400
+    # 0 % er kun lov når koden gir gratis frakt (ren frakt-kode)
+    if prosent <= 0 and not free_shipping:
         return jsonify({"error": "Prosent må være mellom 1 og 99"}), 400
     # Nye felter: applies_to ('all'|'products'), product_handles[], code,
     # target_type ('anyone'|'email'|'bsf_member'|'newsletter'), target_email,
@@ -9502,6 +9515,7 @@ def api_discounts_root():
         "uses": 0,
         "used_order_ids": [],
         "prosent": prosent,
+        "free_shipping": free_shipping,
         "start": start,
         "slutt": slutt or None,
         "beskrivelse": (data.get("beskrivelse") or "").strip()[:200],
@@ -9544,7 +9558,7 @@ def api_discounts_modify(discount_id):
             v = (data[f] or "").strip()
             if not v or _valid_date(v):
                 d[f] = v or None
-    for f in ("kun_nyhetsbrev", "aktiv"):
+    for f in ("kun_nyhetsbrev", "aktiv", "free_shipping"):
         if f in data:
             d[f] = bool(data[f])
     # Nye felter
