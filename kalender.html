@@ -881,6 +881,12 @@ function normalizeOrder(o) {
     slot:     o.slot || 'a',
     store:    o.store || null,
     phone:    o.phone || null,
+    // Bevar status + betalingsstatus så _isClosedKal kan skjule ferdige
+    // leveringer (DONE/CANCELLED/REFUNDED som er betalt). Uten disse defaultet
+    // alt til 'NEW' og filteret virket aldri → gamle DONE-leveringer ble liggende
+    // i kalenderen (defaultet til dagens dato pga. tom delivery).
+    status:   o.status || 'NEW',
+    paymentStatus: o.paymentStatus || '',
     items:    (o.items || []).map(i => {
       const qty     = i.quantity || 1;
       const variant = multiplyWeight(i.variant, qty);
