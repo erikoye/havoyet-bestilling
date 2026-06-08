@@ -7659,15 +7659,12 @@ def api_analytics_funnel():
             counts["order_complete"] = real_orders
     except Exception:
         pass
-    # Trakten MÅ være monotont ikke-økende: et senere steg kan ikke ha flere
-    # økter enn et tidligere. En økt som nådde kassen passerte logisk
-    # handlekurv-steget selv om add_to_cart-eventet uteble (gjenopprettet kurv
-    # fra localStorage, «Bestill nå»-knapp, adblock/avslått samtykke). Uten
-    # dette får vi umulige rater > 100 % (f.eks. 5 i kurv / 29 i kasse = 580 %).
-    # Propager bakover så hvert steg ≥ det neste.
-    for i in range(len(steps) - 2, -1, -1):
-        if counts[steps[i]] < counts[steps[i + 1]]:
-            counts[steps[i]] = counts[steps[i + 1]]
+    # Hvert steg telles uavhengig og sant: add_to_cart = økter som la noe i
+    # handlekurven (eller kom tilbake med en lagret kurv — se app.jsx), og
+    # begin_checkout = økter som faktisk gikk inn i kassen (/kasse). Klienten
+    # fyrer nå add_to_cart også for gjenopprettede kurver, så kurv-steget ≥
+    # kasse-steget naturlig (ekte kurv-frafall blir synlig). «rate» cappes på
+    # 100 % som forsvar mot historiske/sjeldne ikke-monotone vinduer.
     rows = []
     base = counts[steps[0]] or 1
     for i, s in enumerate(steps):
@@ -7675,8 +7672,8 @@ def api_analytics_funnel():
         rows.append({
             "step":       s,
             "count":      n,
-            "rate":       round(n / (counts[steps[i-1]] or 1) * 100, 1) if i > 0 else 100.0,
-            "rate_total": round(n / base * 100, 1),
+            "rate":       min(100.0, round(n / (counts[steps[i-1]] or 1) * 100, 1)) if i > 0 else 100.0,
+            "rate_total": min(100.0, round(n / base * 100, 1)),
         })
     return jsonify({"ok": True, "steps": rows, "subscriptions": subscriptions})
 
