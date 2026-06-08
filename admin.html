@@ -2120,6 +2120,9 @@
           <input id="rkProducts" type="text" placeholder="laks-filet, torsk-loin" style="width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--hv-line);border-radius:8px;background:#fff;color:var(--hv-fg-1);"></label>
         <label style="display:block;margin-top:10px;font-size:12px;color:var(--hv-fg-3);">Beskrivelse (intern)
           <input id="rkBeskrivelse" type="text" placeholder="F.eks. Sommerkampanje 2026" style="width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--hv-line);border-radius:8px;background:#fff;color:var(--hv-fg-1);"></label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--hv-fg-1);cursor:pointer;">
+          <input id="rkFreeShipping" type="checkbox" style="width:16px;height:16px;accent-color:var(--hv-teal);cursor:pointer;">
+          Gi <b>gratis frakt</b> med denne koden (i tillegg til evt. prosentrabatt)</label>
         <div style="display:flex;justify-content:flex-end;margin-top:14px;">
           <button class="btn-g" id="rkCreateBtn" onclick="rkSaveForm()">Opprett kode</button>
         </div>
@@ -9217,6 +9220,7 @@ function rkResetForm(){
   _rkEditId = null;
   ['rkCode','rkTargetEmail','rkMaxUses','rkStart','rkSlutt','rkBeskrivelse','rkProducts'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('rkProsent').value = '20';
+  document.getElementById('rkFreeShipping').checked = false;
   document.getElementById('rkAppliesTo').value = 'all';
   document.getElementById('rkTargetType').value = 'anyone';
   document.getElementById('rkProductsWrap').style.display = 'none';
@@ -9235,6 +9239,7 @@ function rkEdit(id){
   _rkEditId = id;
   document.getElementById('rkCode').value = row.code || '';
   document.getElementById('rkProsent').value = row.prosent || '';
+  document.getElementById('rkFreeShipping').checked = !!row.free_shipping;
   const a = row.applies_to || ((row.product_handles && row.product_handles.length) ? 'products' : 'all');
   document.getElementById('rkAppliesTo').value = a;
   document.getElementById('rkProductsWrap').style.display = a === 'products' ? 'block' : 'none';
@@ -9267,12 +9272,15 @@ async function rkSaveForm(){
   const slutt = document.getElementById('rkSlutt').value || '';
   const beskrivelse = (document.getElementById('rkBeskrivelse').value || '').trim();
   const productsRaw = (document.getElementById('rkProducts').value || '').trim();
-  if (!prosent || prosent <= 0 || prosent >= 100) { msg.textContent = 'Prosent må være 1–99'; msg.style.color = '#b91c1c'; return; }
+  const free_shipping = document.getElementById('rkFreeShipping').checked;
+  // 0 % er kun lov hvis koden gir gratis frakt (ren frakt-kode)
+  if (prosent >= 100 || prosent < 0 || (prosent <= 0 && !free_shipping)) {
+    msg.textContent = free_shipping ? 'Prosent må være 0–99' : 'Prosent må være 1–99'; msg.style.color = '#b91c1c'; return; }
   if (target_type === 'email' && (!target_email || !target_email.includes('@'))) { msg.textContent = 'Skriv inn en gyldig e-post'; msg.style.color = '#b91c1c'; return; }
   if (applies_to === 'products' && !productsRaw) { msg.textContent = 'Skriv inn minst én produkt-slug'; msg.style.color = '#b91c1c'; return; }
   btn.disabled = true; msg.textContent = 'Lagrer…'; msg.style.color = 'var(--hv-fg-3)';
   const body = {
-    prosent, applies_to, target_type,
+    prosent, applies_to, target_type, free_shipping,
     product_handles: applies_to === 'products' ? productsRaw.split(',').map(s => s.trim()).filter(Boolean) : [],
     beskrivelse,
   };
@@ -9493,7 +9501,7 @@ async function renderRabattkoder(force){
               ? '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Aktiv</span>'
               : '<span style="background:#fee2e2;color:#b91c1c;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Inaktiv</span>';
             return `<tr style="border-top:1px solid var(--hv-line);">
-              <td style="padding:10px 12px;font-family:monospace;font-weight:700;">${_kbEsc(d.code || '—')}</td>
+              <td style="padding:10px 12px;font-family:monospace;font-weight:700;">${_kbEsc(d.code || '—')}${d.free_shipping ? ' <span title="Gir gratis frakt" style="background:#e0f2f1;color:#00695c;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;font-family:system-ui;">🚚 Fri frakt</span>' : ''}</td>
               <td style="padding:10px 12px;">${d.prosent}</td>
               <td style="padding:10px 12px;">${_kbEsc(_rkTargetLabel(d))}</td>
               <td style="padding:10px 12px;font-size:12px;color:var(--hv-fg-3);">${_kbEsc(_rkScopeLabel(d))}</td>
