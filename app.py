@@ -9450,7 +9450,11 @@ def api_discounts_root():
         prosent = float(data.get("prosent") or 0)
     except (TypeError, ValueError):
         return jsonify({"error": "Ugyldig prosent"}), 400
-    if prosent <= 0 or prosent >= 100:
+    free_shipping = bool(data.get("free_shipping", False))
+    if prosent < 0 or prosent >= 100:
+        return jsonify({"error": "Prosent må være mellom 1 og 99"}), 400
+    # 0 % er kun lov når koden gir gratis frakt (ren frakt-kode)
+    if prosent <= 0 and not free_shipping:
         return jsonify({"error": "Prosent må være mellom 1 og 99"}), 400
     # Nye felter: applies_to ('all'|'products'), product_handles[], code,
     # target_type ('anyone'|'email'|'bsf_member'|'newsletter'), target_email,
@@ -9511,6 +9515,7 @@ def api_discounts_root():
         "uses": 0,
         "used_order_ids": [],
         "prosent": prosent,
+        "free_shipping": free_shipping,
         "start": start,
         "slutt": slutt or None,
         "beskrivelse": (data.get("beskrivelse") or "").strip()[:200],
@@ -9553,7 +9558,7 @@ def api_discounts_modify(discount_id):
             v = (data[f] or "").strip()
             if not v or _valid_date(v):
                 d[f] = v or None
-    for f in ("kun_nyhetsbrev", "aktiv"):
+    for f in ("kun_nyhetsbrev", "aktiv", "free_shipping"):
         if f in data:
             d[f] = bool(data[f])
     # Nye felter
