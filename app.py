@@ -7635,12 +7635,21 @@ def api_analytics_funnel():
     sessions, _ = _filtered_analytics(window)
     steps  = ["session_start", "view_pdp", "add_to_cart", "begin_checkout", "order_complete"]
     counts = {s: 0 for s in steps}
+    # Abonnement-signup (Sjømatkasse) er en EGEN flyt uten handlekurv og holdes
+    # UTENFOR produkt-trakten. «Startet kassen» = kun de som gikk videre til
+    # kassen etter å ha lagt noe i handlekurven. Abonnement rapporteres som eget
+    # tall så det ikke blåser opp kasse-steget. NB: historiske økter (før
+    # tracker-skillet 2026-06-08) lagret abonnement som begin_checkout og kan
+    # ikke skilles tilbakevirkende — skillet gjelder nye økter.
+    subscriptions = 0
     for sess in sessions.values():
         counts["session_start"] += 1
         f = sess.get("funnel") or {}
         for s in steps[1:]:
             if s in f:
                 counts[s] += 1
+        if "begin_subscription" in f:
+            subscriptions += 1
     # «Fullført ordre» skal speile virkeligheten: bruk ekte betalte
     # nettside-ordre i perioden som gulv (klient-events blokkeres av
     # adblock / avslått samtykke / Vipps-app-retur).
@@ -7660,7 +7669,7 @@ def api_analytics_funnel():
             "rate":       round(n / (counts[steps[i-1]] or 1) * 100, 1) if i > 0 else 100.0,
             "rate_total": round(n / base * 100, 1),
         })
-    return jsonify({"ok": True, "steps": rows})
+    return jsonify({"ok": True, "steps": rows, "subscriptions": subscriptions})
 
 @app.route("/api/analytics/deepdive", methods=["GET"])
 def api_analytics_deepdive():
