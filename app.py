@@ -7659,6 +7659,15 @@ def api_analytics_funnel():
             counts["order_complete"] = real_orders
     except Exception:
         pass
+    # Trakten MÅ være monotont ikke-økende: et senere steg kan ikke ha flere
+    # økter enn et tidligere. En økt som nådde kassen passerte logisk
+    # handlekurv-steget selv om add_to_cart-eventet uteble (gjenopprettet kurv
+    # fra localStorage, «Bestill nå»-knapp, adblock/avslått samtykke). Uten
+    # dette får vi umulige rater > 100 % (f.eks. 5 i kurv / 29 i kasse = 580 %).
+    # Propager bakover så hvert steg ≥ det neste.
+    for i in range(len(steps) - 2, -1, -1):
+        if counts[steps[i]] < counts[steps[i + 1]]:
+            counts[steps[i]] = counts[steps[i + 1]]
     rows = []
     base = counts[steps[0]] or 1
     for i, s in enumerate(steps):
@@ -7962,11 +7971,22 @@ def api_analytics_pages():
         return jsonify({"ok": False, "error": "ugyldig range"}), 400
     _, events = _filtered_analytics(window)
     pv, ck, ex, t_ms, scr = {}, {}, {}, {}, {}
+    # Tracker-en kan sende flere exit-events per sidevisning (visibilitychange
+    # + pagehide + tab-bytting). Tell maks ÉN exit per (økt, side), ellers blir
+    # exits > pageviews og exit-raten umulig (267–315 %). Tracker-en er også
+    # rettet til å sende én exit per visning, men dette dekker historiske data.
+    seen_exit = set()
     for ev in events:
         p, t = ev.get("path") or "", ev.get("type")
         if   t == "pageview": pv[p] = pv.get(p, 0) + 1
         elif t == "click":    ck[p] = ck.get(p, 0) + 1
         elif t == "exit":
+            sid = ev.get("sid") or ""
+            if sid:
+                key = (sid, p)
+                if key in seen_exit:
+                    continue          # dobbel-exit for samme økt+side — hopp over
+                seen_exit.add(key)
             ex[p] = ex.get(p, 0) + 1
             t_ms.setdefault(p, []).append(int(ev.get("time_ms") or 0))
             scr.setdefault(p, []).append(int(ev.get("max_scroll") or 0))
