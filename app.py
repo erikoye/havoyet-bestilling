@@ -10010,9 +10010,31 @@ def _strategi_progress():
     if active_subs == 0:
         active_subs = len(_subscriptions)   # fallback hvis status-felt mangler
 
+    # ── Konvertering siste 30 dager (vekstmotor #1, mål 1 %) ──
+    now_ms = int(time.time() * 1000)
+    ms30 = now_ms - 30 * 24 * 3600 * 1000
+    sessions = (_analytics.get("sessions") or {})
+    sess30 = sum(1 for s in sessions.values() if (s.get("started_at") or 0) >= ms30)
+    def _pdate(s):
+        s = str(s or "")[:10]
+        for f in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s, f).date()
+            except ValueError:
+                continue
+        return None
+    d30 = today - timedelta(days=30)
+    ord30 = 0
+    for o in web_orders:
+        dd = _pdate(_odate(o))
+        if dd and d30 <= dd <= today:
+            ord30 += 1
+    conv_rate = round((ord30 / sess30) * 100.0, 2) if sess30 else 0.0
+
     kpi = (_strategi.get("kpi_mal") or {}).get(ym, {})
     b2b_done = int((_strategi.get("b2b_events") or {}).get(ym, 0) or 0)
     arsmal = (_strategi.get("arsmal") or {}).get("target", 1000000)
+    konv_mal = float((_strategi.get("konvertering") or {}).get("target", 1.0) or 1.0)
 
     def _pct(cur, tgt):
         try:
@@ -10025,6 +10047,7 @@ def _strategi_progress():
         "as_of": datetime.now().isoformat(),
         "maned": ym,
         "ar": {"target": arsmal, "current": round(rev_year, 0), "pct": _pct(rev_year, arsmal)},
+        "konvertering": {"target": konv_mal, "current": conv_rate, "orders": ord30, "sessions": sess30, "pct": _pct(conv_rate, konv_mal)},
         "kpi": {
             "omsetning":    {"target": kpi.get("omsetning", 0),    "current": round(rev_month, 0)},
             "nye_kunder":   {"target": kpi.get("nye_kunder", 0),   "current": new_cust_month},
@@ -10098,8 +10121,9 @@ def api_strategi_logg():
         if os.environ.get("STRATEGI_INTERNAL_TOKEN"):
             return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
     data = request.get_json(silent=True) or {}
+    kind = data.get("kind") if data.get("kind") in ("ai_action", "tiltak_done") else "ai_action"
     entry = {
-        "kind": "ai_action",
+        "kind": kind,
         "surface":   str(data.get("surface") or "ukjent")[:60],
         "action":    str(data.get("action") or "")[:160],
         "vekstmotor": str(data.get("vekstmotor") or "")[:40],
@@ -10111,6 +10135,30 @@ def api_strategi_logg():
     }
     _strategi_log_append(entry)
     return jsonify({"ok": True})
+
+@app.route("/api/strategi/event", methods=["POST"])
+def api_strategi_event():
+    """Admin: tell bedriftsevent opp/ned for en måned (ingen automatisk datakilde)."""
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+    data = request.get_json(silent=True) or {}
+    try:
+        delta = int(data.get("delta", 1))
+    except (TypeError, ValueError):
+        delta = 1
+    ym = data.get("month") or datetime.now().strftime("%Y-%m")
+    with _strategi_lock:
+        if not _strategi:
+            _load_strategi()
+        ev = _strategi.setdefault("b2b_events", {})
+        cur = max(0, int(ev.get(ym, 0) or 0) + delta)
+        ev[ym] = cur
+        _strategi["updated_at"] = _now_iso_utc()
+        _save_strategi()
+    _strategi_log_append({"kind": "b2b_event", "by": (user or {}).get("email"),
+                          "month": ym, "delta": delta, "total": cur})
+    return jsonify({"ok": True, "month": ym, "total": cur})
 
 @app.route("/api/strategi/etterlevelse")
 def api_strategi_etterlevelse():
@@ -10135,15 +10183,17 @@ def api_strategi_etterlevelse():
                         r = json.loads(line)
                     except Exception:
                         continue
-                    if r.get("kind") == "ai_action" and (r.get("ts") or "") >= cutoff:
+                    if r.get("kind") in ("ai_action", "tiltak_done") and (r.get("ts") or "") >= cutoff:
                         rows.append(r)
     except Exception as e:
         print(f"[STRATEGI] etterlevelse les feilet: {e}")
-    total = len(rows)
-    aligned = sum(1 for r in rows if r.get("aligned"))
+    ai_rows   = [r for r in rows if r.get("kind") == "ai_action"]
+    done_rows = [r for r in rows if r.get("kind") == "tiltak_done"]
+    total = len(ai_rows)
+    aligned = sum(1 for r in ai_rows if r.get("aligned"))
     by_engine = {}
     by_surface = {}
-    for r in rows:
+    for r in ai_rows:
         e = r.get("vekstmotor") or "—"
         s = r.get("surface") or "—"
         by_engine[e] = by_engine.get(e, 0) + 1
@@ -10155,6 +10205,7 @@ def api_strategi_etterlevelse():
         "total": total,
         "aligned": aligned,
         "aligned_pct": round((aligned / total) * 100.0, 1) if total else 0.0,
+        "gjennomfort": len(done_rows),
         "by_engine": by_engine,
         "by_surface": by_surface,
         "recent": recent,
