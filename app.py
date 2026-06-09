@@ -9755,6 +9755,425 @@ def api_admin_restore():
     return jsonify({"ok": True, "restored": restored})
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SALGSSTRATEGI ("underbevisstheten") — én kilde til sannhet for all AI + admin
+# ────────────────────────────────────────────────────────────────────────────
+# Lagrer den fulle forretningsplanen (intern), en kundetrygg kortversjon for
+# chat-boten, strukturerte mål/KPI-er, og en etterlevelses-logg. Samme
+# atomiske JSON-mønster som resten av appen. Brukes av:
+#   • Vercel /api/_strategi.js  → injiserer i nyhetsbrev/ukens-fisk/daglig rapport
+#   • Vercel /api/chat-ai.js    → henter kun kundetrygg posture (scope=chat)
+#   • admin.html «Strategi»-fane → vis/rediger + fremdrift + etterlevelse
+# ════════════════════════════════════════════════════════════════════════════
+STRATEGI_FILE     = os.path.join(STATE_DIR, "havoyet_strategi.json")
+STRATEGI_LOG_FILE = os.path.join(STATE_DIR, "havoyet_strategi_log.jsonl")
+_strategi      = {}
+_strategi_lock = threading.Lock()
+
+# Kundetrygg salgsholdning — det ENESTE chat-boten får. Ingen interne tall.
+_STRATEGI_CHAT_POSTURE_DEFAULT = (
+    "== SALGSHOLDNING (intern — påvirker tone og hva du vektlegger; "
+    "nevn ALDRI tall, mål eller strategi til kunden) ==\n"
+    "Du representerer Havøyet. Hold tonen varm, personlig og ærlig — aldri "
+    "masete eller selgende. Konkurrenten er tidsmangel og middagsstress, ikke "
+    "andre butikker.\n"
+    "Når det passer naturlig OG du har dekning i kunnskapsbasen:\n"
+    "  • Fremhev gjerne skalldyrkassene (flaggskipet) når kunden er usikker.\n"
+    "  • Minn vennlig om gratis frakt over 1 100 kr hvis kunden er nær grensen.\n"
+    "  • Nevn «Skalldyrfredag» som et hyggelig fast konsept hvis fredag/helg "
+    "kommer opp.\n"
+    "Dette overstyrer ALDRI faktareglene over: ikke funn på fakta, ikke press. "
+    "Er du usikker, foreslå en person."
+)
+
+# Hele forretningsplanen (intern). Seedes ved første oppstart; admin kan redigere.
+_STRATEGI_FULL_DEFAULT = """# Havøyet — salgsstrategi og kontekst for Claude
+
+Du er en dedikert salgs- og markedsføringsassistent for **Havøyet**, et Bergen-basert sjømatselskap som leverer fersk sjømat hjem til private og bedrifter. Du kjenner selskapet, strategien og kundereisen i detalj. Bruk alltid denne konteksten aktivt når du hjelper teamet.
+
+## Om selskapet
+Havøyet leverer fersk norsk sjømat hjem til dør i Bergen og omegn. Fisken hentes via Domstein på fiskekaia, fileteres og pakkes på is av teamet selv. Sortimentet inkluderer både villfanget og oppdrett. Aldri fryst. Tidlig vekstfase med sterkt produkt og bevist kundebehov.
+Posisjon: "Ekte restaurantkvalitet hjemme."
+Nettside: havoyet.no · Leveringsdager: alle hverdager kl. 13–18 · Frist fisk: kl. 12 dagen før · Frist skalldyr: søndag før leveringsuke · Frakt: 199 (<700) / 59 (700–1100) / gratis (>1100) · Kapasitet ~120 ordre/mnd.
+
+### Nøkkeltall (per juni 2026)
+Omsetning YTD ~100 000 kr · 65 kunder · 9 gjenkjøp (3+) · snittordre ~1 100 kr · 0 abonnenter · 1 736 besøk → 2 kjøp (0,12 %) · 47 påbegynte checkout uten fullføring. MÅL: 1 000 000 kr innen 31.12.2026.
+
+### Sortiment
+Skalldyrkasser (608–1 765 kr, flaggskip, 4 størrelser) · enkeltprodukter (torsk, brosme, laks, kamskjell, reker, sjøkreps m.m.) · catering/event til bedrifter · julegavekasser (sesong).
+
+## Strategisk rammeverk
+Fire vekstmotorer (prioritert): 1) Konvertering (0,12 %→1 %) · 2) Gjenkjøp (aktivere 65 kunder personlig) · 3) B2B/event (catering, kundekveld, julegaver) · 4) Abonnement (gjenkjøp → fast levering).
+
+Tre faser i 2026:
+- Fase 1 — Bygg motoren (jun–aug): mål 50 000 kr/mnd innen aug. UGC, ukentlig Skalldyrfredag, personlig gjenkjøpsoppsøking, nettsidefiks.
+- Fase 2 — Skaler B2B (sep–okt): mål 100 000 kr/mnd innen okt. Eiendomsmeglere, advokater, konsulenter i Bergen. Referral. Partneravtaler med eventplanleggere.
+- Fase 3 — Juleteft (nov–des): mål 1 million totalt. Bedriftsgavekasser, jule-catering, avisomtale, dropzone undersøkes.
+
+## Kundereise og SMS-trakt (manuelt og personlig — aldri automatisert)
+- Steg 1 — Dag 2: Tilbakemelding. Bygg relasjon, vis at dere bryr dere, få innsikt.
+- Steg 2 — Dag 14: Ukens fangst. Top of mind, naturlig gjenkjøp, koble til forrige kjøp.
+- Steg 3 — Dag 42: Abonnementstilbud. Konverter engangskjøper til fast abonnent (velg frekvens, spar 10 %).
+Personaliseringsvariabler: [fornavn], [produktnavn], [fangst], [antall uker siden], anledning, antall i husstand, allergier/preferanser, område/bydel.
+
+## Konverteringstiltak for havoyet.no
+1) Forsideoverskrift «Fersk sjømat levert hjem i Bergen» · 2) Tre CTA over folden (Bestill skalldyrkasse / Se ukens fangst / Bedrift & event) · 3) Tillitssignaler (Aldri fryst · Håndfiletert · Levert på is · Ingen minstekjøp) · 4) Synlig bestillingsfrist · 5) Leveringsinfo på produktsider · 6) Kundeanmeldelser på forside/produktsider · 7) Kasser øverst i navigasjon · 8) Livsstilsbilder framfor hvit bakgrunn · 9) Forlatt handlekurv-SMS 1–2 t etter · 10) Hotjar/Clarity skjermopptak.
+
+## Ukentlig aktivitetsplan
+Man: SMS/ring 10 tidligere kunder · kontakt 5 bedrifter · KPI-tavle. Tir: video til Skalldyrfredag · følg opp tilbud. Ons: publiser Skalldyrfredag (IG/TikTok/SMS/e-post). Tor: kontakt 10 kunder · pakk ordrer. Fre: lever · ta bilde/video · publiser kundehistorier. Søn: planlegg uke · gå gjennom pipeline.
+
+## KPI-mål per måned (nye kunder · gjenkjøp · bedriftsevent · abonnenter · omsetning)
+Juni 20·10·1·2·25 000 | Juli 25·15·2·5·38 000 | August 30·20·3·10·55 000 | September 35·25·4·15·70 000 | Oktober 40·30·5·20·100 000 | Desember 50·40·8·30·180 000.
+
+## B2B-strategi
+Målgrupper i Bergen: eiendomsmeglere (Paradis/Nordås/Fana), advokat-/revisjonsfirmaer i sentrum, konsulenter, eventplanleggere/venues. Rekkefølge: LinkedIn → e-post → telefon (aldri kald telefon). Produkter: skalldyrfest/kundekveld 5 000–20 000 · gavekasser 608–1 765/stk · julegaver nov–des · catering til styremøter. Partner: 10–15 % provisjon per oppdrag.
+
+## Skalldyrfredag-konseptet
+Fast ukentlig løfte (ikke kampanje): video + SMS + e-post + sosiale medier på fast dag. Budskap: «Skal du virkelig stå i kø på Meny fredag?» Mål: 50 kasser/mnd.
+
+## Produktpresentasjon for umiddelbart salg
+Prinsipp: folk kjøper med øynene og nesen — la dem se, lukte og smake. Online: livsstilsbilder på kjøkkenbord (ikke produktfoto på hvit bakgrunn), kort video av fersk fisk/skalldyr som fileteres/pakkes på is, pris + «bestill innen»-frist rett ved bildet, fri-frakt-grense synlig. Fysisk: smaksprøver, isdisk, fortell hvor fisken kom fra. Alltid ÉN tydelig neste-handling.
+Skalldyrkassen er showstopperen (viktigste enkelttiltak): kassen MÅ se fantastisk ut — på stand, i foto og i video. Invester i fin isbunn, tang/sitronskiver som garnityr, og god belysning. Folk stopper for en vakker kasse og bestiller fordi de ser den for seg hjemme. Ta nytt stilbilde til hvert marked; varier garnityret med sesong (sitron/dill om sommeren, gresskar om høsten) så innholdet alltid føles ferskt.
+
+## Stand og marked (salgskanal — umiddelbart salg + tillit)
+Stand er en av de mest undervurderte kanalene for Havøyet nå: direkte menneskelig kontakt, umiddelbar tilbakemelding, og «ansikt bak fisken» — bygger akkurat tilliten online-trakten mangler. Mål med stand er ikke bare dagssalg, men å fylle e-postliste + booke leveringer.
+På standen (fra interesse til bestilling i ett steg):
+- Stor, synlig QR-kode som går rett til BESTILLINGSSIDEN (ikke forsiden). Standtilbud kun for besøkende: «10 % rabatt på første bestilling — scan her». Mål: e-postadresse eller bestilling før de forlater standen.
+- iPad/skjerm som spiller en 60-sekunders video av prosessen (fra Domstein til dør) — bevegelse stopper folk og forteller historien du ikke rekker i en kort prat.
+- Smaksprøver, isdisk, bestillingsark for levering samme uke, og kontaktinnsamling til nyhetsbrev.
+Konkrete muligheter i Bergen:
+- Bondens Marked på Fisketorget — annenhver lørdag 10–16, gjentakende, perfekt match (fisk/vilt). Søk som utstiller via bondensmarked.no / Bergen kommune. Mest tilgjengelige kanal.
+- Bergen Matfestival — ~3.–5. september 2026 (Festplassen/Byparken), starten av Fase 2. Søk stand i god tid (matfest.no / lokalmat.no).
+- Bergen Sjømatfestival — februar (neste runde feb 2027, gratis publikumsdag på Fisketorget). Planlegg tidlig.
+
+## Utgående salg (oppsøkende — vi styrer hvem og når)
+Den eneste kanalen der vi velger hvem vi snakker med, uten å vente på å bli funnet. Fire spor:
+1. LinkedIn — varmt utgående B2B (Prioritet 1): eiendomsmeglere, advokatfirmaer, konsulentselskaper i Bergen. Søk opp daglig leder/partner, send kort PERSONLIG melding (ikke salgsbrev), nevn noe konkret om dem, tilby prøvekasse til neste kundekveld. Mål: 10 meldinger/uke. Eksempel: «Hei [navn]. Jeg ser dere arrangerer kundekveld jevnlig. Vi leverer fersk skalldyr og sjømat til den typen arrangementer i Bergen — ville du hatt interesse av å høre mer?»
+2. Oppsøk nabolaget direkte (rask effekt): premium-boligstrøk Paradis/Fana/Nordås/Hop. Ring på med en liten smaksprøve + enkel flyer. Ikke salg — introduksjon: «Vi leverer fersk sjømat i dette nabolaget — her er en smaksprøve.» Folk husker det; ingen andre gjør det.
+3. Velforeninger og borettslag (skalerbart): kontakt styret i Fana/Nordås/Paradis, tilby «nabolagsrabatt» på første bestilling for alle beboere. Én e-post fra styret til 80 husstander slår 80 individuelle henvendelser.
+4. Treningssentre/helsestudioer (uutforsket): SATS/Elixia i Fana — rett målgruppe (helsebevisst, god økonomi, opptatt av kvalitetsmat). Tilby å stå i resepsjonen én lørdag med smaksprøver og flyers.
+
+## Salgskanaler (prioritert)
+1) Nettside — øke konverteringsraten (høyest ROI, ingen ekstra trafikk nødvendig) · 2) Utgående salg — stand, nabolag, LinkedIn B2B (NY) · 3) personlig gjenkjøpsoppsøking · 4) UGC og sosiale medier · 5) e-post/SMS ukentlig fangst (SMS sendes manuelt) · 6) B2B oppsøking via LinkedIn · 7) referral-program (200 kr til begge) · 8) pressekontakt — BA og Bergens Tidende · 9) dropzone/hentepunkt — undersøkes nærmere.
+
+## Tone og merkevare
+Aldri mas/salgspress — varm, personlig, ærlig. Historiefortelling om opphav. Premium uten snobbing. Grunnlegger-stemme (Erik) brukes aktivt. Konkurrent = tidsmangel/middagsstress/takeaway, ikke Meny/Rema.
+
+## Instruksjoner for Claude-assistenten
+Alltid: 1) Ha strategien i bakhodet — alle råd støtter én av de fire vekstmotorene. 2) Prioriter etter fase (jun–aug / sep–okt / nov–des). 3) Vær konkret (Bergen, sjømat, Havøyets kundeprofil) — ikke generelle råd. 4) Respekter merkevaren — ingen kald massetelefon, ingen generiske kampanjer, alltid personlig og ekte. 5) Foreslå konkrete SMS/e-post/LinkedIn-maler med personaliseringsvariabler. 6) Plasser hver kundekontakt i riktig trakt-steg (dag 2 / 14 / 42). 7) Hold fokus på 1 million i 2026 — vurder alltid tiltak mot om de bringer oss nærmere.
+"""
+
+# Strukturerte mål/KPI — dr* fremdrift-fanen. Måned → (nye_kunder, gjenkjøp, bedriftsevent, abonnenter, omsetning)
+_STRATEGI_KPI_DEFAULT = {
+    "2026-06": {"nye_kunder": 20, "gjenkjop": 10, "bedriftsevent": 1, "abonnenter": 2,  "omsetning": 25000},
+    "2026-07": {"nye_kunder": 25, "gjenkjop": 15, "bedriftsevent": 2, "abonnenter": 5,  "omsetning": 38000},
+    "2026-08": {"nye_kunder": 30, "gjenkjop": 20, "bedriftsevent": 3, "abonnenter": 10, "omsetning": 55000},
+    "2026-09": {"nye_kunder": 35, "gjenkjop": 25, "bedriftsevent": 4, "abonnenter": 15, "omsetning": 70000},
+    "2026-10": {"nye_kunder": 40, "gjenkjop": 30, "bedriftsevent": 5, "abonnenter": 20, "omsetning": 100000},
+    "2026-12": {"nye_kunder": 50, "gjenkjop": 40, "bedriftsevent": 8, "abonnenter": 30, "omsetning": 180000},
+}
+_STRATEGI_ENGINES = ["Konvertering", "Gjenkjøp", "B2B/event", "Abonnement"]
+_STRATEGI_PHASES = [
+    {"navn": "Fase 1 — Bygg motoren",  "fra": "2026-06", "til": "2026-08", "maned_mal": 50000},
+    {"navn": "Fase 2 — Skaler B2B",     "fra": "2026-09", "til": "2026-10", "maned_mal": 100000},
+    {"navn": "Fase 3 — Juleteft",       "fra": "2026-11", "til": "2026-12", "maned_mal": 180000},
+]
+
+def _strategi_seed():
+    return {
+        "version": 1,
+        "prompt_full": _STRATEGI_FULL_DEFAULT,
+        "chat_posture": _STRATEGI_CHAT_POSTURE_DEFAULT,
+        "arsmal": {"label": "Omsetning 2026", "target": 1000000, "unit": "kr"},
+        "konvertering": {"baseline": 0.12, "target": 1.0, "unit": "%"},
+        "vekstmotorer": list(_STRATEGI_ENGINES),
+        "faser": [dict(p) for p in _STRATEGI_PHASES],
+        "kpi_mal": {k: dict(v) for k, v in _STRATEGI_KPI_DEFAULT.items()},
+        "b2b_events": {},   # manuelt ført pr måned "YYYY-MM" → antall (ingen datakilde)
+        "updated_at": _now_iso_utc(),
+        "updated_by": "seed",
+    }
+
+def _load_strategi():
+    global _strategi
+    if not os.path.exists(STRATEGI_FILE):
+        _strategi = _strategi_seed()
+        _save_strategi()
+        print("[STRATEGI] Seedet ny forretningsplan")
+        return
+    try:
+        with open(STRATEGI_FILE, "r", encoding="utf-8") as f:
+            _strategi = json.load(f) or {}
+        # Fyll inn manglende felter fra seed (forward-compat ved nye felter)
+        seed = _strategi_seed()
+        for k, v in seed.items():
+            _strategi.setdefault(k, v)
+        print(f"[STRATEGI] Lastet (v{_strategi.get('version')})")
+    except Exception as e:
+        print(f"[STRATEGI] Kunne ikke laste: {e}")
+        _strategi = _strategi_seed()
+
+def _save_strategi():
+    try:
+        tmp = STRATEGI_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_strategi, f, ensure_ascii=False)
+        os.replace(tmp, STRATEGI_FILE)
+    except Exception as e:
+        print(f"[STRATEGI] Lagring feilet: {e}")
+
+def _strategi_log_append(entry):
+    try:
+        entry.setdefault("ts", _now_iso_utc())
+        with _strategi_lock:
+            with open(STRATEGI_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"[STRATEGI] Logg feilet: {e}")
+
+def _strategi_internal_ok():
+    """Server-til-server-auth for Vercel-funksjonene (intern token)."""
+    itok = os.environ.get("STRATEGI_INTERNAL_TOKEN", "")
+    if not itok:
+        return False
+    got = request.headers.get("X-Strategi-Token", "")
+    try:
+        return bool(got) and secrets.compare_digest(got, itok)
+    except Exception:
+        return False
+
+def _strategi_progress():
+    """Beregner ekte fremdrift mot mål fra ordrer/kunder/abonnement."""
+    today = datetime.now().date()
+    year  = today.year
+    ym    = today.strftime("%Y-%m")
+
+    def _d(s):
+        return str(s or "")[:10]
+    def _ym(s):
+        return str(s or "")[:7]
+    def _yr(s):
+        return str(s or "")[:4]
+
+    # ── Omsetning (samme kilder som Økonomi-fanen: web + vipps + kort) ──
+    try:
+        paid_set = _paid_ordrenrs()
+    except Exception:
+        paid_set = set()
+    web_orders = [o for o in _manual_orders
+                  if str(o.get("ordrenr") or o.get("id")) in paid_set]
+    def _tot(o):
+        try:
+            return float(o.get("sum") or o.get("total") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    def _odate(o):
+        return o.get("dato") or o.get("created_at") or ""
+
+    rev_year  = sum(_tot(o) for o in web_orders if _yr(_odate(o)) == str(year))
+    rev_month = sum(_tot(o) for o in web_orders if _ym(_odate(o)) == ym)
+    try:
+        for r in _vipps_imported_payments.values():
+            amt = (r.get("amount_ore") or 0) / 100.0
+            if _yr(r.get("date")) == str(year):  rev_year  += amt
+            if _ym(r.get("date")) == ym:         rev_month += amt
+        for r in _card_payments_imported.values():
+            amt = (r.get("amount_ore") or 0) / 100.0
+            if r.get("type") == "Refusjon":
+                amt = -amt
+            if _yr(r.get("date")) == str(year):  rev_year  += amt
+            if _ym(r.get("date")) == ym:         rev_month += amt
+    except Exception:
+        pass
+
+    # ── Kunder ──
+    def _cdate(c):
+        return c.get("created_at") or c.get("dato") or ""
+    new_cust_year  = sum(1 for c in _customers if _yr(_cdate(c)) == str(year))
+    new_cust_month = sum(1 for c in _customers if _ym(_cdate(c)) == ym)
+
+    # ── Gjenkjøp (3+ betalte ordrer, gruppert på tlf/epost) ──
+    from collections import Counter
+    cnt = Counter()
+    for o in web_orders:
+        k = (o.get("kunde") or {})
+        key = (k.get("tlf") or k.get("telefon") or k.get("epost") or k.get("navn") or "").strip().lower()
+        if key:
+            cnt[key] += 1
+    repeat3 = sum(1 for v in cnt.values() if v >= 3)
+
+    # ── Abonnenter (aktive Stripe-abonnement) ──
+    def _sub_active(s):
+        st = (s.get("status") or "").lower()
+        return st in ("active", "trialing") or bool(s.get("active"))
+    active_subs = sum(1 for s in _subscriptions.values() if _sub_active(s))
+    if active_subs == 0:
+        active_subs = len(_subscriptions)   # fallback hvis status-felt mangler
+
+    kpi = (_strategi.get("kpi_mal") or {}).get(ym, {})
+    b2b_done = int((_strategi.get("b2b_events") or {}).get(ym, 0) or 0)
+    arsmal = (_strategi.get("arsmal") or {}).get("target", 1000000)
+
+    def _pct(cur, tgt):
+        try:
+            return round(min(100.0, (float(cur) / float(tgt)) * 100.0), 1) if tgt else 0.0
+        except Exception:
+            return 0.0
+
+    return {
+        "ok": True,
+        "as_of": datetime.now().isoformat(),
+        "maned": ym,
+        "ar": {"target": arsmal, "current": round(rev_year, 0), "pct": _pct(rev_year, arsmal)},
+        "kpi": {
+            "omsetning":    {"target": kpi.get("omsetning", 0),    "current": round(rev_month, 0)},
+            "nye_kunder":   {"target": kpi.get("nye_kunder", 0),   "current": new_cust_month},
+            "gjenkjop":     {"target": kpi.get("gjenkjop", 0),     "current": repeat3},
+            "bedriftsevent":{"target": kpi.get("bedriftsevent", 0),"current": b2b_done},
+            "abonnenter":   {"target": kpi.get("abonnenter", 0),   "current": active_subs},
+        },
+        "totalt": {
+            "kunder": len(_customers),
+            "gjenkjop3": repeat3,
+            "aktive_abonnement": active_subs,
+            "omsetning_ar": round(rev_year, 0),
+        },
+    }
+
+@app.route("/api/strategi", methods=["GET", "PUT"])
+def api_strategi():
+    """GET ?scope=chat → kun kundetrygg posture (åpen, brukes av chat-ai.js).
+       GET (full)      → hele planen (krever admin Bearer eller intern token).
+       PUT             → oppdater planen (kun admin)."""
+    with _strategi_lock:
+        if not _strategi:
+            _load_strategi()
+
+    if request.method == "PUT":
+        user, _ = _user_from_request()
+        if not user:
+            return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+        data = request.get_json(silent=True) or {}
+        allowed = ("prompt_full", "chat_posture", "arsmal", "konvertering",
+                   "vekstmotorer", "faser", "kpi_mal", "b2b_events")
+        with _strategi_lock:
+            for k in allowed:
+                if k in data:
+                    _strategi[k] = data[k]
+            _strategi["version"] = int(_strategi.get("version", 1)) + 1
+            _strategi["updated_at"] = _now_iso_utc()
+            _strategi["updated_by"] = (user or {}).get("email")
+            _save_strategi()
+        _strategi_log_append({
+            "kind": "plan_edited",
+            "by": (user or {}).get("email"),
+            "version": _strategi.get("version"),
+        })
+        return jsonify({"ok": True, "version": _strategi.get("version")})
+
+    # GET
+    scope = request.args.get("scope")
+    if scope == "chat":
+        resp = jsonify({
+            "ok": True,
+            "chat_posture": _strategi.get("chat_posture") or "",
+            "updated_at": _strategi.get("updated_at"),
+        })
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return resp
+
+    user, _ = _user_from_request()
+    if not user and not _strategi_internal_ok():
+        return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+    return jsonify({"ok": True, "strategi": _strategi})
+
+@app.route("/api/strategi/logg", methods=["POST"])
+def api_strategi_logg():
+    """Registrer en AI-handling for etterlevelses-sporing.
+       Body: { surface, action, vekstmotor, fase, aligned, score, summary }.
+       Aksepterer intern token (Vercel) eller admin Bearer."""
+    user, _ = _user_from_request()
+    if not user and not _strategi_internal_ok():
+        # Hvis ingen intern token er konfigurert i det hele tatt, tillat (dev/oppstart)
+        if os.environ.get("STRATEGI_INTERNAL_TOKEN"):
+            return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+    data = request.get_json(silent=True) or {}
+    entry = {
+        "kind": "ai_action",
+        "surface":   str(data.get("surface") or "ukjent")[:60],
+        "action":    str(data.get("action") or "")[:160],
+        "vekstmotor": str(data.get("vekstmotor") or "")[:40],
+        "fase":      str(data.get("fase") or "")[:40],
+        "aligned":   bool(data.get("aligned", True)),
+        "score":     data.get("score"),
+        "summary":   str(data.get("summary") or "")[:400],
+        "by":        (user or {}).get("email") if user else "system",
+    }
+    _strategi_log_append(entry)
+    return jsonify({"ok": True})
+
+@app.route("/api/strategi/etterlevelse")
+def api_strategi_etterlevelse():
+    """Admin: aggregert etterlevelse fra loggen. ?days=N (default 30)."""
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+    try:
+        days = max(1, min(365, int(request.args.get("days", "30") or 30)))
+    except (TypeError, ValueError):
+        days = 30
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    rows = []
+    try:
+        if os.path.exists(STRATEGI_LOG_FILE):
+            with open(STRATEGI_LOG_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except Exception:
+                        continue
+                    if r.get("kind") == "ai_action" and (r.get("ts") or "") >= cutoff:
+                        rows.append(r)
+    except Exception as e:
+        print(f"[STRATEGI] etterlevelse les feilet: {e}")
+    total = len(rows)
+    aligned = sum(1 for r in rows if r.get("aligned"))
+    by_engine = {}
+    by_surface = {}
+    for r in rows:
+        e = r.get("vekstmotor") or "—"
+        s = r.get("surface") or "—"
+        by_engine[e] = by_engine.get(e, 0) + 1
+        by_surface[s] = by_surface.get(s, 0) + 1
+    recent = list(reversed(rows[-40:]))
+    return jsonify({
+        "ok": True,
+        "days": days,
+        "total": total,
+        "aligned": aligned,
+        "aligned_pct": round((aligned / total) * 100.0, 1) if total else 0.0,
+        "by_engine": by_engine,
+        "by_surface": by_surface,
+        "recent": recent,
+    })
+
+@app.route("/api/strategi/fremdrift")
+def api_strategi_fremdrift():
+    """Admin: fremdrift mot mål, beregnet fra ekte data."""
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+    try:
+        return jsonify(_strategi_progress())
+    except Exception as e:
+        import traceback as _tb
+        print(f"[STRATEGI] fremdrift feilet: {e}\n{_tb.format_exc()}")
+        return jsonify({"ok": False, "error": str(e)}), 200
+
+
 # Last arkiv ved boot
 try:
     _load_newsletter_archive()
@@ -9786,6 +10205,11 @@ try:
     _load_subscriptions()
 except Exception as _e:
     print(f"[BOOT-WSGI] _load_subscriptions feilet: {_e}")
+
+try:
+    _load_strategi()
+except Exception as _e:
+    print(f"[BOOT-WSGI] _load_strategi feilet: {_e}")
 
 _NORSK_DAGER = ("søndag","mandag","tirsdag","onsdag","torsdag","fredag","lørdag")
 _NORSK_MND   = ("januar","februar","mars","april","mai","juni","juli","august",
@@ -10397,6 +10821,7 @@ if __name__ == "__main__":
     _load_analytics()
     _load_replays()
     _load_subscriptions()
+    _load_strategi()
 
     # Last prisliste fra disk
     if os.path.exists(PRISLISTE_FILE):
