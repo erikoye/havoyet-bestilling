@@ -5558,6 +5558,73 @@ function _kasseContentEntryFor(v, compName){
   return null;
 }
 
+// Verdi (kr) per kasse for én boxSelection-art. Moderne arter (qty+unit) regnes
+// direkte; legacy-arter (uten qty/unit, priset etter 600 g-regelen) får sin andel.
+function _boxEntryValuePerKasse(v, s){
+  if (!s) return 0;
+  if (s.qty && s.unit) {
+    const unit = String(s.unit || 'g');
+    return (unit === 'g') ? (Number(s.qty) || 0) / 1000 * (Number(s.pris) || 0)
+                          : (Number(s.qty) || 0) * (Number(s.pris) || 0);
+  }
+  const boxSel = Array.isArray(v && v.boxSelection) ? v.boxSelection : [];
+  const persons = _personerForKasse(v) || 2;
+  const catCount = {};
+  boxSel.forEach(x => { if (x && x.catId && x.catId !== 'tilbehor') catCount[x.catId] = (catCount[x.catId] || 0) + 1; });
+  if (!s.catId || s.catId === 'tilbehor') return 0;
+  return (Number(s.pris) || 0) * (600 * persons / (catCount[s.catId] || 1)) / 1000;
+}
+
+// Gjør et "legacy" boxSelection (uten qty/unit per art, priset etter 600 g-regelen)
+// om til eksplisitte mengder per kasse, så hele kassen blir moderne og konsistent.
+// Speiler rekonstruksjonen i _expectedKasseRows; totalen bevares.
+function _materializeLegacyBox(v){
+  if (!v || !Array.isArray(v.boxSelection)) return;
+  if (v.boxSelection.some(s => s && s.qty && s.unit)) return; // allerede moderne
+  const persons = _personerForKasse(v) || 2;
+  const counting = [];
+  const catCount = {};
+  v.boxSelection.forEach((s, idx) => {
+    if (s && s.catId && s.catId !== 'tilbehor') { counting.push({ s, idx }); catCount[s.catId] = (catCount[s.catId] || 0) + 1; }
+  });
+  const oldVal = s => (Number(s.pris) || 0) * (600 * persons / (catCount[s.catId] || 1)) / 1000;
+  const unitInfo = s => {
+    const navn = String(s.navn || s.name || '').toLowerCase();
+    if (navn.includes('lyngenfjord')) return { grams: 380, perKg: true };
+    if (navn.includes('krabbeskjell')) { const g = (String(s.variant || '').match(/(\d+)\s*g/) || [])[1]; return { grams: Number(g) || 150, perKg: false }; }
+    return null;
+  };
+  let totalOld = 0, fixedVal = 0;
+  const loose = [], plan = {};
+  counting.forEach(({ s, idx }) => {
+    const ov = oldVal(s); totalOld += ov;
+    const u = unitInfo(s);
+    if (u) {
+      const unitPrice = u.perKg ? (Number(s.pris) || 0) * u.grams / 1000 : (Number(s.pris) || 0);
+      const count = Math.max(1, Math.round(unitPrice > 0 ? ov / unitPrice : 1));
+      fixedVal += count * unitPrice;
+      // perKg (Lyngenfjord-boks): kr/kg → unit 'g' m/ pakning. Ellers (Krabbeskjell):
+      // pris er kr per stk → unit 'stk', ikke 'g' (ville feilberegnet verdien).
+      plan[idx] = u.perKg ? { qty: count * u.grams, unit: 'g', enhetGrams: u.grams }
+                          : { qty: count, unit: 'stk', enhetGrams: 0 };
+    } else { loose.push({ s, idx, ov }); }
+  });
+  const remaining = Math.max(0, totalOld - fixedVal);
+  const looseSum = loose.reduce((t, x) => t + x.ov, 0);
+  loose.forEach(({ s, idx, ov }) => {
+    const val = looseSum > 0 ? remaining * (ov / looseSum) : 0;
+    const grams = Math.max(0, Math.round((val / (Number(s.pris) || 1)) * 1000 / 10) * 10);
+    plan[idx] = { qty: grams, unit: 'g', enhetGrams: 0 };
+  });
+  v.boxSelection.forEach((s, idx) => {
+    if (!s) return;
+    if (plan[idx]) {
+      s.qty = plan[idx].qty; s.unit = plan[idx].unit;
+      if (plan[idx].enhetGrams) s.enhetGrams = plan[idx].enhetGrams; else delete s.enhetGrams;
+    } else if (!(s.qty && s.unit)) { s.qty = Number(s.qty) || 1; s.unit = s.unit || 'stk'; }
+  });
+}
+
 // Bekreft en foreslått erstatning: bytt komponenten PÅ PLASS i kasse-innholdet
 // med en mengde som gir SAMME verdi som det som ble erstattet (paritet — kassen
 // koster det samme). Ingen egen «Erstatning»-linje legges til.
@@ -5581,10 +5648,10 @@ async function _confirmComponentReplacement(i, ci, sugKey){
   const match = v ? _kasseContentEntryFor(v, c.name || '') : null;
   if (match && match.kind === 'box') {
     const s = match.entry;
-    const unit = String(s.unit || 'g');
-    const oldVal = (unit === 'g')
-      ? (Number(s.qty) || 0) / 1000 * (Number(s.pris) || 0)
-      : (Number(s.qty) || 0) * (Number(s.pris) || 0);
+    // Legacy-kasse (uten qty/unit) materialiseres til eksplisitte mengder først,
+    // ellers blir verdien 0 og byttet får ingen mengde.
+    _materializeLegacyBox(v);
+    const oldVal = _boxEntryValuePerKasse(v, s);
     const ul = String(suggested.unitLabel || 'kg').toLowerCase();
     const perKg = (ul === 'kg' || suggested.kind === 'fish');
     const newUnit = perKg ? 'g' : ((ul === 'pk' || ul === 'pakke') ? 'pk' : 'stk');
