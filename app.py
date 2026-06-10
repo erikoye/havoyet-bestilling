@@ -5037,6 +5037,161 @@ def _api_economy_stats_impl():
     })
 
 
+def _economy_report_html(period_label, pf, pt, org_nr, mva_pst,
+                         brutto, netto, mva, kost, ntx,
+                         by_system, by_kilde, excluded_rows, sum_excl, rows):
+    """Render omsetningsrapporten som en pen, utskrifts-/PDF-vennlig HTML-side
+    (samme stil som en kasserer-rapport: firma-header, rapportdetaljer,
+    sammendrag, omsetning per kilde med MVA-splitt, og transaksjonsliste)."""
+    import html as _h
+
+    def esc(v):
+        return _h.escape("" if v is None else str(v))
+
+    def kr(v):
+        s = ("%0.2f" % float(v or 0))
+        # 27020.00 -> 27 020,00 (norsk: mellomrom tusen, komma desimal)
+        neg = s.startswith("-")
+        s = s.lstrip("-")
+        intp, dec = s.split(".")
+        grp = ""
+        while len(intp) > 3:
+            grp = " " + intp[-3:] + grp
+            intp = intp[:-3]
+        intp = intp + grp
+        return ("−" if neg else "") + intp + "," + dec + " kr"
+
+    gen = datetime.now().strftime("%d.%m.%Y - %H:%M")
+    eksport = "erik@havoyet.no"
+    mva_rate = 1 + (float(mva_pst) / 100.0)
+
+    # Per kilde med MVA-splitt
+    kilde_sorted = sorted(by_kilde.items(), key=lambda kv: -kv[1]["kr"])
+    kilde_rows = ""
+    for k, g in kilde_sorted:
+        b = g["kr"]; nv = b / mva_rate; mv = b - nv
+        kilde_rows += (
+            "<tr><td>{}</td><td class='num'>{}</td><td class='num'>{}</td>"
+            "<td class='num'>{}</td><td class='num strong'>{}</td></tr>"
+        ).format(esc(k), g["n"], kr(nv), kr(mv), kr(b))
+    kilde_rows += (
+        "<tr class='sumrow'><td>Sum</td><td class='num'>{}</td><td class='num'>{}</td>"
+        "<td class='num'>{}</td><td class='num strong'>{}</td></tr>"
+    ).format(ntx, kr(netto), kr(mva), kr(brutto))
+
+    # Per system
+    system_rows = ""
+    for k, g in sorted(by_system.items(), key=lambda kv: -kv[1]["kr"]):
+        system_rows += "<tr><td>{}</td><td class='num'>{}</td><td class='num strong'>{}</td></tr>".format(
+            esc(k), g["n"], kr(g["kr"]))
+
+    # Ekskludert-notis
+    excl_html = ""
+    if excluded_rows:
+        excl_html = (
+            "<div class='note'><strong>Ikke tatt med (unngår dobbelttelling):</strong> "
+            "{} Shopify-import-ordre à totalt {} — samme salg ligger allerede i "
+            "Shopify kort / Vipps via nettside.</div>"
+        ).format(len(excluded_rows), kr(sum_excl))
+
+    # Transaksjonsliste (kun de som teller i omsetning, kronologisk)
+    tx_rows = ""
+    for r in rows:
+        if not r["counted"]:
+            continue
+        tx_rows += (
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td>"
+            "<td>{}</td><td class='num strong'>{}</td></tr>"
+        ).format(
+            esc(r["date"]), esc(r["system"]), esc(r["kilde"]), esc(r["ref"]),
+            esc(r["kunde"] or r["detalj"] or "—"), esc(r["type"]), kr(r["belop"]))
+
+    csv_qs = "?from={}&to={}&format=csv".format(
+        pf.strftime("%Y-%m-%d"), pt.strftime("%Y-%m-%d"))
+    title = "Omsetningsrapport Havøyet AS – " + period_label
+
+    css = """
+    *{box-sizing:border-box;}
+    body{margin:0;background:#e9edf1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#2b3440;font-size:13px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .sheet{max-width:980px;margin:24px auto;background:#fff;padding:48px 56px 64px;box-shadow:0 1px 4px rgba(0,0,0,.12);}
+    h1{font-size:30px;font-weight:600;color:#3a4654;margin:0 0 2px;letter-spacing:.2px;}
+    h2{font-size:18px;font-weight:700;color:#3a4654;margin:0 0 28px;}
+    h3{font-size:13px;font-weight:700;color:#3a4654;margin:34px 0 12px;text-transform:none;}
+    .meta{display:grid;grid-template-columns:150px 1fr;row-gap:7px;margin:6px 0 8px;font-size:13px;}
+    .meta .k{font-weight:700;color:#3a4654;}
+    .meta .v{color:#5b6675;}
+    .cards{display:flex;gap:14px;margin:22px 0 6px;flex-wrap:wrap;}
+    .card{flex:1;min-width:180px;border:1px solid #e3e8ee;border-radius:10px;padding:14px 16px;background:#fafbfc;}
+    .card .lbl{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#8a95a3;margin-bottom:6px;}
+    .card .val{font-size:22px;font-weight:700;color:#222b36;font-variant-numeric:tabular-nums;}
+    .card.accent{background:#eafaf6;border-color:#bfe9df;}
+    .card.accent .val{color:#0d8f74;}
+    table{width:100%;border-collapse:collapse;margin:4px 0 8px;}
+    th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#8a95a3;padding:10px 10px;border-bottom:1px solid #d7dee6;}
+    td{padding:11px 10px;border-bottom:1px solid #eef2f5;color:#3f4a58;font-variant-numeric:tabular-nums;}
+    td.num,th.num{text-align:right;}
+    td.strong{font-weight:700;color:#222b36;}
+    tr.sumrow td{border-top:2px solid #d7dee6;border-bottom:none;font-weight:700;color:#222b36;background:#fafbfc;}
+    .note{margin:14px 0;padding:11px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;color:#9a3412;font-size:12px;}
+    .foot{margin-top:26px;padding-top:14px;border-top:1px solid #eef2f5;color:#8a95a3;font-size:11px;line-height:1.6;}
+    .bar{position:sticky;top:0;background:#2b3440;color:#fff;padding:10px 16px;display:flex;gap:10px;align-items:center;justify-content:center;font-size:13px;}
+    .bar button,.bar a{font:inherit;border:none;border-radius:7px;padding:8px 16px;cursor:pointer;text-decoration:none;font-weight:600;}
+    .bar button{background:#16b894;color:#fff;}
+    .bar a{background:#46525f;color:#fff;}
+    @media print{.bar{display:none;}body{background:#fff;}.sheet{box-shadow:none;margin:0;max-width:none;padding:0 8px;}}
+    """
+
+    html = (
+        "<!doctype html><html lang='no'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>" + esc(title) + "</title><style>" + css + "</style></head><body>"
+        "<div class='bar'>"
+        "<button onclick='window.print()'>🖨️ Skriv ut / Lagre som PDF</button>"
+        "<a href='" + esc(csv_qs) + "'>⬇ Last ned CSV (Excel)</a>"
+        "</div>"
+        "<div class='sheet'>"
+        "<h1>Havøyet AS</h1><h2>Omsetningsrapport</h2>"
+        "<h3>Rapportdetaljer</h3>"
+        "<div class='meta'>"
+        "<div class='k'>Sted:</div><div class='v'>Havøyet AS</div>"
+        "<div class='k'>Org.nr:</div><div class='v'>" + esc(org_nr) + "</div>"
+        "<div class='k'>Område:</div><div class='v'>Norge</div>"
+        "<div class='k'>Periode:</div><div class='v'>" + esc(period_label) + " ("
+        + pf.strftime("%d.%m.%Y") + " – " + pt.strftime("%d.%m.%Y") + ")</div>"
+        "<div class='k'>Eksportert av:</div><div class='v'>" + esc(eksport) + "</div>"
+        "<div class='k'>Dato:</div><div class='v'>" + esc(gen) + "</div>"
+        "</div>"
+        "<div class='cards'>"
+        "<div class='card accent'><div class='lbl'>Omsetning inkl. mva</div><div class='val'>" + kr(brutto) + "</div></div>"
+        "<div class='card'><div class='lbl'>Herav MVA " + esc(mva_pst) + " %</div><div class='val'>" + kr(mva) + "</div></div>"
+        "<div class='card'><div class='lbl'>Omsetning eks. mva</div><div class='val'>" + kr(netto) + "</div></div>"
+        "<div class='card'><div class='lbl'>Antall transaksjoner</div><div class='val'>" + str(ntx) + "</div></div>"
+        "</div>"
+        + excl_html +
+        "<h3>Omsetning per kilde (med MVA-spesifikasjon)</h3>"
+        "<table><thead><tr><th>Kilde</th><th class='num'>Antall</th>"
+        "<th class='num'>Eks. mva (netto)</th><th class='num'>MVA " + esc(mva_pst) + " %</th>"
+        "<th class='num'>Inkl. mva (brutto)</th></tr></thead><tbody>" + kilde_rows + "</tbody></table>"
+        "<h3>Omsetning per system</h3>"
+        "<table><thead><tr><th>System</th><th class='num'>Antall</th><th class='num'>Omsetning inkl. mva</th></tr></thead>"
+        "<tbody>" + system_rows + "</tbody></table>"
+        "<h3>Transaksjoner (" + str(ntx) + ")</h3>"
+        "<table><thead><tr><th>Dato</th><th>System</th><th>Kilde</th><th>Referanse</th>"
+        "<th>Kunde</th><th>Type</th><th class='num'>Beløp inkl. mva</th></tr></thead>"
+        "<tbody>" + tx_rows + "</tbody></table>"
+        "<div class='foot'>"
+        "MVA-spesifikasjonen antar " + esc(mva_pst) + " % sats (sjømat/næringsmidler) på hele omsetningen. "
+        "Har du varer med 25 % mva må splitten justeres manuelt.<br>"
+        "Innkjøpskostnader er ikke vist her (estimerte tall finnes i CSV-versjonen). "
+        "Omsetningen er deduplisert: Shopify-import-ordre telles ikke når salget allerede ligger i betalings-importene. "
+        "Generert av Havøyet admin · " + esc(gen) +
+        "</div></div></body></html>"
+    )
+    resp = Response(html, mimetype="text/html; charset=utf-8")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.route("/api/economy/report")
 def api_economy_report():
     """Last ned en reell omsetningsrapport (CSV) for valgt periode.
@@ -5216,6 +5371,14 @@ def _api_economy_report_impl():
     mva   = sum_belop - netto
     org_nr = (_invoice_config or {}).get("orgNr") or _INVOICE_CONFIG_DEFAULTS["orgNr"]
     mva_pst = ("%g" % (_MVA_RATE * 100))
+
+    # === Standard: pen HTML-rapport (skriv ut / lagre som PDF). CSV ved ?format=csv ===
+    if (request.args.get("format") or "html").lower() != "csv":
+        return _economy_report_html(
+            period_label, period_from, period_to, org_nr, mva_pst,
+            sum_belop, netto, mva, sum_kost, len(counted_rows),
+            by_system, by_kilde, excluded_rows, sum_excl, rows,
+        )
 
     L = []
     L.append("Omsetningsrapport;Havøyet AS")
