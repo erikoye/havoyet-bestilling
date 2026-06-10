@@ -4678,6 +4678,10 @@ function openOrderDrawer(nr){
     rabattProsent: Number(raw.rabattProsent || 0),
     rabattKode:    raw.rabattKode || '',
     refundedAmount: Number(raw.refundedAmount || 0),
+    // Hva kunden FAKTISK betalte (fryst). Bruk lagret paidTotal hvis satt, ellers
+    // ordrens total ved åpning. Brukes til +/- differanse-visning når admin
+    // redigerer en betalt ordre over/under det innbetalte beløpet.
+    paidBaseline: Number(raw.paidTotal != null ? raw.paidTotal : (raw.total != null ? raw.total : 0)) || 0,
     kunde: { ...(raw.kunde || {}) },
     varer: (raw.varer || []).map(v => ({
       ...v,
@@ -4773,6 +4777,10 @@ function _renderDrawerBody(){
       <div class="pay-row" style="border-top:1px solid var(--hv-teal);margin-top:4px;padding-top:12px;">
         <span class="pay-label" style="font-weight:700;">TOTAL</span>
         <span class="pay-val teal" id="edTotal">0 kr</span>
+      </div>
+      <div class="pay-row" id="edPaidDiffRow" style="display:none;font-weight:700;">
+        <span class="pay-label" id="edPaidDiffLabel"></span>
+        <span class="pay-val" id="edPaidDiff"></span>
       </div>
     </div>
 
@@ -5336,24 +5344,27 @@ function _renderKasseComponents(itemName, i){
     _freshExpected[String(r.name || '').trim().toLowerCase()] = r;
   });
   const rowsHtml = components.map((c, ci) => {
-    const avail = c.avail || null;
-    const label = avail ? _AVAIL_LABELS_ADMIN[avail] : 'Ikke vurdert';
-    const cls   = avail ? `status-${avail}` : 'status-pending';
     const confirmed = c.confirmedReplacement ? _adminReplObj(c.confirmedReplacement) : null;
     const suggested = (!confirmed && c.suggestedReplacement) ? _adminReplObj(c.suggestedReplacement) : null;
-    const freshRow = _freshExpected[String(c.name || '').trim().toLowerCase()] || null;
-    const expected = confirmed ? '' : (freshRow
+    // Bekreftet bytte: vis den NYE varen som et vanlig tilgjengelig produkt
+    // (navn, mengde, grønn status) — originalen vises kun hvis man tilbakestiller.
+    const avail = confirmed ? 'ok' : (c.avail || null);
+    const label = avail ? _AVAIL_LABELS_ADMIN[avail] : 'Ikke vurdert';
+    const cls   = avail ? `status-${avail}` : 'status-pending';
+    const displayName = confirmed ? confirmed.name : (c.name || '');
+    // Forventet mengde slås opp på det viste navnet — etter bytte er det den
+    // swappede boxSelection-raden (f.eks. «Reker ferske 420 g», redigerbar).
+    const freshRow = _freshExpected[String(displayName || '').trim().toLowerCase()] || null;
+    let expected = freshRow
       ? `<span class="ed-kasse-expected">forv.</span> ${_kasseQtyInputHtml(i, freshRow)}`
-      : (c.expected ? `<span class="ed-kasse-expected">forv. ${_escAttr(c.expected)}</span>` : ''));
-    const weight   = (c.weight && String(c.weight).trim()) ? `<span class="ed-kasse-weight">veid ${_escAttr(c.weight)} ${_escAttr(c.weightUnit || 'g')}</span>` : '';
-    let conf = '';
-    if (confirmed) {
-      const qtyStr = (confirmed.appliedQty != null)
-        ? ' ' + _kasseQtyText(Number(confirmed.appliedQty), confirmed.appliedUnit || 'stk')
-        : '';
-      conf = `<span class="ed-kasse-repl confirmed">→ ${_escAttr(confirmed.name)}${qtyStr}</span>`
-           + `<button type="button" class="ed-kasse-revert" title="Angre bytte og hent original tilbake" onclick="_revertConfirmedComponent(${i},${ci})">↶ Tilbake til original</button>`;
+      : (c.expected && !confirmed ? `<span class="ed-kasse-expected">forv. ${_escAttr(c.expected)}</span>` : '');
+    if (!freshRow && confirmed && confirmed.appliedQty != null) {
+      expected = `<span class="ed-kasse-expected">forv. ${_escAttr(_kasseQtyText(Number(confirmed.appliedQty), confirmed.appliedUnit || 'stk'))}</span>`;
     }
+    const weight   = (c.weight && String(c.weight).trim()) ? `<span class="ed-kasse-weight">veid ${_escAttr(c.weight)} ${_escAttr(c.weightUnit || 'g')}</span>` : '';
+    const revertLink = confirmed
+      ? `<button type="button" class="ed-kasse-revert" title="Tilbakestill til ${_escAttr(c.name || 'original')}" onclick="_revertConfirmedComponent(${i},${ci})">↶ Tilbake til original</button>`
+      : '';
     let suggBlock = '';
     if (suggested) {
       const sugKey = _adminReplKey(suggested);
@@ -5373,13 +5384,12 @@ function _renderKasseComponents(itemName, i){
     }
     return `<div class="ed-kasse-row ${cls}" data-comp-i="${ci}">
       <div class="ed-kasse-row-main">
-        <span class="ed-kasse-name">${_escAttr(c.name || '')}</span>
-        ${expected}${weight}
+        <span class="ed-kasse-name">${_escAttr(displayName)}</span>
+        ${expected}${weight}${revertLink}
       </div>
       <div class="ed-kasse-row-side">
         <span class="ed-kasse-badge ${cls}">${_escAttr(label)}</span>
       </div>
-      ${conf ? `<div class="ed-kasse-row-repl">${conf}</div>` : ''}
       ${suggBlock}
     </div>`;
   }).join('');
@@ -5526,7 +5536,7 @@ async function _persistEditingOrder(){
     const fee = Number(document.getElementById('edFee')?.value || _editingOrder.fee || 0);
     const subtotal = varer.reduce((s,v) => s + _editLineTotal(v), 0);
     const total = Math.max(0, subtotal - Number(_editingOrder.rabattBelop || 0) + fee);
-    const body = { varer, fee, sum: subtotal, total };
+    const body = { varer, fee, sum: subtotal, total, paidTotal: Number(_editingOrder.paidBaseline || 0) };
     await fetch(`${_orderApiBase()}/api/manual-orders/${encodeURIComponent(_editingOrder.nr)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -5921,10 +5931,29 @@ function _recalcEditTotals(){
   const sub = _editingOrder.varer.reduce((s,v)=> s + _editLineTotal(v), 0);
   const fee = Number(document.getElementById('edFee')?.value || 0);
   const rabatt = Number(_editingOrder.rabattBelop || 0);
+  const total = Math.max(0, sub - rabatt + fee);
   const subEl = document.getElementById('edSubtotal');
   const totEl = document.getElementById('edTotal');
   if (subEl) subEl.textContent = sub + ' kr';
-  if (totEl) totEl.textContent = Math.max(0, sub - rabatt + fee) + ' kr';
+  if (totEl) totEl.textContent = total + ' kr';
+  // +/- differanse mot det kunden FAKTISK betalte (kun for betalte ordre).
+  const diffRow = document.getElementById('edPaidDiffRow');
+  const diffLbl = document.getElementById('edPaidDiffLabel');
+  const diffVal = document.getElementById('edPaidDiff');
+  if (diffRow && diffLbl && diffVal) {
+    const paid = Number(_editingOrder.paidBaseline || 0);
+    const diff = Math.round(total - paid);
+    if (_editingOrder.paid && paid > 0 && diff !== 0) {
+      const more = diff > 0;
+      diffRow.style.display = '';
+      diffLbl.textContent = more ? 'Mer enn betalt' : 'Mindre enn betalt';
+      diffVal.textContent = (more ? '+' : '−') + Math.abs(diff) + ' kr';
+      diffVal.style.color = more ? '#c0392b' : '#b9770e';
+      diffLbl.style.color = more ? '#c0392b' : '#b9770e';
+    } else {
+      diffRow.style.display = 'none';
+    }
+  }
 }
 
 // ─── REFUNDER ORDRE ────────────────────────────────────────────────────────
@@ -6093,6 +6122,8 @@ async function saveOrderEdits(nr){
     rabattKode:     _editingOrder.rabattKode || '',
     refundedAmount: refund,
     paymentStatus: _editingOrderPayStatus(),
+    // Frys det betalte beløpet (uendret av redigering) for +/- differanse-visning.
+    paidTotal: Number(_editingOrder.paidBaseline || 0),
   };
   const btn = document.querySelector('#dr .btn-p');
   if (btn) { btn.disabled = true; btn.textContent = 'Lagrer…'; }
