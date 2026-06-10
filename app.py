@@ -4794,8 +4794,16 @@ def _api_economy_stats_impl():
     # paid+free teller for innkjøpskost — gratis-ordre koster oss like mye)
     paid_set = _paid_ordrenrs()
     settled_set = _settled_ordrenrs()
+    # GYLDIGHET: Shopify-import-ordre (source=shopify, orders_export) er de SAMME
+    # salgene som allerede ligger i Shopify-kort-CSV og Vipps-via-nettside-CSV.
+    # De telles derfor IKKE i omsetning (ellers dobbelttelling — #1103–1109 lå
+    # både som ordre OG som kort/Vipps-betaling). Innkjøpskost beholdes likevel
+    # (de er reelt vareforbruk, og matcher omsetningen som fanges via betalingene).
+    def _is_shopify_src(o):
+        return str(o.get("source") or "").lower() == "shopify"
     web_orders = [o for o in _manual_orders
-                  if str(o.get("ordrenr") or o.get("id")) in paid_set]
+                  if str(o.get("ordrenr") or o.get("id")) in paid_set
+                  and not _is_shopify_src(o)]
     cost_orders = [o for o in _manual_orders
                    if str(o.get("ordrenr") or o.get("id")) in settled_set]
     # Bygg kost-map én gang for å unngå å iterere produktlisten per ordre
@@ -5098,13 +5106,16 @@ def _api_economy_report_impl():
         if not _in_period(_odate(o)):
             continue
         is_paid = ordrenr in paid_set
-        src   = (o.get("source") or "").lower()
-        kilde = "Shopify-import" if src == "shopify" else "Nettside/admin"
+        is_shop = str(o.get("source") or "").lower() == "shopify"
         kunde = o.get("kunde") or {}
         rows.append({
             "date":  str(_odate(o))[:10],
             "time":  str(o.get("tid") or "")[:5],
-            "kilde": kilde,
+            "system": "Shopify-nettside" if is_shop else "Nytt system",
+            # Shopify-import-ordre er samme salg som Shopify-kort/Vipps-betalingene
+            # under, så de telles IKKE i omsetning (counted=False) for å unngå
+            # dobbelttelling. Innkjøpskost beholdes (reelt vareforbruk).
+            "kilde": "Shopify-import (ordre)" if is_shop else "Nettside/admin",
             "store": _ostore(o),
             "ref":   ordrenr,
             "kunde": (kunde.get("navn") or ""),
@@ -5112,16 +5123,18 @@ def _api_economy_report_impl():
             "type":  ("Kjøp" if is_paid else "Gratis"),
             "belop": (_ototal(o) if is_paid else 0.0),
             "kost":  _order_cost_kr(o, cost_map),
+            "counted": (not is_shop),
         })
-    # 2) Vipps-import (direkte i Vipps-app + ePayment via nettside)
+    # 2) Vipps-import (direkte i Vipps-app + ePayment via gammel nettside)
     for r in _vipps_imported_payments.values():
         if not _in_period(r.get("date")):
             continue
-        ch = r.get("payment_channel")
+        direct = (r.get("payment_channel") == "direct")
         rows.append({
             "date":  str(r.get("date") or "")[:10],
             "time":  str(r.get("time") or "")[:5],
-            "kilde": ("Vipps direkte" if ch == "direct" else "Vipps via nettside"),
+            "system": "Direkte salg" if direct else "Shopify-nettside",
+            "kilde": ("Vipps direkte" if direct else "Vipps via nettside"),
             "store": "Havøyet",
             "ref":   r.get("transaction_id") or "",
             "kunde": r.get("name") or "",
@@ -5129,6 +5142,7 @@ def _api_economy_report_impl():
             "type":  r.get("type") or "Kjøp",
             "belop": (r.get("amount_ore") or 0) / 100.0,
             "kost":  None,
+            "counted": True,
         })
     # 3) Shopify-kort (CSV-import) — refusjon trekkes fra (negativt beløp)
     for r in _card_payments_imported.values():
@@ -5140,6 +5154,7 @@ def _api_economy_report_impl():
         rows.append({
             "date":  str(r.get("date") or "")[:10],
             "time":  str(r.get("time") or "")[:5],
+            "system": "Shopify-nettside",
             "kilde": "Shopify kort",
             "store": "Havøyet",
             "ref":   r.get("order") or r.get("transaction_id") or "",
@@ -5148,21 +5163,23 @@ def _api_economy_report_impl():
             "type":  r.get("type") or "Kjøp",
             "belop": signed,
             "kost":  None,
+            "counted": True,
         })
 
     rows.sort(key=lambda x: (x["date"], x["time"]))
 
-    # --- Sammendrag ---
-    sum_belop = sum(r["belop"] for r in rows)
+    # --- Sammendrag (kun counted=True teller i omsetning; kost teller alltid) ---
+    counted_rows  = [r for r in rows if r["counted"]]
+    excluded_rows = [r for r in rows if not r["counted"]]
+    sum_belop = sum(r["belop"] for r in counted_rows)
     sum_kost  = sum((r["kost"] or 0.0) for r in rows)
-    by_kilde, by_store = {}, {}
-    for r in rows:
-        k = by_kilde.setdefault(r["kilde"], {"n": 0, "kr": 0.0})
-        k["n"] += 1
-        k["kr"] += r["belop"]
-        s = by_store.setdefault(r["store"], {"n": 0, "kr": 0.0})
-        s["n"] += 1
-        s["kr"] += r["belop"]
+    sum_excl  = sum(r["belop"] for r in excluded_rows)
+    by_system, by_kilde, by_store = {}, {}, {}
+    for r in counted_rows:
+        for agg, key in ((by_system, r["system"]), (by_kilde, r["kilde"]), (by_store, r["store"])):
+            g = agg.setdefault(key, {"n": 0, "kr": 0.0})
+            g["n"] += 1
+            g["kr"] += r["belop"]
 
     # --- Bygg norsk CSV (semikolon-skille, komma-desimal, UTF-8 BOM) ---
     def kr(v):
@@ -5180,26 +5197,41 @@ def _api_economy_report_impl():
     L.append("Periode;" + esc(period_label))
     L.append("Fra;" + period_from.strftime("%Y-%m-%d") + ";Til;" + period_to.strftime("%Y-%m-%d"))
     L.append("")
-    L.append("SAMMENDRAG - PER KILDE")
-    L.append("Kilde;Antall;Beløp (kr)")
-    for k in sorted(by_kilde):
-        L.append(f"{esc(k)};{by_kilde[k]['n']};{kr(by_kilde[k]['kr'])}")
-    L.append(f"Sum omsetning;{len(rows)};{kr(sum_belop)}")
+    L.append("SAMMENDRAG")
+    L.append(f"Total omsetning (uten dobbelttelling);{len(counted_rows)};{kr(sum_belop)}")
     L.append(f"Innkjøpskostnader (inkl. gratis-ordre);;{kr(sum_kost)}")
     L.append(f"Bruttofortjeneste;;{kr(sum_belop - sum_kost)}")
     L.append("")
-    L.append("SAMMENDRAG - PER BUTIKK")
+    L.append("OMSETNING PER SYSTEM")
+    L.append("System;Antall;Beløp (kr)")
+    for k in sorted(by_system, key=lambda x: -by_system[x]["kr"]):
+        L.append(f"{esc(k)};{by_system[k]['n']};{kr(by_system[k]['kr'])}")
+    L.append(f"Sum;{len(counted_rows)};{kr(sum_belop)}")
+    L.append("")
+    L.append("OMSETNING PER KILDE")
+    L.append("Kilde;Antall;Beløp (kr)")
+    for k in sorted(by_kilde, key=lambda x: -by_kilde[x]["kr"]):
+        L.append(f"{esc(k)};{by_kilde[k]['n']};{kr(by_kilde[k]['kr'])}")
+    L.append("")
+    L.append("OMSETNING PER BUTIKK")
     L.append("Butikk;Antall;Beløp (kr)")
-    for s in sorted(by_store):
+    for s in sorted(by_store, key=lambda x: -by_store[x]["kr"]):
         L.append(f"{esc(s)};{by_store[s]['n']};{kr(by_store[s]['kr'])}")
+    if excluded_rows:
+        L.append("")
+        L.append("IKKE TALT MED - unngår dobbelttelling")
+        L.append("Disse Shopify-ordrene er samme salg som allerede ligger i Shopify kort / Vipps via nettside.")
+        L.append("Kilde;Antall;Beløp (kr)")
+        L.append(f"Shopify-import (ordre);{len(excluded_rows)};{kr(sum_excl)}")
     L.append("")
     L.append("TRANSAKSJONER")
-    L.append("Dato;Tid;Kilde;Butikk;Referanse;Kunde;Detalj;Type;Beløp (kr);Innkjøpskost (kr)")
+    L.append("Dato;Tid;System;Kilde;Butikk;Referanse;Kunde;Detalj;Type;Beløp (kr);Innkjøpskost (kr);Talt med i omsetning")
     for r in rows:
         L.append(";".join([
-            esc(r["date"]), esc(r["time"]), esc(r["kilde"]), esc(r["store"]),
+            esc(r["date"]), esc(r["time"]), esc(r["system"]), esc(r["kilde"]), esc(r["store"]),
             esc(r["ref"]), esc(r["kunde"]), esc(r["detalj"]), esc(r["type"]),
             kr(r["belop"]), ("" if r["kost"] is None else kr(r["kost"])),
+            ("Ja" if r["counted"] else "Nei - dobbelttelling"),
         ]))
 
     csv_text = "﻿" + "\r\n".join(L) + "\r\n"
