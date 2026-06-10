@@ -4921,6 +4921,23 @@ def _api_economy_stats_impl():
     # Snitt-ordresum for valgt periode
     period_charge_count = len(web_period_rows) + len(vipps_period_rows) + len(card_period_charges)
     period_avg_kr = (period_total_kr / period_charge_count) if period_charge_count > 0 else 0.0
+    # Median-ordresum — robust mot ekstreme enkeltordrer (samme transaksjons-sett
+    # som snittet teller: web + vipps + kort-charges, refusjoner utelatt).
+    _period_amounts = (
+        [_order_total_kr(o) for o in web_period_rows]
+        + [((r.get("amount_ore") or 0) / 100.0) for r in vipps_period_rows]
+        + [_card_signed_kr(r) for r in card_period_charges]
+    )
+    _period_amounts = sorted(a for a in _period_amounts if a is not None)
+    if _period_amounts:
+        _n = len(_period_amounts)
+        _mid = _n // 2
+        period_median_kr = (
+            _period_amounts[_mid] if _n % 2 == 1
+            else (_period_amounts[_mid - 1] + _period_amounts[_mid]) / 2.0
+        )
+    else:
+        period_median_kr = 0.0
 
     # === ÅR-OVERSIKT (alle år hvor vi har data) ===
     by_year = {}
@@ -4973,6 +4990,7 @@ def _api_economy_stats_impl():
             "card_kr":          round(period_card_kr, 2),
             "card_count":       len(card_period_rows),
             "avg_kr":           round(period_avg_kr, 2),
+            "median_kr":        round(period_median_kr, 2),
             "total_count":      period_charge_count,
             "cost_kr":          round(period_cost_kr, 2),
             "cost_count":       len(period_cost_rows),
