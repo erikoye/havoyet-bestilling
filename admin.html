@@ -988,6 +988,18 @@
       </div>
 
       <div class="rute-card">
+        <h2>
+          🌡️ Temperatur &amp; internkontroll
+          <span id="ruteTempPill" class="pill muted">—</span>
+        </h2>
+        <p style="margin:0 0 12px;color:#64748b;font-size:13px">
+          Kjølemåling (krav 0–4 °C) og Mattilsynet-sjekkpunktene som sjåføren logger
+          før utkjøring. Lagres permanent som internkontroll — vis ved kontroll.
+        </p>
+        <div id="ruteTempBody"><div class="empty">Henter temperaturlogg …</div></div>
+      </div>
+
+      <div class="rute-card">
         <h2>Sjåfører <span class="pill muted" id="ruteDrvCount">0</span></h2>
         <p style="margin:0 0 12px;color:#64748b;font-size:13px">
           PIN-koden bruker sjåføren til å logge inn på <code>rute.havoyet.no</code>. Hver sjåfør får sin egen PIN.
@@ -15597,6 +15609,92 @@ async function _ruteApi(path, opts = {}){
   return { ok: r.ok, status: r.status, data };
 }
 
+// ── Temperatur-logg (sjåførens internkontroll, lagret permanent) ─────────
+const _RUTE_TEMP_CHECKS = [
+  ['maaler',   'Temperaturmåler viser 4 °C eller lavere'],
+  ['synlig',   'Termometer er lett synlig for kontroll'],
+  ['merket',   'Varene er godt merket og adskilt i emballasjen'],
+  ['adskilt',  'Kjøl- og frysevarer holdes godt adskilt'],
+  ['sporbar',  'Produktene kan spores (opprinnelse + driftsansvarlig)'],
+  ['isolert',  'Isolerte beholdere er brukt'],
+  ['rask',     'Rask utlevering planlagt'],
+  ['termograf','Termograf logger temperaturen automatisk (frysevarer)'],
+];
+function _ruteEsc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function _ruteFmtTemp(v){ return (Math.round(v * 10) / 10).toString().replace('.', ','); }
+function _ruteFmtTs(sec){
+  if (!sec) return '';
+  const d = new Date((Number(sec) || 0) * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth()+1)} kl ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+async function ruteRenderTemperature(date){
+  const body = document.getElementById('ruteTempBody');
+  const pill = document.getElementById('ruteTempPill');
+  if (!body) return;
+  const r = await _ruteApi(`/api/admin/route/temperature?date=${encodeURIComponent(date)}`);
+  const temp = (r.ok && r.data && r.data.temperature) ? r.data.temperature : {};
+  const reading = (temp.reading === 0 || temp.reading) ? temp.reading : null;
+  const checks = temp.checks || {};
+  const readings = Array.isArray(temp.readings) ? temp.readings : [];
+
+  if (pill) {
+    if (reading === null) { pill.className = 'pill muted'; pill.textContent = 'Ingen måling'; }
+    else if (reading <= 4) { pill.className = 'pill ok'; pill.textContent = `${_ruteFmtTemp(reading)} °C ✓`; }
+    else { pill.className = 'pill warn'; pill.textContent = `${_ruteFmtTemp(reading)} °C ⚠`; }
+  }
+
+  if (reading === null && !readings.length && !Object.keys(checks).length) {
+    body.innerHTML = '<div class="empty">Sjåføren har ikke logget temperatur for denne datoen ennå.</div>';
+    return;
+  }
+
+  // Kjølemåling-boks
+  let readBox;
+  if (reading === null) {
+    readBox = `<div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;color:#64748b;font-size:13px">Ingen kjølemåling lagret.</div>`;
+  } else {
+    const ok = reading <= 4;
+    readBox = `<div style="display:flex;align-items:center;gap:14px;padding:14px;border-radius:10px;
+                 background:${ok ? '#f0fdf4' : '#fef2f2'};border:1px solid ${ok ? '#bbf7d0' : '#fecaca'}">
+      <div style="font-size:30px;font-weight:800;color:${ok ? '#15803d' : '#b91c1c'};white-space:nowrap">${_ruteFmtTemp(reading)} °C</div>
+      <div style="font-size:13px;color:#334155;line-height:1.45">
+        ${ok ? '✓ Innenfor kravet (0–4 °C).' : '⚠ Over kravet på 4 °C.'}
+        ${temp.reading_at ? `<br>Målt ${_ruteEsc(_ruteFmtTs(temp.reading_at))}${temp.updated_by ? ' · ' + _ruteEsc(temp.updated_by) : ''}` : ''}
+      </div>
+    </div>`;
+  }
+
+  // Sjekkpunkter
+  const checksHtml = _RUTE_TEMP_CHECKS.map(([k, label]) => {
+    const on = !!checks[k];
+    return `<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:${on ? '#334155' : '#94a3b8'}">
+      <span style="flex:0 0 auto;width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;
+                   background:${on ? '#22c55e' : '#fff'};color:#fff;border:1px solid ${on ? '#22c55e' : '#cbd5e1'}">${on ? '✓' : ''}</span>
+      <span>${_ruteEsc(label)}</span>
+    </div>`;
+  }).join('');
+
+  // Audit-spor: alle målinger (Mattilsynet — oppbevares ≥1 år)
+  const logHtml = readings.length
+    ? `<details style="margin-top:12px">
+         <summary style="cursor:pointer;font-size:12px;color:#0d9488;font-weight:600">Målehistorikk (${readings.length})</summary>
+         <div style="margin-top:8px;font-size:12px;color:#475569;line-height:1.7">
+           ${readings.slice().reverse().map(x =>
+             `<div>${_ruteEsc(_ruteFmtTs(x.at))} — <b>${_ruteFmtTemp(x.value)} °C</b>${x.by ? ' · ' + _ruteEsc(x.by) : ''}</div>`).join('')}
+         </div>
+       </details>`
+    : '';
+
+  body.innerHTML = `${readBox}
+    <div style="margin-top:14px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#0f766e;font-weight:700">Mattilsynet-sjekkpunkter</div>
+    <div style="margin-top:4px">${checksHtml}</div>
+    ${logHtml}`;
+}
+
 async function ruteInit(){
   if (!document.getElementById('ruteDate').value) {
     document.getElementById('ruteDate').value = _ruteDefaultDate();
@@ -15626,6 +15724,8 @@ async function ruteRefresh(){
   _ruteState.date = date;
   // Last sjåfør-tildelingen for denne datoen (parallelt med rute-hentingen)
   _ruteLoadDayDriver();
+  // Temperaturlogg for datoen (parallelt — egen seksjon)
+  ruteRenderTemperature(date);
   // Last iframe på nytt med ny dato
   const iframe = document.getElementById('ruteMapFrame');
   const newSrc = `/rute?date=${encodeURIComponent(date)}`;
