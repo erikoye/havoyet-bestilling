@@ -10776,7 +10776,9 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str,
     subject = "Din leveringstid — Havøyet"
     body_template = cfg.get("body") or (
         "Hei {navn},\n\nVi leverer bestillingen din #{ordrenr} {leveringsdato_kort} "
-        "ca. kl. {eta_clock}.\n\nFølg live: {tracking_url}\n\n— Havøyet"
+        "ca. kl. {eta_clock}.\n\nPasser ikke tidspunktet? Send oss en melding eller "
+        "svar på denne e-posten, så finner vi en tid som passer bedre for deg.\n\n"
+        "Følg live: {tracking_url}\n\n— Havøyet"
     )
     body = _kv_render(body_template, **tmpl_vars)
 
@@ -10822,6 +10824,10 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str,
         f'<div style="font-size:30px;font-weight:800;color:#41C1BA;margin-top:2px">ca. kl. {_nodetect(_esc(eta_clock or "—"))}</div>'
         '</div>'
         '<p style="font-size:14px;line-height:1.6;color:#FFFFFF;margin:0 0 18px">Tidspunktet er et estimat — vi kan komme litt før eller senere avhengig av trafikken og rekkefølgen på dagens stopp. Skulle vi måtte omrokere ruten mye, gir vi deg beskjed så fort vi vet nytt tidspunkt.</p>'
+        '<div style="background:#0F1412;background-image:url(' + _CHIP + ');border:1px solid #41C1BA;border-radius:12px;padding:16px 18px;margin:0 0 20px">'
+        '<p style="font-size:14px;line-height:1.6;color:#41C1BA;font-weight:700;margin:0">Passer ikke tidspunktet?</p>'
+        '<p style="font-size:14px;line-height:1.6;color:#FFFFFF;margin:6px 0 0">Send oss en melding eller svar på denne e-posten, så finner vi en tid som passer bedre for deg.</p>'
+        '</div>'
         f'<div style="text-align:center;margin:0 0 20px"><a href="{_esc(_konto)}" style="display:inline-block;background:#41C1BA;color:#0A1817;font-weight:700;font-size:15px;padding:14px 30px;border-radius:10px;text-decoration:none">Følg leveringen live &rarr;</a></div>'
         '<p style="font-size:13px;line-height:1.6;color:#FFFFFF;margin:0">Minuttene oppdateres fra bilens posisjon så snart sjåføren er ute på ruten. Har du spørsmål, svar gjerne på denne e-posten.</p>'
         '</div></div></div></body></html>'
