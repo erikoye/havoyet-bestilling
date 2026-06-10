@@ -827,19 +827,36 @@ paintStoreSwitcher();
 function getPackingState() {
   try { return JSON.parse(localStorage.getItem('havøyet_state') || '{}'); } catch(e) { return {}; }
 }
-function confPct(o) {
-  if (!o.items || !o.items.length) return 0;
+// { confirmed, total } for en ordre. KASSER lagres som { isKasse:true,
+// components:[...] } UTEN vekt/holdbarhet på toppnivå — de ligger på hver
+// komponent. Vi teller hver komponent som egen varelinje, identisk med
+// kalender.html. (Uten kasse-grenen viste kasse-ordrer alltid 0/N selv
+// ferdigpakket — derfor «oppdateres ikke».)
+function _orderProgress(o) {
   const s = getPackingState()[o.id];
-  if (s) return Math.round(s.filter(i => i.avail === 'ok' && i.weight && i.expiry).length / o.items.length * 100);
-  return Math.round(o.items.filter(i => i.weight != null && i.expiry != null).length / o.items.length * 100);
+  let confirmed = 0, total = 0;
+  if (s && Array.isArray(s)) {
+    s.forEach(e => {
+      if (e && e.isKasse) {
+        (e.components || []).forEach(c => {
+          total++;
+          if (c.weight && c.expiry && (c.avail === 'ok' || c.confirmedReplacement)) confirmed++;
+        });
+      } else if (e) {
+        total++;
+        if (e.weight && e.expiry && (e.avail === 'ok' || e.confirmedReplacement)) confirmed++;
+      }
+    });
+    if (total > 0) return { confirmed, total };
+  }
+  total = (o.items || []).length;
+  confirmed = (o.items || []).filter(i => i.weight != null && i.expiry != null).length;
+  return { confirmed, total };
 }
-function confClass(o){ const p=confPct(o); return p===100?'green':p>=33?'orange':'red'; }
-function confCount(o) {
-  if (!o.items || !o.items.length) return 0;
-  const s = getPackingState()[o.id];
-  if (s) return s.filter(i => i.avail === 'ok' && i.weight && i.expiry).length;
-  return o.items.filter(i => i.weight != null && i.expiry != null).length;
-}
+function confPct(o)   { const { confirmed, total } = _orderProgress(o); return total ? Math.round(confirmed / total * 100) : 0; }
+function confClass(o) { const p = confPct(o); return p === 100 ? 'green' : p >= 33 ? 'orange' : 'red'; }
+function confCount(o) { return _orderProgress(o).confirmed; }
+function confTotal(o) { return _orderProgress(o).total; }
 
 // ─── RENDER ───────────────────────────────────
 function slotCount(arr,s){ return arr.filter(o=>o.slot===s).length; }
@@ -944,7 +961,7 @@ function renderAll(){
     return;
   }
   document.getElementById('ordreTabell').innerHTML=sorted.slice(0,10).map(o=>{
-    const cls=confClass(o), pct=confPct(o), conf=confCount(o), total=(o.items||[]).length;
+    const cls=confClass(o), pct=confPct(o), conf=confCount(o), total=confTotal(o);
     // Prioriter kundens faktiske leveringstid fra checkout — slot a/b er bare
     // en CSS-fallback for legacy-ordrer uten lagret leveringstid.
     const directTid = (o.kunde && (o.kunde.leveringstid || '').trim()) || '';
@@ -1156,7 +1173,7 @@ function openDrawer(type){
   document.getElementById('drawerBody').innerHTML = orders.length===0
     ? `<div class="drawer-empty">Ingen ordre i denne kategorien</div>`
     : orders.map(o=>{
-        const cls=confClass(o), pct=confPct(o), conf=confCount(o), total=(o.items||[]).length;
+        const cls=confClass(o), pct=confPct(o), conf=confCount(o), total=confTotal(o);
         const directTid = (o.kunde && (o.kunde.leveringstid || '').trim()) || '';
         const slot = directTid || (o.slot==='a'?'13–15':'15–18');
         const d=new Date((o.delivery||todayISO)+'T00:00:00');
