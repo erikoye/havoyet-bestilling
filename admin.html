@@ -4702,6 +4702,13 @@ function openOrderDrawer(nr){
   };
   // Beholder en peker til raw så _packingForCurrent kan slå opp på id/ordrenr.
   _editingOrder._raw = raw;
+  // Hva kunden FAKTISK betalte, INKL. frakt = linjesum − rabatt + leveringsgebyr,
+  // beregnet fra ordren slik den ble lastet. Robust mot at noen ordre lagrer
+  // total=linjesum og andre total=grand (felt-inkonsistens) — vi regner det selv.
+  _editingOrder.paidBaseline = Math.max(0,
+    _editingOrder.varer.reduce((s,v)=> s + _editLineTotal(v), 0)
+    - Number(_editingOrder.rabattBelop || 0)
+    + Number(_editingOrder.fee || 0));
   document.getElementById('drTitle').textContent = 'Ordre #'+o.nr;
   document.getElementById('drSub').textContent = `${o.kilde || 'Manuell'} · ${o.dato || 'uten dato'} ${o.tid || ''}`.trim();
   _renderDrawerBody();
