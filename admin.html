@@ -486,6 +486,9 @@
     .ed-kasse-suggest-action{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
     .ed-kasse-suggest-price-lbl{font-size:11px;color:var(--hv-fg-3);}
     .ed-kasse-suggest-price{width:90px !important;font-size:13px;padding:4px 8px;}
+    .ed-kasse-suggest-parity{font-size:11px;color:#92400e;font-weight:600;}
+    .ed-kasse-revert{background:none;border:none;color:var(--hv-fg-3);font-size:11px;cursor:pointer;padding:0 0 0 8px;text-decoration:underline;}
+    .ed-kasse-revert:hover{color:#b91c1c;}
     .ed-kasse-suggest-unit{font-size:11px;color:var(--hv-fg-3);}
     .ed-kasse-confirm-btn{padding:4px 12px;font-size:12px;}
     .ed-kasse-reject-btn{padding:4px 12px;font-size:12px;}
@@ -5339,16 +5342,21 @@ function _renderKasseComponents(itemName, i){
     const confirmed = c.confirmedReplacement ? _adminReplObj(c.confirmedReplacement) : null;
     const suggested = (!confirmed && c.suggestedReplacement) ? _adminReplObj(c.suggestedReplacement) : null;
     const freshRow = _freshExpected[String(c.name || '').trim().toLowerCase()] || null;
-    const expected = freshRow
+    const expected = confirmed ? '' : (freshRow
       ? `<span class="ed-kasse-expected">forv.</span> ${_kasseQtyInputHtml(i, freshRow)}`
-      : (c.expected ? `<span class="ed-kasse-expected">forv. ${_escAttr(c.expected)}</span>` : '');
+      : (c.expected ? `<span class="ed-kasse-expected">forv. ${_escAttr(c.expected)}</span>` : ''));
     const weight   = (c.weight && String(c.weight).trim()) ? `<span class="ed-kasse-weight">veid ${_escAttr(c.weight)} ${_escAttr(c.weightUnit || 'g')}</span>` : '';
-    const confPriceStr = confirmed && (confirmed.appliedPrice != null) ? ` (+${Math.round(Number(confirmed.appliedPrice))} kr)` : '';
-    const conf     = confirmed ? `<span class="ed-kasse-repl confirmed">→ ${_escAttr(confirmed.name)}${confPriceStr}</span>` : '';
+    let conf = '';
+    if (confirmed) {
+      const qtyStr = (confirmed.appliedQty != null)
+        ? ' ' + _kasseQtyText(Number(confirmed.appliedQty), confirmed.appliedUnit || 'stk')
+        : '';
+      conf = `<span class="ed-kasse-repl confirmed">→ ${_escAttr(confirmed.name)}${qtyStr}</span>`
+           + `<button type="button" class="ed-kasse-revert" title="Angre bytte og hent original tilbake" onclick="_revertConfirmedComponent(${i},${ci})">↶ Tilbake til original</button>`;
+    }
     let suggBlock = '';
     if (suggested) {
       const sugKey = _adminReplKey(suggested);
-      const defaultPrice = Math.max(0, Math.round(Number(suggested.price || 0)));
       const priceHint = suggested.price ? `<span class="ed-kasse-suggest-listprice">listepris ${Math.round(suggested.price)} kr/${_escAttr(suggested.unitLabel || 'stk')}</span>` : '';
       suggBlock = `<div class="ed-kasse-suggest">
         <div class="ed-kasse-suggest-row">
@@ -5357,10 +5365,8 @@ function _renderKasseComponents(itemName, i){
           ${priceHint}
         </div>
         <div class="ed-kasse-suggest-action">
-          <label class="ed-kasse-suggest-price-lbl">Pris å legge til ordren:</label>
-          <input class="fi ed-kasse-suggest-price" id="ed-kasse-price-${i}-${ci}" type="number" min="0" step="1" value="${defaultPrice}" />
-          <span class="ed-kasse-suggest-unit">kr</span>
-          <button type="button" class="btn-p ed-kasse-confirm-btn" onclick="_confirmComponentReplacement(${i},${ci},'${_escAttr(sugKey)}')">Bekreft</button>
+          <span class="ed-kasse-suggest-parity">Byttes på plass med samme verdi — ingen prisendring på kassen.</span>
+          <button type="button" class="btn-p ed-kasse-confirm-btn" onclick="_confirmComponentReplacement(${i},${ci},'${_escAttr(sugKey)}')">Bekreft bytte</button>
           <button type="button" class="btn-g ed-kasse-reject-btn" onclick="_rejectComponentReplacement(${i},${ci},'${_escAttr(sugKey)}')">Avslå</button>
         </div>
       </div>`;
@@ -5505,36 +5511,9 @@ async function _writePackingState(){
   } catch(e) { return false; }
 }
 
-async function _confirmComponentReplacement(i, ci, sugKey){
-  const key = _resolvePackingKey();
-  if (!key) { alert('Fant ikke pakke-status for denne ordren.'); return; }
-  const entry = _packingState[key] && _packingState[key][i];
-  if (!entry || !entry.isKasse || !entry.components || !entry.components[ci]) {
-    alert('Komponent-status mangler — last inn på nytt.');
-    return;
-  }
-  const c = entry.components[ci];
-  const suggested = c.suggestedReplacement ? _adminReplObj(c.suggestedReplacement) : null;
-  if (!suggested) { alert('Forslaget er ikke lenger gyldig.'); return; }
-  const priceInput = document.getElementById('ed-kasse-price-' + i + '-' + ci);
-  const priceVal = Number(priceInput?.value || 0);
-  if (!Number.isFinite(priceVal) || priceVal < 0) { alert('Ugyldig pris.'); return; }
-  // 1) Oppdater packing-state: confirmed = suggested + appliedPrice; suggested = null
-  const confirmed = { ...suggested, appliedPrice: priceVal };
-  c.confirmedReplacement = confirmed;
-  c.suggestedReplacement = null;
-  await _writePackingState();
-  // 2) Legg til en linje i ordren for prisjusteringen (qty=1, stk, gitt pris).
-  _editingOrder.varer.push({
-    name: `Erstatning: ${suggested.name}`,
-    qty: 1,
-    unit: 'stk',
-    price: priceVal,
-    avail: 'ok',
-    _replacementFor: { i, ci, componentName: c.name || '' },
-  });
-  _renderEditLines();
-  // 3) Lagre ordren via PATCH så endringen persisterer (samme flyt som "Lagre endringer").
+// Lagrer åpen ordre via PATCH (samme flyt som "Lagre endringer"). Brukt etter
+// in-place komponent-bytte/-angring så innhold + kassepris persisterer.
+async function _persistEditingOrder(){
   try {
     const varer = _editingOrder.varer.map(v => ({
       ...v,
@@ -5555,8 +5534,127 @@ async function _confirmComponentReplacement(i, ci, sugKey){
     });
     refreshOrders();
   } catch(e) {
-    console.warn('Kunne ikke lagre ordre etter erstatning:', e.message);
+    console.warn('Kunne ikke lagre ordre:', e.message);
   }
+}
+
+// Finn innholds-raden (boxSelection) i en kasse-linje som matcher et
+// komponentnavn — også når raden allerede er byttet (snapshot peker tilbake).
+function _kasseContentEntryFor(v, compName){
+  const norm = s => String(s || '').trim().toLowerCase();
+  const target = norm(compName);
+  if (!target || !v || !Array.isArray(v.boxSelection)) return null;
+  for (const s of v.boxSelection) {
+    if (!s) continue;
+    const base = norm(s.navn || s.name);
+    const full = norm((s.navn || s.name || '') + (s.variant ? ` (${s.variant})` : ''));
+    if (base && (base === target || full === target)) return { kind: 'box', entry: s };
+  }
+  for (const s of v.boxSelection) {
+    if (s && s._origForRepl && norm(s._origForRepl.navn || s._origForRepl.name) === target) {
+      return { kind: 'box', entry: s };
+    }
+  }
+  return null;
+}
+
+// Bekreft en foreslått erstatning: bytt komponenten PÅ PLASS i kasse-innholdet
+// med en mengde som gir SAMME verdi som det som ble erstattet (paritet — kassen
+// koster det samme). Ingen egen «Erstatning»-linje legges til.
+async function _confirmComponentReplacement(i, ci, sugKey){
+  const key = _resolvePackingKey();
+  if (!key) { alert('Fant ikke pakke-status for denne ordren.'); return; }
+  const entry = _packingState[key] && _packingState[key][i];
+  if (!entry || !entry.isKasse || !entry.components || !entry.components[ci]) {
+    alert('Komponent-status mangler — last inn på nytt.');
+    return;
+  }
+  const c = entry.components[ci];
+  const suggested = c.suggestedReplacement ? _adminReplObj(c.suggestedReplacement) : null;
+  if (!suggested) { alert('Forslaget er ikke lenger gyldig.'); return; }
+  const v = (_editingOrder && Array.isArray(_editingOrder.varer)) ? _editingOrder.varer[i] : null;
+
+  const confirmed = { ...suggested, parity: true };
+  // Bytt på plass i boxSelection med paritets-mengde (kun «Din skalldyrkasse»).
+  // Faste kasser uten boxSelection beholder kasseprisen uendret (også paritet),
+  // og byttet vises kun via confirmedReplacement.
+  const match = v ? _kasseContentEntryFor(v, c.name || '') : null;
+  if (match && match.kind === 'box') {
+    const s = match.entry;
+    const unit = String(s.unit || 'g');
+    const oldVal = (unit === 'g')
+      ? (Number(s.qty) || 0) / 1000 * (Number(s.pris) || 0)
+      : (Number(s.qty) || 0) * (Number(s.pris) || 0);
+    const ul = String(suggested.unitLabel || 'kg').toLowerCase();
+    const perKg = (ul === 'kg' || suggested.kind === 'fish');
+    const newUnit = perKg ? 'g' : ((ul === 'pk' || ul === 'pakke') ? 'pk' : 'stk');
+    const newPris = Number(suggested.price) || 0;        // kr per kg/stk/pk
+    const krPerUnit = perKg ? newPris / 1000 : newPris;  // kr per gram/stk/pk
+    let newQty = krPerUnit > 0 ? oldVal / krPerUnit : 0;
+    newQty = (newUnit === 'g') ? Math.max(0, Math.round(newQty / 10) * 10)
+                               : Math.max(0, Math.round(newQty));
+    const newVal = newQty * krPerUnit;
+    if (!s._origForRepl) {
+      s._origForRepl = { navn: s.navn, name: s.name, qty: s.qty, unit: s.unit,
+                         pris: s.pris, enhetGrams: s.enhetGrams, variant: s.variant };
+    }
+    s.navn = suggested.name;
+    if ('name' in s) s.name = suggested.name;
+    s.qty = newQty; s.unit = newUnit; s.pris = newPris;
+    delete s.enhetGrams; delete s.variant;
+    const deltaPerKasse = newVal - oldVal;
+    v.price = Math.max(0, Math.round((Number(v.price) || 0) + deltaPerKasse));
+    confirmed.appliedQty = newQty;
+    confirmed.appliedUnit = newUnit;
+    confirmed.appliedValue = Math.round(newVal);
+    confirmed.priceDelta = Math.round(deltaPerKasse);
+    confirmed.boxIdx = v.boxSelection.indexOf(s);
+  }
+
+  // Packing-state: marker bekreftet + tilgjengelig (lagre forrige status for angring).
+  c._availBeforeRepl = c.avail || null;
+  c.confirmedReplacement = confirmed;
+  c.suggestedReplacement = null;
+  c.avail = 'ok';
+  await _writePackingState();
+
+  _renderEditLines();
+  await _persistEditingOrder();
+}
+
+// Angre et bekreftet komponent-bytte: hent original vare tilbake i kassen,
+// tilbakestill kasseprisen og pakke-status.
+async function _revertConfirmedComponent(i, ci){
+  const key = _resolvePackingKey();
+  if (!key) return;
+  const entry = _packingState[key] && _packingState[key][i];
+  if (!entry || !entry.isKasse || !entry.components || !entry.components[ci]) return;
+  const c = entry.components[ci];
+  const confirmed = c.confirmedReplacement;
+  const v = (_editingOrder && Array.isArray(_editingOrder.varer)) ? _editingOrder.varer[i] : null;
+  if (confirmed && v && Array.isArray(v.boxSelection)) {
+    let s = (confirmed.boxIdx != null) ? v.boxSelection[confirmed.boxIdx] : null;
+    if (!s || !s._origForRepl) s = v.boxSelection.find(x => x && x._origForRepl);
+    if (s && s._origForRepl) {
+      const o = s._origForRepl;
+      s.navn = o.navn;
+      if (o.name != null) s.name = o.name;
+      s.qty = o.qty; s.unit = o.unit; s.pris = o.pris;
+      if (o.enhetGrams != null) s.enhetGrams = o.enhetGrams; else delete s.enhetGrams;
+      if (o.variant != null) s.variant = o.variant; else delete s.variant;
+      delete s._origForRepl;
+    }
+    if (confirmed.priceDelta) {
+      v.price = Math.max(0, Math.round((Number(v.price) || 0) - Number(confirmed.priceDelta)));
+    }
+  }
+  c.confirmedReplacement = null;
+  c.suggestedReplacement = null;
+  c.avail = (c._availBeforeRepl != null) ? c._availBeforeRepl : 'unsure';
+  delete c._availBeforeRepl;
+  await _writePackingState();
+  _renderEditLines();
+  await _persistEditingOrder();
 }
 
 async function _rejectComponentReplacement(i, ci, sugKey){
