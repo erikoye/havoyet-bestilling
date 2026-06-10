@@ -2557,7 +2557,7 @@ function renderComponentCard(c, i, ci) {
   return `
   <div class="item-card ${statusClass}" id="card-${i}-${ci}">
     <div class="item-top">
-      <div class="item-name" id="comp-name-${i}-${ci}">${escHtml(c.name)}${expectedHint}${variantOptionBadges(c)}</div>
+      <div class="item-name" id="comp-name-${i}-${ci}">${c.confirmedReplacement ? `<span class="item-name replaced">${escHtml(c.name)}</span> <span class="item-name-replacement">${escHtml((_replObj(c.confirmedReplacement) || {}).name || c.name)}</span>${expectedHint}` : `${escHtml(c.name)}${expectedHint}`}${variantOptionBadges(c)}</div>
       ${qtyPill}
       <div class="avail-toggle">
         <button class="${chipClass('ok')}"     onclick="setComponentAvail('${currentOrderId}',${i},${ci},'ok')">Tilgjengelig</button>
