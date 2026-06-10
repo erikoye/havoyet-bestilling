@@ -441,10 +441,11 @@
              border-radius:50%;background:var(--err);
              border:2px solid #1e293b;display:none}
 
-    /* Innhold må klarere den flytende menyen nederst */
-    #view-bestilling .stops-panel{padding-bottom:calc(env(safe-area-inset-bottom) + 92px)}
-    .temp-panel{padding-bottom:calc(env(safe-area-inset-bottom) + 100px)}
-    #view-kart .map-fab{bottom:calc(env(safe-area-inset-bottom) + 80px)}
+    /* Innhold må klarere den flytende menyen nederst — rikelig luft så siste
+       linje i siste kort aldri havner bak pillen (inkl. home-indicator). */
+    #view-bestilling .stops-panel{padding-bottom:calc(env(safe-area-inset-bottom) + 134px)}
+    .temp-panel{padding-bottom:calc(env(safe-area-inset-bottom) + 134px)}
+    #view-kart .map-fab{bottom:calc(env(safe-area-inset-bottom) + 84px)}
 
     /* ── Temperatur-fane (Mattilsynet-krav) ──────────────────────────── */
     .temp-panel{padding:14px 14px 26px}
