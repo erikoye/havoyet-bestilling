@@ -5616,6 +5616,12 @@ async function _confirmComponentReplacement(i, ci, sugKey){
   c.confirmedReplacement = confirmed;
   c.suggestedReplacement = null;
   c.avail = 'ok';
+  // Fjern evt. gammel separat «Erstatning: …»-linje (fra tidligere kode-versjon)
+  // for denne komponenten — nå byttes alt på plass i kassen.
+  if (Array.isArray(_editingOrder.varer)) {
+    _editingOrder.varer = _editingOrder.varer.filter(x =>
+      !(x && x._replacementFor && x._replacementFor.i === i && x._replacementFor.ci === ci));
+  }
   await _writePackingState();
 
   _renderEditLines();
@@ -5623,7 +5629,8 @@ async function _confirmComponentReplacement(i, ci, sugKey){
 }
 
 // Angre et bekreftet komponent-bytte: hent original vare tilbake i kassen,
-// tilbakestill kasseprisen og pakke-status.
+// fjern evt. gammel «Erstatning»-linje, og legg forslaget tilbake som ventende
+// (så admin kan bekrefte på nytt med paritets-bytte).
 async function _revertConfirmedComponent(i, ci){
   const key = _resolvePackingKey();
   if (!key) return;
@@ -5648,8 +5655,20 @@ async function _revertConfirmedComponent(i, ci){
       v.price = Math.max(0, Math.round((Number(v.price) || 0) - Number(confirmed.priceDelta)));
     }
   }
+  // Fjern gammel separat «Erstatning: …»-linje (tidligere kode-versjon).
+  if (Array.isArray(_editingOrder.varer)) {
+    const cname = confirmed ? confirmed.name : '';
+    _editingOrder.varer = _editingOrder.varer.filter(x => !(x && (
+      (x._replacementFor && x._replacementFor.i === i && x._replacementFor.ci === ci) ||
+      (cname && x.name === `Erstatning: ${cname}`)
+    )));
+  }
   c.confirmedReplacement = null;
-  c.suggestedReplacement = null;
+  // Behold forslaget som ventende så admin kan bekrefte på nytt (nytt paritets-bytte).
+  c.suggestedReplacement = confirmed ? {
+    slug: confirmed.slug, name: confirmed.name, price: confirmed.price,
+    unitLabel: confirmed.unitLabel, kind: confirmed.kind,
+  } : null;
   c.avail = (c._availBeforeRepl != null) ? c._availBeforeRepl : 'unsure';
   delete c._availBeforeRepl;
   await _writePackingState();
