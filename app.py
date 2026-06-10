@@ -482,6 +482,26 @@ def _effective_kg(name, qty, unit, unit_price=None):
 # antagelse (45 % kost / 55 % margin), lik frontendens _orderCostBreakdown.
 _COST_AVG_RATIO = 0.45
 
+# MVA-sats for omsetningsrapporten. Havøyet selger sjømat/næringsmidler =
+# 15 % (redusert sats). Brukt til netto/mva-splitt i regnskaps-rapporten.
+_MVA_RATE = 0.15
+
+_MND_NAVN = ["januar", "februar", "mars", "april", "mai", "juni",
+             "juli", "august", "september", "oktober", "november", "desember"]
+
+
+def _nice_period_label(pf, pt):
+    """Pen periode-etikett. Hvis fra=1. og til=siste dag i SAMME måned,
+    vis «Juni 2026» i stedet for «01.06.2026 – 30.06.2026»."""
+    import calendar as _cal
+    try:
+        if (pf.day == 1 and pf.year == pt.year and pf.month == pt.month
+                and pt.day == _cal.monthrange(pf.year, pf.month)[1]):
+            return f"{_MND_NAVN[pf.month - 1].capitalize()} {pf.year}"
+    except Exception:
+        pass
+    return f"{pf.strftime('%d.%m.%Y')} – {pt.strftime('%d.%m.%Y')}"
+
 
 def _order_cost_kr(order, cost_map):
     """Beregn innkjøpskostnad for én ordre — robust mot korrupte ×1000-verdier.
@@ -4751,7 +4771,7 @@ def _api_economy_stats_impl():
         if q_from:
             period_from = datetime.strptime(q_from, "%Y-%m-%d").date()
             period_to   = datetime.strptime(q_to, "%Y-%m-%d").date() if q_to else today
-            period_label = f"{period_from.strftime('%d.%m.%Y')} – {period_to.strftime('%d.%m.%Y')}"
+            period_label = _nice_period_label(period_from, period_to)
         elif q_year:
             y = int(q_year)
             if y < 2025:
@@ -5051,7 +5071,7 @@ def _api_economy_report_impl():
         if q_from:
             period_from = datetime.strptime(q_from, "%Y-%m-%d").date()
             period_to   = datetime.strptime(q_to, "%Y-%m-%d").date() if q_to else today
-            period_label = f"{period_from.strftime('%d.%m.%Y')} – {period_to.strftime('%d.%m.%Y')}"
+            period_label = _nice_period_label(period_from, period_to)
         elif q_year:
             y = max(2025, int(q_year))
             period_from = date(y, 1, 1)
@@ -5191,16 +5211,30 @@ def _api_economy_report_impl():
             s = '"' + s.replace('"', '""') + '"'
         return s
 
+    # MVA-splitt (Havøyet = 15 % sjømat/næringsmidler). Brutto = mottatt beløp.
+    netto = sum_belop / (1 + _MVA_RATE)
+    mva   = sum_belop - netto
+    org_nr = (_invoice_config or {}).get("orgNr") or _INVOICE_CONFIG_DEFAULTS["orgNr"]
+    mva_pst = ("%g" % (_MVA_RATE * 100))
+
     L = []
     L.append("Omsetningsrapport;Havøyet AS")
+    L.append("Org.nr;" + esc(org_nr))
     L.append("Generert;" + datetime.now().strftime("%d.%m.%Y %H:%M"))
     L.append("Periode;" + esc(period_label))
     L.append("Fra;" + period_from.strftime("%Y-%m-%d") + ";Til;" + period_to.strftime("%Y-%m-%d"))
     L.append("")
     L.append("SAMMENDRAG")
-    L.append(f"Total omsetning (uten dobbelttelling);{len(counted_rows)};{kr(sum_belop)}")
-    L.append(f"Innkjøpskostnader (inkl. gratis-ordre);;{kr(sum_kost)}")
-    L.append(f"Bruttofortjeneste;;{kr(sum_belop - sum_kost)}")
+    L.append(f"Omsetning inkl. mva (brutto);{len(counted_rows)};{kr(sum_belop)}")
+    L.append(f"Innkjøpskostnader (estimert, inkl. gratis-ordre);;{kr(sum_kost)}")
+    L.append(f"Bruttofortjeneste (estimert);;{kr(sum_belop - sum_kost)}")
+    L.append("")
+    L.append(f"MVA-SPESIFIKASJON (sats {mva_pst} % - sjømat/næringsmidler)")
+    L.append("Post;Beløp (kr)")
+    L.append(f"Omsetning eks. mva (netto);{kr(netto)}")
+    L.append(f"Herav MVA {mva_pst} %;{kr(mva)}")
+    L.append(f"Omsetning inkl. mva (brutto);{kr(sum_belop)}")
+    L.append("Merk: antatt 15 % sats for hele omsetningen. Har du varer med 25 % mva må splitten justeres manuelt.")
     L.append("")
     L.append("OMSETNING PER SYSTEM")
     L.append("System;Antall;Beløp (kr)")
