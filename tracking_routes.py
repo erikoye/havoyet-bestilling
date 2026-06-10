@@ -2307,6 +2307,103 @@ def driver_checklist_set():
     })
 
 
+# ── Temperatur-logg (Mattilsynet internkontroll) ─────────────────────────
+# Kjølemåling (0–4 °C-krav) + avkrysningspunkter for transportkontroll.
+# Lagres permanent per dato i route_state (persistent disk på /var/data),
+# med en append-only `readings`-logg som audit-spor — Mattilsynet krever at
+# temperaturlogg merkes med dato og oppbevares i minst 1 år.
+
+@bp.get("/api/driver/route/temperature")
+def driver_temperature_get():
+    """Returnerer temperatur-logg + sjekkpunkt-state for en dato (sjåfør)."""
+    driver, err = _driver_only()
+    if err:
+        return err
+    date_iso = (request.args.get("date") or _today_iso()).strip()
+    temp = (_get_day_state(date_iso).get("temperature") or {})
+    return jsonify({"date": date_iso, "temperature": temp})
+
+
+@bp.post("/api/driver/route/temperature")
+def driver_temperature_set():
+    """Lagrer kjølemåling og/eller sjekkpunkter for en dato.
+
+    Body (alle felt valgfrie, minst ett kreves):
+      date?:   "YYYY-MM-DD"
+      reading?: number          # målt temperatur i °C
+      check?:   str             # nøkkel for ett sjekkpunkt (toggles via `value`)
+      value?:   bool            # på/av for `check` (default true)
+      checks?:  {key: bool}     # bulk-oppdatering av sjekkpunkter
+    """
+    driver, err = _driver_only()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    date_iso = (data.get("date") or _today_iso()).strip()
+
+    temp = dict(_get_day_state(date_iso).get("temperature") or {})
+    checks = dict(temp.get("checks") or {})
+    now = int(time.time())
+    name = (driver.get("name") or "Sjåfør")
+    changed = False
+
+    # Ny kjølemåling
+    if data.get("reading") is not None:
+        try:
+            val = float(data.get("reading"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "ugyldig_temperatur"}), 400
+        temp["reading"] = val
+        temp["reading_at"] = now
+        # Append-only audit-spor — oppbevares for Mattilsynet-kontroll
+        readings = list(temp.get("readings") or [])
+        readings.append({"value": val, "at": now, "by": name})
+        temp["readings"] = readings
+        if val <= 4:
+            checks["maaler"] = True   # måling innenfor krav haker av punktet
+        changed = True
+
+    # Enkelt sjekkpunkt
+    if "check" in data:
+        key = str(data.get("check") or "").strip()
+        if not key:
+            return jsonify({"error": "check mangler"}), 400
+        if bool(data.get("value", True)):
+            checks[key] = True
+        else:
+            checks.pop(key, None)
+        changed = True
+
+    # Bulk-oppdatering av sjekkpunkter
+    if isinstance(data.get("checks"), dict):
+        for k, v in data["checks"].items():
+            if v:
+                checks[str(k)] = True
+            else:
+                checks.pop(str(k), None)
+        changed = True
+
+    if not changed:
+        return jsonify({"error": "ingen_endring"}), 400
+
+    temp["checks"] = checks
+    temp["updated_at"] = now
+    temp["updated_by"] = name
+    _set_day_state(date_iso, {"temperature": temp})
+    return jsonify({"ok": True, "date": date_iso, "temperature": temp})
+
+
+@bp.get("/api/admin/route/temperature")
+def admin_temperature_get():
+    """Admin/Mattilsynet-innsyn: temperatur-logg for en dato."""
+    _, err = _admin_only()
+    if err:
+        return err
+    date_iso = (request.args.get("date") or _today_iso()).strip()
+    temp = (_get_day_state(date_iso).get("temperature") or {})
+    return jsonify({"date": date_iso, "temperature": temp})
+
+
 @bp.post("/api/driver/route/start-delivery")
 def driver_start_delivery():
     """Sjåfør har bekreftet 'Alt hentet — start levering'. Vi sender mail til
