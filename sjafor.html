@@ -40,16 +40,31 @@
 
     /* ── Hovedvisning ────────────────────────────────────── */
     .app{display:flex;flex-direction:column;height:100dvh;position:relative}
-    .topbar{background:var(--blue);color:#fff;padding:env(safe-area-inset-top) 14px 12px;
-            display:flex;align-items:center;gap:10px;flex-shrink:0;
-            padding-top:max(env(safe-area-inset-top),12px)}
-    .topbar .brand{font-weight:700;font-size:15px;color:var(--gold);flex:0 0 auto}
-    .topbar .summary{font-size:12px;color:rgba(255,255,255,.85);flex:1;
-                     line-height:1.4}
-    .topbar .summary b{color:#fff;font-size:14px}
-    .topbar .menu-btn{background:rgba(255,255,255,.12);border:none;color:#fff;
-                      width:36px;height:36px;border-radius:8px;font-size:18px;
-                      cursor:pointer}
+    /* Minimal topp: KUN dag-seksjonen (dato-navigasjon) + diskrete verktøy-ikoner.
+       Ingen merkenavn/oppsummering/banner — dagen er fokuset. */
+    .topbar{background:var(--blue);color:#fff;
+            padding:max(env(safe-area-inset-top),12px) 8px 11px;
+            display:flex;align-items:center;gap:5px;flex-shrink:0}
+    .topbar .date-btn{background:rgba(255,255,255,.12);border:none;color:#fff;
+                      width:38px;height:38px;border-radius:10px;font-size:20px;
+                      cursor:pointer;flex-shrink:0;display:flex;
+                      align-items:center;justify-content:center}
+    .topbar .date-btn:active{background:rgba(255,255,255,.22)}
+    .topbar .date-center{flex:1;min-width:0;text-align:center;line-height:1.12}
+    .topbar .date-label{font-size:16px;font-weight:700;
+                        font-variant-numeric:tabular-nums;
+                        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .topbar .date-label small{display:block;font-size:11px;color:rgba(255,255,255,.7);
+                              font-weight:500;margin-top:1px;text-transform:uppercase;
+                              letter-spacing:.5px}
+    .topbar .top-status{font-size:10px;font-weight:700;color:#fbbf24;margin-top:2px;
+                        text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;
+                        overflow:hidden;text-overflow:ellipsis}
+    .topbar .top-actions{display:flex;gap:5px;flex-shrink:0}
+    .topbar .menu-btn{background:rgba(255,255,255,.1);border:none;color:#fff;
+                      width:34px;height:34px;border-radius:9px;font-size:16px;
+                      cursor:pointer;display:flex;align-items:center;justify-content:center}
+    .topbar .menu-btn:active{background:rgba(255,255,255,.2)}
 
     /* Datovelger-rad under topbaren — sjåfør kan se i morgen / forrige dag */
     .date-bar{background:var(--blue);color:#fff;padding:0 12px 10px;
@@ -498,16 +513,18 @@
 <!-- Hovedvisning -->
 <div class="app" id="app" style="display:none">
   <div class="topbar">
-    <span class="brand">Havøyet</span>
-    <div class="summary" id="summary">Laster …</div>
-    <button class="menu-btn" id="refreshBtn" title="Last på nytt">⟳</button>
-    <button class="menu-btn" id="calBtn" title="Legg dagens rute i kalenderen" aria-label="Legg rute i kalender">📅</button>
-    <button class="menu-btn" id="logoutBtn" title="Logg ut">⏻</button>
-  </div>
-  <div class="date-bar">
     <button class="date-btn" id="datePrev" aria-label="Forrige dag">‹</button>
-    <div class="date-label" id="dateLabel">—</div>
+    <div class="date-center">
+      <div class="date-label" id="dateLabel">—</div>
+      <div class="top-status" id="topStatus" style="display:none"></div>
+    </div>
     <button class="date-btn" id="dateNext" aria-label="Neste dag">›</button>
+    <div class="top-actions">
+      <button class="menu-btn" id="refreshBtn" title="Last på nytt">⟳</button>
+      <button class="menu-btn" id="calBtn" title="Legg dagens rute i kalenderen" aria-label="Legg rute i kalender">📅</button>
+      <button class="menu-btn" id="logoutBtn" title="Logg ut">⏻</button>
+    </div>
+    <div id="summary" style="display:none"></div>
   </div>
   <div id="approvalBanner" style="display:none"></div>
 
@@ -768,24 +785,19 @@ async function fetchRoute(){
   return r.json();
 }
 
+// Godkjent-status vises nå som en bitteliten amber-linje i dag-seksjonen
+// (ikke lenger en stor banner) — slik at toppen holdes minimal.
 function renderApprovalBanner(data){
-  const box = $("approvalBanner");
-  if (!data || data.error === "no_depot" || !(data.stops || []).length) {
-    box.style.display = "none";
-    return;
-  }
-  if (data.awaiting_approval) {
-    box.innerHTML = `
-      <div class="approval-banner">
-        <div class="icon">⚠️</div>
-        <div>
-          <b>Forhåndsvisning — ikke godkjent</b>
-          <small>Admin må godkjenne ruten før den er offisiell. Du ser den planlagte ruten her, men kunder har ikke fått SMS ennå.</small>
-        </div>
-      </div>`;
-    box.style.display = "block";
+  const el = $("topStatus");
+  if (!el) return;
+  const awaiting = data && data.awaiting_approval
+                   && data.error !== "no_depot" && (data.stops || []).length;
+  if (awaiting) {
+    el.textContent = "● Forhåndsvisning – ikke godkjent";
+    el.style.display = "block";
   } else {
-    box.style.display = "none";
+    el.textContent = "";
+    el.style.display = "none";
   }
 }
 
@@ -794,6 +806,7 @@ async function loadRoute(){
   $("stops").innerHTML = "";
   $("nextCard").innerHTML = "";
   $("approvalBanner").style.display = "none";
+  if ($("topStatus")) $("topStatus").style.display = "none";
   stopLayer.clearLayers();
   if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
 
@@ -818,6 +831,7 @@ async function renderRoute(data){
   $("stops").innerHTML = "";
   $("nextCard").innerHTML = "";
   $("approvalBanner").style.display = "none";
+  if ($("topStatus")) $("topStatus").style.display = "none";
   if (stopLayer) stopLayer.clearLayers();
   if (routeLine && map) { map.removeLayer(routeLine); routeLine = null; }
 
