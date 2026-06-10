@@ -1701,6 +1701,11 @@
           <div class="ec-sub" id="ecAvgSub">Valgt periode</div>
         </div>
         <div class="ec-card">
+          <div class="ec-lbl">Median-ordresum</div>
+          <div class="ec-val" id="ecMedian">– kr</div>
+          <div class="ec-sub" id="ecMedianSub">Valgt periode</div>
+        </div>
+        <div class="ec-card">
           <div class="ec-lbl">Innkjøpskostnader</div>
           <div class="ec-val" id="ecCostTotal">– kr</div>
           <div class="ec-sub" id="ecCostSub">Inkl. gratis-ordre</div>
@@ -10021,6 +10026,13 @@ async function refreshEconomy(){
       if (avgEl) avgEl.textContent = period.avg_kr != null ? _ecFmtKr(period.avg_kr) : '– kr';
       if (avgSub) avgSub.textContent = period.total_count != null
         ? `Basert på ${period.total_count} bestilling${period.total_count===1?'':'er'}`
+        : (period.label || 'Valgt periode');
+      // Median-ordresum (hopp over hvis backend ikke returnerer den ennå)
+      const medEl = document.getElementById('ecMedian');
+      const medSub = document.getElementById('ecMedianSub');
+      if (medEl) medEl.textContent = period.median_kr != null ? _ecFmtKr(period.median_kr) : '– kr';
+      if (medSub) medSub.textContent = period.total_count != null
+        ? `Midterste av ${period.total_count} bestilling${period.total_count===1?'':'er'}`
         : (period.label || 'Valgt periode');
       document.getElementById('ecPeriodInfo').textContent =
         `${period.from || '–'} → ${period.to || '–'} · ${(period.web_count||0)+(period.vipps_count||0)} transaksjoner`;
