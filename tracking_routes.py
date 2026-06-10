@@ -1148,7 +1148,12 @@ def _orders_for_date(date_iso: str) -> list[dict]:
 def _stop_items(order: dict) -> list[dict]:
     """Returnerer varelinjer som sjåføren skal verifisere før utkjøring.
     Hver linje har et stabilt 'line_id' = indeks i ordrens varer-liste,
-    slik at checklist-state kan persisteres uten å trenge et unikt linje-felt."""
+    slik at checklist-state kan persisteres uten å trenge et unikt linje-felt.
+
+    Skalldyrkasser brytes ut til én linje per art (innholdValgt → boxSelection),
+    slik at sjåføren ser og kan hake av hvert produkt i kassen — speiler
+    pakke.html sin initKasseComponents."""
+    import re
     varer = order.get("varer") or order.get("items") or []
     out = []
 
@@ -1158,7 +1163,118 @@ def _stop_items(order: dict) -> list[dict]:
             return f"{s} kg"
         return f"{int(round(total_g))} g"
 
+    def _num(x, d=0):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return d
+
+    def _intish(n):
+        return int(n) if n == int(n) else n
+
+    def _kasse_meta(name):
+        """(kort_label, personer) hvis navnet er en skalldyrkasse, ellers (None, None)."""
+        if not name:
+            return None, None
+        low = name.lower()
+        if 'din skalldyrkasse' in low or 'din-skalldyrkasse' in low:
+            t = 'Din skalldyrkasse'
+        elif 'eksklusiv' in low and 'skalldyr' in low:
+            t = 'Eksklusiv skalldyrkasse'
+        elif 'premium' in low and 'skalldyr' in low:
+            t = 'Premium skalldyrkasse'
+        elif 'klassisk' in low and 'skalldyr' in low:
+            t = 'Klassisk skalldyrkasse'
+        elif 'skalldyrkasse' in low:
+            t = 'Skalldyrkasse'
+        else:
+            return None, None
+        pers = None
+        m1 = re.search(r'[-–]\s*(\d+)\s*/', name)
+        m2 = re.search(r'\((\d+)\s*pers', name, re.I)
+        if m1:
+            pers = int(m1.group(1))
+        elif m2:
+            pers = int(m2.group(1))
+        return t, pers
+
+    def _kasse_components(v):
+        """[{name, mengde}] for en skalldyrkasse. innholdValgt foretrekkes
+        (eksakt valgt på storefront: total = perPerson × personer), ellers
+        boxSelection (custom builder)."""
+        comps = []
+        innhold = v.get("innholdValgt")
+        if isinstance(innhold, list) and innhold:
+            for it in innhold:
+                if not isinstance(it, dict):
+                    continue
+                total = _num(it.get("total"))
+                if total <= 0:
+                    continue
+                label = str(it.get("label") or it.get("id") or "").strip()
+                if not label:
+                    continue
+                mengde = f"{_intish(total)} stk" if it.get("unit") == "stk" else _fmt_w(total)
+                comps.append({"name": label, "mengde": mengde})
+            if comps:
+                return comps
+        box = v.get("boxSelection")
+        if isinstance(box, list) and box:
+            modern = any(isinstance(s, dict) and s.get("qty") and s.get("unit") for s in box)
+            for s in box:
+                if not isinstance(s, dict):
+                    continue
+                navn = str(s.get("navn") or s.get("name") or "").strip()
+                if not navn:
+                    continue
+                variant = str(s.get("variant") or "").strip()
+                disp = navn + (f" ({variant})" if variant else "")
+                if modern:
+                    qn = _num(s.get("qty") or s.get("quantity") or 1, 1) or 1
+                    unit = s.get("unit")
+                    unit = unit if unit in ("stk", "kg", "g", "pakke") else "stk"
+                    grams = qn * 1000 if unit == "kg" else (qn if unit == "g" else 0)
+                    eg = _num(s.get("enhetGrams"))
+                    if grams and eg:
+                        n = max(1, int(round(grams / eg)))
+                        mengde = f"{n} stk ({int(round(grams))} g)"
+                    elif grams:
+                        mengde = _fmt_w(grams)
+                    elif unit == "pakke":
+                        mengde = f"{_intish(qn)} pk"
+                    else:
+                        mengde = f"{_intish(qn)} stk"
+                else:
+                    # Eldre ordre uten qty/unit — vis art uten presis mengde
+                    mengde = variant or "1 stk"
+                comps.append({"name": disp, "mengde": mengde})
+        return comps
+
     for idx, v in enumerate(varer):
+        name = v.get("name") or v.get("navn") or v.get("title") or v.get("productName") or ""
+
+        # Skalldyrkasse → bryt ut innholdet som egne pakke-linjer
+        kasse_label, pers = _kasse_meta(name)
+        comps = []
+        if kasse_label or v.get("innholdValgt") or v.get("boxSelection"):
+            comps = _kasse_components(v)
+        if comps:
+            if kasse_label:
+                tag = f"{kasse_label} · {pers} pers" if pers else kasse_label
+            else:
+                tag = name.strip() or "Kasse"
+            for j, c in enumerate(comps):
+                out.append({
+                    "line_id": f"{idx}-{j}",
+                    "name": c["name"],
+                    "qty": 1,
+                    "variant": tag,
+                    "unit": "",
+                    "mengde": c["mengde"],
+                })
+            continue
+
+        # Vanlig vare
         variant = v.get("variant") or v.get("variantStr") or v.get("variantLabel") or ""
         if not variant:
             sel = v.get("selectedOpts")
@@ -1169,27 +1285,21 @@ def _stop_items(order: dict) -> list[dict]:
         # Ferdig formatert mengde — samme prioritering som admin/pakke:
         # eksplisitt enhet (qty bærer mengden) → kanonisk grams fra checkout →
         # antall. Unngår rått "2000× g" for admin-førte vektlinjer.
-        try:
-            qty_n = float(qty)
-        except (TypeError, ValueError):
-            qty_n = 1
-        try:
-            canon_g = float(v.get("grams") or 0)
-        except (TypeError, ValueError):
-            canon_g = 0
+        qty_n = _num(qty, 1)
+        canon_g = _num(v.get("grams"))
         if unit == "g":
             mengde = _fmt_w(qty_n)
         elif unit == "kg":
             mengde = _fmt_w(qty_n * 1000)
         elif unit == "stk":
-            mengde = f"{int(qty_n) if qty_n == int(qty_n) else qty_n} stk"
+            mengde = f"{_intish(qty_n)} stk"
         elif canon_g > 0:
             mengde = _fmt_w(canon_g)
         else:
-            mengde = f"{int(qty_n) if qty_n == int(qty_n) else qty_n}×"
+            mengde = f"{_intish(qty_n)}×"
         out.append({
             "line_id": str(idx),
-            "name": v.get("name") or v.get("navn") or v.get("title") or v.get("productName") or "",
+            "name": name,
             "qty": qty,
             "variant": variant,
             "unit": v.get("unit") or "",
