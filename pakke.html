@@ -2533,6 +2533,19 @@ function renderComponentCard(c, i, ci) {
     const disp = (Number.isInteger(num) ? String(num) : num.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');
     qtyPill = `<div class="item-qty-edit readonly" title="Bestilt mengde"><span class="qty-num">${disp}</span><span class="qty-unit">${unit}</span></div>`;
   }
+  // Bekreftet bytte: vis den NYE varens mengde (appliedQty/appliedUnit fra admin)
+  // som lese-pille + vekt-enhet, så pakkeren ser tydelig hvor mye av erstatningen
+  // som skal med — ikke den opprinnelige varens forventede mengde.
+  let weightUnitDisp = c.weightUnit || 'g';
+  const _appliedQty = c.confirmedReplacement && c.confirmedReplacement.appliedQty;
+  if (_appliedQty != null && c.confirmedReplacement.appliedUnit) {
+    const baseUnit = c.confirmedReplacement.appliedUnit;
+    let num = Number(_appliedQty), unit = baseUnit;
+    if (unit === 'g' && num >= 1000) { num = num / 1000; unit = 'kg'; }
+    const disp = (Number.isInteger(num) ? String(num) : num.toFixed(2).replace(/\.?0+$/, '')).replace('.', ',');
+    qtyPill = `<div class="item-qty-edit readonly" title="Bestilt mengde (erstatning)"><span class="qty-num">${disp}</span><span class="qty-unit">${escHtml(unit)}</span></div>`;
+    weightUnitDisp = baseUnit;
+  }
   const expectedHint = (!qtyPill && c.expected) ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(forv. ${escHtml(c.expected)})</span>` : '';
   const suggestedKey = c.suggestedReplacement ? _replKey(c.suggestedReplacement) : null;
   const confirmedKey = c.confirmedReplacement ? _replKey(c.confirmedReplacement) : null;
@@ -2573,7 +2586,7 @@ function renderComponentCard(c, i, ci) {
           <input class="field-input${weightOk?' filled':''}" type="number" min="1"
             placeholder="0" value="${escHtml(c.weight)}"
             oninput="onComponentField('${currentOrderId}',${i},${ci},'weight',this.value)"/>
-          <span style="font-size:12px;font-weight:600;color:var(--muted);padding:0 6px;align-self:center">${escHtml(c.weightUnit||'g')}</span>
+          <span style="font-size:12px;font-weight:600;color:var(--muted);padding:0 6px;align-self:center">${escHtml(weightUnitDisp)}</span>
         </div>
       </div>
       <div class="field-group">
