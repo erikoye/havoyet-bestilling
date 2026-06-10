@@ -39,7 +39,7 @@
     .pin-err{color:#fca5a5;margin-top:14px;font-size:13px;min-height:18px}
 
     /* ── Hovedvisning ────────────────────────────────────── */
-    .app{display:flex;flex-direction:column;height:100dvh}
+    .app{display:flex;flex-direction:column;height:100dvh;position:relative}
     .topbar{background:var(--blue);color:#fff;padding:env(safe-area-inset-top) 14px 12px;
             display:flex;align-items:center;gap:10px;flex-shrink:0;
             padding-top:max(env(safe-area-inset-top),12px)}
@@ -385,6 +385,102 @@
     .cl-start:not(:disabled):active{filter:brightness(.94);transform:scale(.99)}
     .cl-start-hint{font-size:11px;color:rgba(255,255,255,.6);text-align:center;
                    margin-top:8px;line-height:1.4}
+
+    /* ── Fane-visninger + bunn-tabbar (mobil) ────────────────────────
+       Tre faner nederst: Kart · Bestilling · Temperatur. Hver fane er en
+       full-høyde visning; kun den aktive vises. Kartet får egen fane så det
+       kan fylle skjermen i stedet for å klemmes inn øverst. */
+    .views{position:relative;flex:1;overflow:hidden}
+    .view{position:absolute;inset:0;overflow-y:auto;
+          -webkit-overflow-scrolling:touch;display:none}
+    .view.active{display:block}
+    /* Kart-fanen: la kartet fylle hele visningen */
+    #view-kart{overflow:hidden}
+    #view-kart #map-wrap{position:absolute;inset:0;flex:none;height:auto}
+    /* Bestilling-fanen scroller selv — la panelet vokse naturlig */
+    #view-bestilling .stops-panel{flex:none;overflow:visible;height:auto}
+
+    /* Flytende kapsel-meny (Instagram-inspirert): mørk pille som svever over
+       innholdet. Aktiv fane utvider seg til en lys "chip" med ikon + tekst;
+       inaktive faner viser kun ikon. */
+    .tabbar{position:absolute;left:50%;transform:translateX(-50%);
+            bottom:calc(env(safe-area-inset-bottom) + 14px);
+            display:flex;align-items:center;gap:4px;z-index:600;
+            background:rgba(15,23,42,.9);backdrop-filter:blur(16px);
+            -webkit-backdrop-filter:blur(16px);
+            border:1px solid rgba(255,255,255,.09);border-radius:999px;
+            padding:6px;box-shadow:0 10px 34px rgba(15,23,42,.4);
+            max-width:calc(100% - 24px)}
+    .tabbar .tab{flex:0 0 auto;background:none;border:none;cursor:pointer;
+                 padding:10px 14px;display:flex;align-items:center;gap:7px;
+                 color:rgba(255,255,255,.7);border-radius:999px;
+                 font-family:inherit;font-size:13px;font-weight:700;
+                 position:relative;letter-spacing:.2px;
+                 transition:background .2s,color .2s}
+    .tabbar .tab .ic{font-size:19px;line-height:1}
+    .tabbar .tab .lbl{display:none;white-space:nowrap}
+    .tabbar .tab:active{transform:scale(.95)}
+    .tabbar .tab.active{background:rgba(255,255,255,.16);color:#fff}
+    .tabbar .tab.active .lbl{display:inline}
+    .tab-dot{position:absolute;top:4px;right:8px;width:9px;height:9px;
+             border-radius:50%;background:var(--err);
+             border:2px solid #1e293b;display:none}
+
+    /* Innhold må klarere den flytende menyen nederst */
+    #view-bestilling .stops-panel{padding-bottom:calc(env(safe-area-inset-bottom) + 92px)}
+    .temp-panel{padding-bottom:calc(env(safe-area-inset-bottom) + 100px)}
+    #view-kart .map-fab{bottom:calc(env(safe-area-inset-bottom) + 80px)}
+
+    /* ── Temperatur-fane (Mattilsynet-krav) ──────────────────────────── */
+    .temp-panel{padding:14px 14px 26px}
+    .temp-hd{margin-bottom:14px}
+    .temp-hd h2{font-size:18px;margin:0;color:var(--ink);font-weight:800}
+    .temp-hd .date{font-size:12.5px;color:var(--muted);margin-top:3px;font-weight:600}
+    .temp-card{background:#fff;border:1px solid var(--border);border-radius:14px;
+               padding:14px;margin-bottom:14px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+    .temp-card .ct{font-size:11px;letter-spacing:.7px;text-transform:uppercase;
+                   font-weight:700;color:var(--primary-dk)}
+    .temp-card .ch{font-size:16px;font-weight:700;color:var(--ink);margin:4px 0 2px}
+    .temp-card .cd{font-size:12.5px;color:var(--muted);line-height:1.45}
+    .temp-read{display:flex;gap:10px;align-items:stretch;margin-top:12px}
+    .temp-read .field{flex:1;position:relative;display:flex;align-items:center}
+    .temp-read input{width:100%;font-size:26px;font-weight:800;text-align:center;
+                     border:2px solid var(--border);border-radius:12px;
+                     padding:12px 38px 12px 12px;font-family:inherit;
+                     font-variant-numeric:tabular-nums;color:var(--ink)}
+    .temp-read input:focus{outline:none;border-color:var(--primary)}
+    .temp-read .field .deg{position:absolute;right:14px;font-size:18px;
+                           font-weight:700;color:var(--muted);pointer-events:none}
+    .temp-save{background:var(--primary);color:#fff;border:none;border-radius:12px;
+               padding:0 18px;font-weight:700;font-size:14px;cursor:pointer;
+               font-family:inherit;white-space:nowrap}
+    .temp-save:active{filter:brightness(.93)}
+    .temp-status{margin-top:11px;font-size:13px;font-weight:600;padding:9px 12px;
+                 border-radius:10px;line-height:1.4}
+    .temp-status.ok{background:rgba(34,197,94,.12);color:#15803d}
+    .temp-status.warn{background:rgba(239,68,68,.1);color:#b91c1c}
+    .temp-status.none{background:var(--bg);color:var(--muted)}
+
+    .tc-line{display:flex;gap:12px;align-items:flex-start;padding:12px 0;
+             border-bottom:1px solid var(--border);cursor:pointer}
+    .tc-line:last-child{border-bottom:none}
+    .tc-line:active{opacity:.7}
+    .tc-box{flex:0 0 auto;width:24px;height:24px;border:2px solid var(--border);
+            border-radius:7px;background:#fff;display:flex;align-items:center;
+            justify-content:center;color:#fff;font-size:14px;margin-top:1px;
+            transition:background .15s,border-color .15s}
+    .tc-line.on .tc-box{background:var(--ok);border-color:var(--ok)}
+    .tc-txt{flex:1;font-size:14px;line-height:1.35;color:var(--ink);font-weight:600}
+    .tc-txt small{display:block;color:var(--muted);font-size:12px;margin-top:3px;
+                  font-weight:500}
+    .temp-info{background:linear-gradient(135deg,var(--dark),#1e293b);color:#fff;
+               border-radius:14px;padding:14px;margin-bottom:14px}
+    .temp-info .it{color:var(--gold);font-size:11px;letter-spacing:.7px;
+                   text-transform:uppercase;font-weight:700}
+    .temp-info .nm{font-size:16px;font-weight:700;margin-top:4px}
+    .temp-info .ad{font-size:13px;color:rgba(255,255,255,.82);margin-top:3px;
+                   line-height:1.5}
+    .temp-note{font-size:11.5px;color:var(--muted);line-height:1.45;margin-top:10px}
   </style>
 </head>
 <body>
@@ -414,14 +510,42 @@
     <button class="date-btn" id="dateNext" aria-label="Neste dag">›</button>
   </div>
   <div id="approvalBanner" style="display:none"></div>
-  <div id="map-wrap">
-    <div id="map"></div>
-    <button class="map-fab" id="recenterBtn" title="Sentrer kart" aria-label="Sentrer kart">⤢</button>
+
+  <div class="views">
+    <!-- KART -->
+    <section class="view" id="view-kart">
+      <div id="map-wrap">
+        <div id="map"></div>
+        <button class="map-fab" id="recenterBtn" title="Sentrer kart" aria-label="Sentrer kart">⤢</button>
+      </div>
+    </section>
+
+    <!-- BESTILLING (pakk-sjekkliste + rute-timeline) -->
+    <section class="view active" id="view-bestilling">
+      <div class="stops-panel">
+        <div id="nextCard"></div>
+        <div id="stops"></div>
+      </div>
+    </section>
+
+    <!-- TEMPERATUR (Mattilsynet-krav + kjølelogg) -->
+    <section class="view" id="view-temp">
+      <div class="temp-panel" id="tempPanel"></div>
+    </section>
   </div>
-  <div class="stops-panel">
-    <div id="nextCard"></div>
-    <div id="stops"></div>
-  </div>
+
+  <nav class="tabbar" role="tablist">
+    <button class="tab" data-tab="kart" type="button" role="tab" aria-label="Kart">
+      <span class="ic">🗺️</span><span class="lbl">Kart</span>
+    </button>
+    <button class="tab active" data-tab="bestilling" type="button" role="tab" aria-label="Bestilling">
+      <span class="ic">📦</span><span class="lbl">Bestilling</span>
+    </button>
+    <button class="tab" data-tab="temp" type="button" role="tab" aria-label="Temperatur">
+      <span class="ic">🌡️</span><span class="lbl">Temperatur</span>
+      <span class="tab-dot" id="tempTabDot"></span>
+    </button>
+  </nav>
 </div>
 
 <!-- Kalender-sheet -->
@@ -488,6 +612,8 @@ function shiftDate(delta) {
   dt.setDate(dt.getDate() + delta);
   activeDate = _dateToIso(dt);
   updateDateLabel();
+  // Temperaturloggen er per dato — hent for ny dag fra server
+  loadTemp();
   // Peek-modus er kun gyldig for én dato — reset ved datoskift
   _peekChecklist = false;
   // Hver dag har egen sjekkliste-state — re-fetcher rute + checklist
@@ -537,6 +663,11 @@ async function showApp(){
   $("app").style.display = "flex";
   if (!map) initMap();
   await loadRoute();
+  await loadTemp();
+  // Gjenopprett sist brukte fane (default: Bestilling)
+  let savedTab = "bestilling";
+  try { savedTab = localStorage.getItem(TAB_KEY) || "bestilling"; } catch(e) {}
+  switchTab(savedTab);
 }
 
 function initMap(){
@@ -1311,6 +1442,211 @@ function _renderChecklistCard(data, stops){
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Faner: Kart · Bestilling · Temperatur (bunn-tabbar)
+// Kart + checkliste/timeline + temperaturlogg er nå tre separate visninger.
+// Bare den aktive vises — gjør sjåfør-skjermen mye mer oversiktlig på mobil.
+// ─────────────────────────────────────────────────────────────────────
+const TAB_KEY = "havoyet_driver_tab";
+function switchTab(name){
+  if (!name) name = "bestilling";
+  document.querySelectorAll(".view").forEach(v =>
+    v.classList.toggle("active", v.id === "view-" + name));
+  document.querySelectorAll(".tabbar .tab").forEach(t =>
+    t.classList.toggle("active", t.dataset.tab === name));
+  try { localStorage.setItem(TAB_KEY, name); } catch(e) {}
+  if (name === "kart" && map) {
+    // Leaflet må re-måle containeren når den blir synlig igjen
+    setTimeout(() => { map.invalidateSize(); refitMap(); }, 60);
+  }
+  if (name === "temp") renderTempLog();
+}
+function refitMap(){
+  if (!map || !currentRoute || !currentRoute.depot) return;
+  const stops = currentRoute.stops || [];
+  if (!stops.length) { map.setView([currentRoute.depot.lat, currentRoute.depot.lon], 12); return; }
+  const all = [[currentRoute.depot.lat, currentRoute.depot.lon], ...stops.map(s => [s.lat, s.lon])];
+  map.fitBounds(L.latLngBounds(all), { padding:[40,40] });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Temperatur-logg + Mattilsynet-sjekkliste (per dato, lagret lokalt)
+// Kjølemåling (0–4 °C-krav) + avkrysningspunkter for transportkontroll.
+// ─────────────────────────────────────────────────────────────────────
+const TEMP_CHECKS = [
+  { k:"maaler",  t:"Temperaturmåler viser 4 °C eller lavere",
+    s:"Kjølevarer skal holdes 0–4 °C (eller temperaturen varen er merket med) helt frem til kunde." },
+  { k:"synlig",  t:"Termometer er lett synlig for kontroll",
+    s:"Mattilsynet skal lett kunne lese av gradene ved kontroll." },
+  { k:"merket",  t:"Varene er godt merket og adskilt i emballasjen",
+    s:"Tilpass emballering, isolering og plassering så ulike varer holdes godt adskilt." },
+  { k:"adskilt", t:"Kjøl- og frysevarer holdes godt adskilt",
+    s:"Samme kjøretøy er greit så lenge varene holdes adskilt og transportvilkårene er ivaretatt." },
+  { k:"sporbar", t:"Produktene kan spores",
+    s:"Opprinnelse + navn og adresse til driftsansvarlig skal være tilgjengelig (se kortet øverst)." },
+  { k:"isolert", t:"Isolerte beholdere er brukt",
+    s:"Holder på kulden ved transport uten kjøleaggregat — del av internkontrollen." },
+  { k:"rask",    t:"Rask utlevering planlagt",
+    s:"Begrenset antall kunder per runde, og avtalt leveringstidspunkt/-sted med kunden." },
+];
+const TEMP_FROZEN = [
+  { k:"termograf", t:"Termograf logger temperaturen automatisk",
+    s:"Påbudt ved frysetransport. Unntak: lokal distribusjon under 2 timer. Loggen merkes med dato og oppbevares i minst 1 år." },
+];
+// Temperatur-state lagres PERMANENT på server (route_state på persistent disk),
+// ikke localStorage — så loggen overlever og er tilgjengelig for admin/kontroll.
+// currentTemp speiler serverens { reading, reading_at, checks, readings }.
+let currentTemp = {};
+async function fetchTemp(date){
+  try {
+    const r = await fetch(`/api/driver/route/temperature?date=${date}&pin=${encodeURIComponent(getPin())}`);
+    if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp."); return null; }
+    if (!r.ok) return {};
+    const data = await r.json();
+    return data.temperature || {};
+  } catch(e){ return {}; }
+}
+async function loadTemp(){
+  const t = await fetchTemp(activeDate);
+  if (t === null) return;            // 401 allerede håndtert
+  currentTemp = t || {};
+  renderTempLog();
+}
+async function saveTempChange(body, optimistic){
+  if (optimistic) { optimistic(); renderTempLog(); }   // umiddelbar UI-respons
+  try {
+    const r = await fetch(`/api/driver/route/temperature?pin=${encodeURIComponent(getPin())}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: activeDate, ...body }),
+    });
+    if (r.status === 401) { clearPin(); showPinScreen("Sesjonen utløp."); return; }
+    if (!r.ok) throw new Error("server " + r.status);
+    const data = await r.json();
+    if (data.temperature) { currentTemp = data.temperature; renderTempLog(); }
+  } catch(e){
+    alert("Klarte ikke å lagre temperatur — laster på nytt.");
+    loadTemp();
+  }
+}
+function _fmtTemp(v){ return (Math.round(v * 10) / 10).toString().replace(".", ","); }
+function _clockFromEpoch(sec){
+  try {
+    const d = new Date((Number(sec) || 0) * 1000);
+    return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+  } catch(e){ return ""; }
+}
+function _tcLine(item, on){
+  return `<div class="tc-line${on ? " on" : ""}" data-tc="${item.k}"
+               role="checkbox" aria-checked="${on}" tabindex="0">
+    <div class="tc-box" aria-hidden="true">${on ? "✓" : ""}</div>
+    <div class="tc-txt">${_escapeHtml(item.t)}<small>${_escapeHtml(item.s)}</small></div>
+  </div>`;
+}
+function renderTempLog(){
+  const panel = document.getElementById("tempPanel");
+  if (!panel) return;
+  const st = currentTemp || {};
+  const checks = st.checks || {};
+  const r = (st.reading === 0 || st.reading) ? st.reading : null;
+  const human = _humanDate(activeDate);
+
+  let statusCls = "none", statusTxt = "Ingen kjølemåling lagret ennå — mål før avgang.";
+  if (r !== null) {
+    if (r <= 4) {
+      statusCls = "ok";
+      statusTxt = `✓ ${_fmtTemp(r)} °C — innenfor kravet (0–4 °C).` +
+                  (st.reading_at ? ` Målt kl ${_clockFromEpoch(st.reading_at)}.` : "");
+    } else {
+      statusCls = "warn";
+      statusTxt = `⚠ ${_fmtTemp(r)} °C — over kravet på 4 °C. Kjøl ned eller utbedre før utkjøring.`;
+    }
+  }
+
+  panel.innerHTML = `
+    <div class="temp-hd">
+      <h2>🌡️ Temperatur & kontroll</h2>
+      <div class="date">Logg for ${_escapeHtml(human.pretty)} · ${_escapeHtml(human.rel)}</div>
+    </div>
+
+    <div class="temp-info">
+      <div class="it">Driftsansvarlig · sporbarhet</div>
+      <div class="nm">Havøyet AS</div>
+      <div class="ad">Nesttunvegen 96, 5221 Nesttun<br>erik@havoyet.no</div>
+      <div class="temp-note" style="color:rgba(255,255,255,.7)">
+        Vis dette ved kontroll. Opprinnelse og dokumentasjon fra øvrige ledd
+        kan fremvises på forespørsel.</div>
+    </div>
+
+    <div class="temp-card">
+      <div class="ct">Kjøletemperatur</div>
+      <div class="ch">Mål før avgang</div>
+      <div class="cd">Registrer temperaturen i kjøleboksen/bilen. Kravet er 0–4 °C
+        (eller temperaturen varen er merket med).</div>
+      <div class="temp-read">
+        <div class="field">
+          <input type="text" inputmode="decimal" id="tempInput"
+                 placeholder="–" value="${r !== null ? _escapeHtml(_fmtTemp(r)) : ""}"
+                 aria-label="Målt temperatur i grader celsius">
+          <span class="deg">°C</span>
+        </div>
+        <button class="temp-save" id="tempSaveBtn" type="button">Lagre</button>
+      </div>
+      <div class="temp-status ${statusCls}">${_escapeHtml(statusTxt)}</div>
+    </div>
+
+    <div class="temp-card">
+      <div class="ct">Mattilsynet — krav under transport</div>
+      <div class="ch">Hak av før du kjører</div>
+      ${TEMP_CHECKS.map(it => _tcLine(it, !!checks[it.k])).join("")}
+    </div>
+
+    <div class="temp-card">
+      <div class="ct">Frysevarer</div>
+      <div class="ch">Kun ved transport av frysevarer</div>
+      ${TEMP_FROZEN.map(it => _tcLine(it, !!checks[it.k])).join("")}
+    </div>`;
+
+  panel.querySelector("#tempSaveBtn").addEventListener("click", () => {
+    const input = panel.querySelector("#tempInput");
+    const raw = (input.value || "").replace(",", ".").trim();
+    if (raw === "") { alert("Skriv inn målt temperatur i °C."); return; }
+    const v = parseFloat(raw);
+    if (Number.isNaN(v)) { alert("Ugyldig tall — skriv f.eks. 3 eller 3,5."); return; }
+    saveTempChange({ reading: v }, () => {
+      currentTemp.reading = v;
+      currentTemp.reading_at = Math.floor(Date.now() / 1000);
+      currentTemp.checks = currentTemp.checks || {};
+      if (v <= 4) currentTemp.checks.maaler = true;   // innenfor krav → haker av punktet
+    });
+  });
+
+  panel.querySelectorAll(".tc-line").forEach(el => {
+    const toggle = () => {
+      const k = el.dataset.tc;
+      const next = !(currentTemp.checks && currentTemp.checks[k]);
+      saveTempChange({ check: k, value: next }, () => {
+        currentTemp.checks = currentTemp.checks || {};
+        if (next) currentTemp.checks[k] = true;
+        else delete currentTemp.checks[k];
+      });
+    };
+    el.addEventListener("click", toggle);
+    el.addEventListener("keydown", e => {
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggle(); }
+    });
+  });
+
+  updateTempTabDot();
+}
+function updateTempTabDot(){
+  // Rød prikk på Temperatur-fanen når kjølemåling mangler eller er over 4 °C
+  const st = currentTemp || {};
+  const r = (st.reading === 0 || st.reading) ? st.reading : null;
+  const warn = (r === null) || (r > 4);
+  const dot = document.getElementById("tempTabDot");
+  if (dot) dot.style.display = warn ? "block" : "none";
+}
+
 // ── KALENDER-EKSPORT ────────────────────────────────────────────────────────
 // Lager en .ics-fil med ett event som dekker hele arbeidsøkten:
 //   Start = avgang fra Nesttun-depotet (route.start_clock)
@@ -1497,7 +1833,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (cleaned !== e.target.value) e.target.value = cleaned;
     if (cleaned.length === 4) handleLogin();
   });
-  $("refreshBtn").addEventListener("click", () => loadRoute());
+  $("refreshBtn").addEventListener("click", () => { loadRoute(); loadTemp(); });
   $("calBtn").addEventListener("click", () => openCalSheet());
   $("calSubBtn").addEventListener("click", () => subscribeCalendar());
   $("calOneBtn").addEventListener("click", () => { closeCalSheet(); downloadCalendar(); });
@@ -1510,6 +1846,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   $("datePrev").addEventListener("click", () => shiftDate(-1));
   $("dateNext").addEventListener("click", () => shiftDate(1));
+  document.querySelectorAll(".tabbar .tab").forEach(b =>
+    b.addEventListener("click", () => switchTab(b.dataset.tab)));
   $("recenterBtn").addEventListener("click", () => {
     if (!currentRoute || !currentRoute.depot) return;
     const stops = currentRoute.stops || [];
