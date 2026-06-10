@@ -10848,6 +10848,28 @@ def _send_route_eta_notification(order: dict, eta_clock: str, tracking_url: str,
     return mail_ok, f"mail={mail_detail}"
 
 
+@app.route("/api/admin/route/eta-test", methods=["GET", "POST"])
+def admin_route_eta_test():
+    """Sender en test av leveringstids-e-posten til en valgt adresse (default
+    CONTACT_TO). Bygger en dummy-ordre — sender INGEN ekte kunde noe. Brukes for
+    å se hvordan mailen ser ut. Params (query eller JSON): to, navn, eta, dato."""
+    if not _is_admin_request():
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    to   = (request.args.get("to")   or data.get("to")   or CONTACT_TO).strip()
+    navn = (request.args.get("navn") or data.get("navn") or "Test Testesen").strip()
+    eta  = (request.args.get("eta")  or data.get("eta")  or "15:00").strip()
+    dato = (request.args.get("dato") or data.get("dato") or datetime.now().strftime("%Y-%m-%d")).strip()
+    dummy = {
+        "ordrenr": "TEST123",
+        "kunde": {"navn": navn, "epost": to, "leveringsdag": dato},
+    }
+    ok, detail = _send_route_eta_notification(
+        dummy, eta, f"{PUBLIC_SITE_URL}/konto", ignore_enabled=True,
+    )
+    return jsonify({"ok": bool(ok), "detail": detail, "to": to})
+
+
 # ── ABAX ETA-integrasjon (kunder ser "X minutter til levering") ──────────
 def _driver_set_order_status(order_id, new_status):
     """Kalles fra sjåfør-appen (tracking_routes) når et stopp markeres som levert
