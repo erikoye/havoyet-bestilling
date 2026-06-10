@@ -5009,6 +5009,207 @@ def _api_economy_stats_impl():
     })
 
 
+@app.route("/api/economy/report")
+def api_economy_report():
+    """Last ned en reell omsetningsrapport (CSV) for valgt periode.
+
+    Bruker NØYAKTIG samme betalt-regel (_paid_ordrenrs), oppgjort-regel
+    (_settled_ordrenrs) og periode-filter som /api/economy/stats, slik at
+    summen i rapporten stemmer eksakt med tallene i Omsetning-fanen.
+    Inkluderer per-kilde- og per-butikk-sammendrag + én rad per transaksjon
+    (nettside/admin-ordre, Vipps-import og Shopify-kort) for full sporbarhet.
+
+    Query: ?year=YYYY  |  ?from=YYYY-MM-DD&to=YYYY-MM-DD
+    Format: norsk CSV (UTF-8 BOM, «;» som skille, komma som desimaltegn) —
+    åpnes direkte i Excel/Numbers og kan gis til regnskapsfører.
+    """
+    try:
+        return _api_economy_report_impl()
+    except Exception as _er_e:
+        import traceback as _tb
+        print(f"[economy/report] ERROR: {_er_e}\n{_tb.format_exc()}")
+        return jsonify({"error": str(_er_e)}), 500
+
+
+def _api_economy_report_impl():
+    today = datetime.now().date()
+    EARLIEST = date(2025, 1, 1)
+    q_year = request.args.get("year")
+    q_from = request.args.get("from")
+    q_to   = request.args.get("to")
+    period_from, period_to = today.replace(month=1, day=1), today
+    period_label = f"Hittil i {today.year}"
+    try:
+        if q_from:
+            period_from = datetime.strptime(q_from, "%Y-%m-%d").date()
+            period_to   = datetime.strptime(q_to, "%Y-%m-%d").date() if q_to else today
+            period_label = f"{period_from.strftime('%d.%m.%Y')} – {period_to.strftime('%d.%m.%Y')}"
+        elif q_year:
+            y = max(2025, int(q_year))
+            period_from = date(y, 1, 1)
+            period_to   = date(y, 12, 31) if y != today.year else today
+            period_label = (f"Hittil i {y}" if y == today.year else str(y))
+    except (ValueError, TypeError):
+        pass
+    if period_from < EARLIEST:
+        period_from = EARLIEST
+
+    def _parse_date(s):
+        if not s:
+            return None
+        s = str(s).strip()[:10]
+        for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _in_period(s):
+        d = _parse_date(s)
+        return d is not None and period_from <= d <= period_to
+
+    paid_set    = _paid_ordrenrs()
+    settled_set = _settled_ordrenrs()
+    cost_map    = _build_product_cost_map()
+
+    def _ototal(o):
+        try:
+            return float(o.get("sum") or o.get("total") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _odate(o):
+        return o.get("dato") or o.get("created_at") or ""
+
+    def _ostore(o):
+        return (o.get("store") or "").strip() or "Havøyet"
+
+    # --- Transaksjonsrader (samme rad-sett som Omsetning-fanen aggregerer) ---
+    rows = []
+    # 1) Nettside/manuelle ordre — oppgjorte (betalt + gratis) i perioden.
+    #    Betalt => teller i omsetning; gratis => 0 kr men koster oss innkjøp.
+    for o in (_manual_orders or []):
+        if not isinstance(o, dict):
+            continue
+        ordrenr = str(o.get("ordrenr") or o.get("id") or "").strip()
+        if not ordrenr or ordrenr not in settled_set:
+            continue
+        if not _in_period(_odate(o)):
+            continue
+        is_paid = ordrenr in paid_set
+        src   = (o.get("source") or "").lower()
+        kilde = "Shopify-import" if src == "shopify" else "Nettside/admin"
+        kunde = o.get("kunde") or {}
+        rows.append({
+            "date":  str(_odate(o))[:10],
+            "time":  str(o.get("tid") or "")[:5],
+            "kilde": kilde,
+            "store": _ostore(o),
+            "ref":   ordrenr,
+            "kunde": (kunde.get("navn") or ""),
+            "detalj": (kunde.get("tlf") or kunde.get("epost") or ""),
+            "type":  ("Kjøp" if is_paid else "Gratis"),
+            "belop": (_ototal(o) if is_paid else 0.0),
+            "kost":  _order_cost_kr(o, cost_map),
+        })
+    # 2) Vipps-import (direkte i Vipps-app + ePayment via nettside)
+    for r in _vipps_imported_payments.values():
+        if not _in_period(r.get("date")):
+            continue
+        ch = r.get("payment_channel")
+        rows.append({
+            "date":  str(r.get("date") or "")[:10],
+            "time":  str(r.get("time") or "")[:5],
+            "kilde": ("Vipps direkte" if ch == "direct" else "Vipps via nettside"),
+            "store": "Havøyet",
+            "ref":   r.get("transaction_id") or "",
+            "kunde": r.get("name") or "",
+            "detalj": r.get("phone") or r.get("description") or "",
+            "type":  r.get("type") or "Kjøp",
+            "belop": (r.get("amount_ore") or 0) / 100.0,
+            "kost":  None,
+        })
+    # 3) Shopify-kort (CSV-import) — refusjon trekkes fra (negativt beløp)
+    for r in _card_payments_imported.values():
+        if not _in_period(r.get("date")):
+            continue
+        signed = (r.get("amount_ore") or 0) / 100.0
+        if r.get("type") == "Refusjon":
+            signed = -signed
+        rows.append({
+            "date":  str(r.get("date") or "")[:10],
+            "time":  str(r.get("time") or "")[:5],
+            "kilde": "Shopify kort",
+            "store": "Havøyet",
+            "ref":   r.get("order") or r.get("transaction_id") or "",
+            "kunde": "",
+            "detalj": r.get("brand") or "",
+            "type":  r.get("type") or "Kjøp",
+            "belop": signed,
+            "kost":  None,
+        })
+
+    rows.sort(key=lambda x: (x["date"], x["time"]))
+
+    # --- Sammendrag ---
+    sum_belop = sum(r["belop"] for r in rows)
+    sum_kost  = sum((r["kost"] or 0.0) for r in rows)
+    by_kilde, by_store = {}, {}
+    for r in rows:
+        k = by_kilde.setdefault(r["kilde"], {"n": 0, "kr": 0.0})
+        k["n"] += 1
+        k["kr"] += r["belop"]
+        s = by_store.setdefault(r["store"], {"n": 0, "kr": 0.0})
+        s["n"] += 1
+        s["kr"] += r["belop"]
+
+    # --- Bygg norsk CSV (semikolon-skille, komma-desimal, UTF-8 BOM) ---
+    def kr(v):
+        return ("%.2f" % float(v or 0)).replace(".", ",")
+
+    def esc(v):
+        s = "" if v is None else str(v)
+        if any(c in s for c in (";", '"', "\n", "\r")):
+            s = '"' + s.replace('"', '""') + '"'
+        return s
+
+    L = []
+    L.append("Omsetningsrapport;Havøyet AS")
+    L.append("Generert;" + datetime.now().strftime("%d.%m.%Y %H:%M"))
+    L.append("Periode;" + esc(period_label))
+    L.append("Fra;" + period_from.strftime("%Y-%m-%d") + ";Til;" + period_to.strftime("%Y-%m-%d"))
+    L.append("")
+    L.append("SAMMENDRAG - PER KILDE")
+    L.append("Kilde;Antall;Beløp (kr)")
+    for k in sorted(by_kilde):
+        L.append(f"{esc(k)};{by_kilde[k]['n']};{kr(by_kilde[k]['kr'])}")
+    L.append(f"Sum omsetning;{len(rows)};{kr(sum_belop)}")
+    L.append(f"Innkjøpskostnader (inkl. gratis-ordre);;{kr(sum_kost)}")
+    L.append(f"Bruttofortjeneste;;{kr(sum_belop - sum_kost)}")
+    L.append("")
+    L.append("SAMMENDRAG - PER BUTIKK")
+    L.append("Butikk;Antall;Beløp (kr)")
+    for s in sorted(by_store):
+        L.append(f"{esc(s)};{by_store[s]['n']};{kr(by_store[s]['kr'])}")
+    L.append("")
+    L.append("TRANSAKSJONER")
+    L.append("Dato;Tid;Kilde;Butikk;Referanse;Kunde;Detalj;Type;Beløp (kr);Innkjøpskost (kr)")
+    for r in rows:
+        L.append(";".join([
+            esc(r["date"]), esc(r["time"]), esc(r["kilde"]), esc(r["store"]),
+            esc(r["ref"]), esc(r["kunde"]), esc(r["detalj"]), esc(r["type"]),
+            kr(r["belop"]), ("" if r["kost"] is None else kr(r["kost"])),
+        ]))
+
+    csv_text = "﻿" + "\r\n".join(L) + "\r\n"
+    fname = f"havoyet-omsetning-{period_from.strftime('%Y%m%d')}_{period_to.strftime('%Y%m%d')}.csv"
+    resp = Response(csv_text, mimetype="text/csv; charset=utf-8")
+    resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.route("/api/vipps/callback", methods=["POST"])
 def api_vipps_callback():
     """Webhook fra Vipps når betalingsstatus endrer seg.
