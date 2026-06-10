@@ -1664,6 +1664,13 @@
         <span class="ec-period-lbl">Periode:</span>
         <select id="ecPeriodSelect" class="fi fsl" onchange="ecPeriodChange()" style="width:auto;min-width:180px;"></select>
         <span class="ec-period-info" id="ecPeriodInfo">–</span>
+        <button id="ecReportBtn" onclick="ecDownloadReport()" title="Last ned full omsetningsrapport (CSV) for valgt periode — kan åpnes i Excel og gis til regnskapsfører"
+          style="margin-left:auto;display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border:1px solid var(--hv-teal);background:var(--hv-teal);color:#fff;border-radius:9px;font-family:var(--hv-font-display);font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Last ned omsetningsrapport
+        </button>
       </div>
 
       <!-- Total-kort (viser valgt periode) -->
@@ -9607,6 +9614,27 @@ function ecPeriodChange(){
   const sel = document.getElementById('ecPeriodSelect');
   if (sel) _ecPeriod = sel.value;
   refreshEconomy();
+}
+
+// Last ned omsetningsrapport (CSV) for valgt periode. Bruker samme periode-
+// parametre som tallene på skjermen, så rapporten stemmer med Omsetning-fanen.
+function ecDownloadReport(){
+  try {
+    const params = _ecPeriodToParams(_ecPeriod);
+    const url = `${_orderApiBase()}/api/economy/report${params}`;
+    const btn = document.getElementById('ecReportBtn');
+    if (btn){ btn.disabled = true; const t = btn.innerHTML; btn.style.opacity = '0.6';
+      setTimeout(() => { btn.disabled = false; btn.style.opacity = ''; btn.innerHTML = t; }, 2500); }
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';          // be nettleseren laste ned (Content-Disposition setter filnavn)
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch (e) {
+    alert('Kunne ikke laste ned rapport: ' + (e && e.message || e));
+  }
 }
 
 function _ecRenderPeriodSelector(stats){
