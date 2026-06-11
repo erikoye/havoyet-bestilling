@@ -932,14 +932,20 @@ def _parse_position_ts(ts) -> Optional[float]:
     """ABAX-tidsstempel (ISO-8601 eller epoch s/ms) → epoch-sekunder, ellers None."""
     if ts is None:
         return None
+    if isinstance(ts, bool):  # bool er subtype av int — ikke et tidsstempel
+        return None
     if isinstance(ts, (int, float)):
         v = float(ts)
+        if v != v or v in (float("inf"), float("-inf")):  # NaN/inf → ugyldig
+            return None
         return v / 1000.0 if v > 1e12 else v
     s = str(ts).strip()
     if not s:
         return None
     try:
         v = float(s)
+        if v != v or v in (float("inf"), float("-inf")):  # "NaN"/"inf" → ugyldig
+            return None
         return v / 1000.0 if v > 1e12 else v
     except ValueError:
         pass
