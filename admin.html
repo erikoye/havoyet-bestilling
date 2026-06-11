@@ -978,6 +978,7 @@
             <div class="rute-actions">
               <button class="btn-p" id="ruteApproveBtn" onclick="ruteApprove()" title="Marker ruten som OK — sender ingen varsler" style="min-width:140px;transition:all .2s;">Godkjenn rute</button>
               <button class="btn-p" id="ruteNotifyBtn" onclick="ruteNotify()" style="background:#0ea5e9;min-width:200px;transition:all .2s;" title="Send e-post til kundene med estimert leveringstid">📧 Send e-post til kunder</button>
+              <button class="btn-p" onclick="ruteEtaTest(this)" style="background:#64748b;transition:all .2s;" title="Send en test av leveringstids-e-posten til deg selv (ingen kunder varsles)">📧 Test-mail til meg</button>
               <button class="btn-danger" onclick="ruteReset()" title="Slett admins endringer og bruk auto-rute">Tilbakestill til auto</button>
             </div>
             <p style="font-size:11px;color:#64748b;margin:10px 0 0;line-height:1.5">
@@ -15705,6 +15706,25 @@ async function ruteRenderTemperature(date){
     <div style="margin-top:14px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#0f766e;font-weight:700">Mattilsynet-sjekkpunkter</div>
     <div style="margin-top:4px">${checksHtml}</div>
     ${logHtml}`;
+}
+
+// Sender en test av leveringstids-e-posten til deg selv (CONTACT_TO).
+// Ingen ekte kunder varsles — bygger en dummy-ordre på serveren.
+async function ruteEtaTest(btn){
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Sender …'; }
+  try {
+    const r = await _ruteApi('/api/admin/route/eta-test', { method: 'POST', body: { eta: '15:00', navn: 'Erik (test)' } });
+    if (r.ok && r.data && r.data.ok) {
+      alert('✓ Test-mail sendt til ' + (r.data.to || 'deg') + '. Sjekk innboksen.');
+    } else {
+      alert('Klarte ikke å sende test-mail: ' + ((r.data && (r.data.detail || r.data.error)) || ('HTTP ' + r.status)));
+    }
+  } catch (e) {
+    alert('Feil ved sending: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
 }
 
 async function ruteInit(){
