@@ -860,6 +860,10 @@ def _proximity_tick() -> None:
         position = pos_cache.get(vehicle_id)
         if not position:
             continue
+        # Ikke varsle på gammelt punkt — da ville «X min unna» vært regnet fra
+        # der bilen sto sist (ofte depotet), ikke der den faktisk er nå.
+        if not _position_is_live(position, "abax"):
+            continue
 
         try:
             eta = compute_eta(position["lat"], position["lon"], dest[0], dest[1])
@@ -913,6 +917,64 @@ def _verify_track_access(order_id: str) -> dict:
     if not expected or not secrets.compare_digest(str(token), str(expected)):
         abort(403)
     return order
+
+
+# ── Posisjons-ferskhet ─────────────────────────────────────────────────────
+# ABAX-brikken rapporterer typisk bare når tenningen er på / bilen kjører.
+# Når bilen står parkert (også på depotet) sender den ikke fersk posisjon, og
+# get_position() kan returnere et GAMMELT punkt. Uten ferskhets-sjekk regnet vi
+# da ut «X min unna» fra der bilen sto sist (ofte depotet/butikken) og viste et
+# urealistisk tall. Vi behandler en posisjon eldre enn dette som IKKE live.
+_POSITION_MAX_AGE_SEC = int(os.environ.get("ABAX_POSITION_MAX_AGE_SEC", "600"))  # 10 min
+
+
+def _parse_position_ts(ts) -> Optional[float]:
+    """ABAX-tidsstempel (ISO-8601 eller epoch s/ms) → epoch-sekunder, ellers None."""
+    if ts is None:
+        return None
+    if isinstance(ts, (int, float)):
+        v = float(ts)
+        return v / 1000.0 if v > 1e12 else v
+    s = str(ts).strip()
+    if not s:
+        return None
+    try:
+        v = float(s)
+        return v / 1000.0 if v > 1e12 else v
+    except ValueError:
+        pass
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _position_age_sec(position: Optional[dict]) -> Optional[float]:
+    """Alder på posisjonen i sekunder, eller None hvis tidsstempel mangler/ugyldig."""
+    if not position:
+        return None
+    ts = _parse_position_ts(position.get("timestamp"))
+    if ts is None:
+        return None
+    return max(0.0, time.time() - ts)
+
+
+def _position_is_live(position: Optional[dict], source: Optional[str]) -> bool:
+    """True bare hvis posisjonen er fra ABAX OG fersk nok til å stoles på.
+
+    Mangler tidsstempel helt → vi antar live (bevarer gammel oppførsel for
+    brikker som ikke sender ts), men depot-fallback regnes aldri som live.
+    """
+    if source != "abax" or not position:
+        return False
+    age = _position_age_sec(position)
+    if age is None:
+        return True
+    return age <= _POSITION_MAX_AGE_SEC
 
 
 @bp.get("/api/admin/tracking/preview-eta")
@@ -1000,6 +1062,8 @@ def admin_preview_eta():
         "duration_min": eta["duration_min"],
         "distance_km": eta["distance_km"],
         "eta_source": eta["source"],
+        "position_live": _position_is_live(position, source),
+        "position_age_sec": _position_age_sec(position),
         "vehicle": {
             "lat": position["lat"],
             "lon": position["lon"],
@@ -1063,7 +1127,10 @@ def public_order_eta(order_id: str):
     _depot = _state.get("depot")
     _dist_depot = (haversine_km(position["lat"], position["lon"], _depot[0], _depot[1])
                    if _depot else None)
-    en_route = (source == "abax") and (
+    # Fersk live-posisjon fra ABAX er en forutsetning — ellers viser vi aldri
+    # GPS-minutter (de ville da være regnet fra et gammelt/parkert punkt).
+    position_live = _position_is_live(position, source)
+    en_route = position_live and (
         _speed > 3 or (_dist_depot is not None and _dist_depot > 0.6)
     )
 
@@ -1092,6 +1159,9 @@ def public_order_eta(order_id: str):
         "order_id": order_id,
         "status": order.get("status"),
         "en_route": bool(en_route),
+        "live": bool(en_route),
+        "position_live": bool(position_live),
+        "position_age_sec": _position_age_sec(position),
         "approved": approved,
         "estimated_eta_clock": estimated_eta_clock,
         "stops_before": stops_before,
@@ -2903,6 +2973,18 @@ _TRACK_HTML = """<!doctype html>
       if (d.delivered) {
         document.getElementById("eta-card").innerHTML =
           '<div class="delivered">✓ Leveringen er fullført. Takk for at du handlet hos Havøyet!</div>';
+        return;
+      }
+      // Vis GPS-minutter BARE når bilen faktisk er underveis (fersk ABAX-posisjon
+      // + i bevegelse / forlatt depot). Ellers ville tallet vært regnet fra et
+      // gammelt/parkert punkt (typisk butikken) og vist et urealistisk estimat.
+      if (!d.live) {
+        $("num").textContent = "–";
+        $("unit").textContent = "";
+        $("dist").textContent = "—";
+        $("status").textContent = (d.approved && d.estimated_eta_clock)
+          ? ("Ca. kl. " + d.estimated_eta_clock)
+          : "Sjåføren har ikke kjørt ut ennå";
         return;
       }
       $("num").textContent = d.minutes;
