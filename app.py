@@ -1662,10 +1662,25 @@ def api_products_list():
     force = request.args.get("refresh") in ("1", "true", "yes")
     products = _get_products_baseline(force_refresh=force)
     overrides = _product_overrides or {}
+    baseline_slugs = set()
     for p in products:
-        ov = overrides.get(p.get("slug"))
+        slug = p.get("slug")
+        baseline_slugs.add(slug)
+        ov = overrides.get(slug)
         if isinstance(ov, dict):
             p.update(ov)
+    # Produkter som KUN finnes i overrides (opprettet i admin, ikke i data2.jsx-baseline).
+    # Uten dette blir _created-produkter (f.eks. fiskesuppe) usynlige for alle som
+    # leser denne lista — nyhetsbrev, varer.html osv. Krever et ekte navn for å
+    # hoppe over rene pris-stubber (slug-overrides uten produktdata).
+    for slug, ov in overrides.items():
+        if not isinstance(ov, dict) or slug in baseline_slugs:
+            continue
+        if not (ov.get("name") or "").strip():
+            continue
+        np = dict(ov)
+        np.setdefault("slug", slug)
+        products.append(np)
     cats = []
     seen = set()
     for p in products:
