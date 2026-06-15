@@ -3823,12 +3823,39 @@ def _orders_for_email(email):
     return orders
 
 
+def _require_account_access(requested_email):
+    """Returnerer (email, None) hvis forespørselen har lov til å lese/endre
+    kontodata for `requested_email`, ellers (None, (json_response, status)).
+
+    Regel: kunden må være innlogget (gyldig Bearer-token) OG token-eposten må
+    matche den forespurte e-posten. Admin (rolle=admin / X-Admin-Token) får lese
+    alle. Uten dette returnerte endepunktet tidligere HVEM SOM HELST sin
+    ordrehistorikk fra bare ?email= i URL-en (IDOR / persondata-lekkasje)."""
+    user, _ = _user_from_request()
+    requested = (requested_email or "").strip().lower()
+    if _is_admin_request():
+        # Admin må fortsatt oppgi hvilken kunde de slår opp.
+        if not requested:
+            return None, (jsonify({"error": "E-post mangler"}), 400)
+        return requested, None
+    if not user:
+        return None, (jsonify({"error": "Innlogging kreves"}), 401)
+    owner = (user.get("email") or "").strip().lower()
+    # Tom ?email = "min egen konto" for en innlogget bruker.
+    if not requested:
+        requested = owner
+    if requested != owner:
+        return None, (jsonify({"error": "Ingen tilgang til denne kontoen"}), 403)
+    return requested, None
+
+
 @app.route("/api/customer/account")
 def api_customer_account():
-    """?email=... → returnerer ordrehistorikk + favoritter for kunden."""
-    email = (request.args.get("email") or "").strip().lower()
-    if not email:
-        return jsonify({"error": "E-post mangler"}), 400
+    """?email=... → returnerer ordrehistorikk + favoritter for kunden.
+    Krever innlogging + eierskap (eller admin) — se _require_account_access."""
+    email, deny = _require_account_access(request.args.get("email"))
+    if deny:
+        return deny
     return jsonify({
         "email": email,
         "orders": _orders_for_email(email),
@@ -3841,11 +3868,13 @@ def api_customer_favorites():
     """POST {email, slug, action: toggle|add|remove} → oppdater favoritter."""
     global _customer_favorites
     data = request.get_json(force=True) or {}
-    email  = (data.get("email") or "").strip().lower()
+    email, deny = _require_account_access(data.get("email"))
+    if deny:
+        return deny
     slug   = (data.get("slug") or "").strip()
     action = (data.get("action") or "toggle").strip()
-    if not email or not slug:
-        return jsonify({"error": "E-post og slug er påkrevet"}), 400
+    if not slug:
+        return jsonify({"error": "slug er påkrevet"}), 400
     current = set(_customer_favorites.get(email, []))
     if action == "add":
         current.add(slug)
