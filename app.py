@@ -114,6 +114,13 @@ try:
     import stripe as _stripe
     if STRIPE_SECRET_KEY:
         _stripe.api_key = STRIPE_SECRET_KEY
+    # Robusthet: kort timeout + retries så en treg Stripe-respons ikke henger en
+    # gunicorn-worker i default 80s (kan ellers kvele hele API-et).
+    try:
+        _stripe.max_network_retries = 2
+        _stripe.default_http_client = _stripe.http_client.RequestsClient(timeout=20)
+    except Exception:
+        pass
 except Exception:
     _stripe = None
 _vipps_token_cache      = {"access_token": None, "expires_at": 0.0}
