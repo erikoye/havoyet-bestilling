@@ -164,6 +164,7 @@ def _normalize_manual_order(o):
             "sku":          v.get("sku"),
             "grams":        v.get("grams", 0),
             "kind":         v.get("kind") or "",
+            "unitLabel":    v.get("unitLabel") or "",
             "tilbehorValgt": v.get("tilbehorValgt") or v.get("tilbehor_valgt") or [],
             "boxSelection":  v.get("boxSelection") or [],
             # Eksakt valgt kasse-innhold fra storefront (total = perPerson × personer)
@@ -2607,6 +2608,19 @@ def _qty_text(item):
     except (TypeError, ValueError):
         qty = 1
     unit = (item.get("unit") or "").lower()
+    # Produkt som VISES per stk (unitLabel="stk") skal vises i stk i e-posten
+    # også — selv om det er kr/kg-priset (kind="fish") og checkout sendte
+    # vekt/`grams`. Admin bruker samme unitLabel; dette holder e-post i synk med
+    # admin (f.eks. «Fiskekaker 2 stk», ikke «500 g»).
+    if unit != "stk":
+        _ul = str(item.get("unitLabel") or "").lower()          # linjens eget felt (som admin bruker)
+        if _ul != "stk":
+            _slug = (item.get("slug") or "").strip()            # reserve: slå opp i overrides
+            _prod = _overrides.get(_slug) if _slug else None
+            if _prod:
+                _ul = str(_prod.get("unitLabel") or "").lower()
+        if _ul == "stk":
+            unit = "stk"
     # Kanonisk totalvekt fra checkout (`grams` = vekt × antall, satt av
     # havoyet.no) — autoritativ når den finnes. Allerede total, skal ikke
     # skaleres med qty.
