@@ -1145,7 +1145,14 @@ def api_manual_orders():
                 html_body=_format_order_email_html(o, "Det er kommet inn en ny bestilling.", "new_order"),
             )
         return jsonify({"ok": True, "count": len(_manual_orders)})
-    return jsonify(_manual_orders)
+    # Skjul pre-betalings-ordre (AWAITING_PAYMENT/PENDING/CART) fra den aktive
+    # ordre-/pakkelista — de er IKKE betalt og skal ikke pakkes. De beholdes i
+    # _manual_orders slik at en sen Vipps/Stripe-webhook fortsatt kan flippe dem
+    # til PAID (da dukker de opp igjen). ?include_pending=1 gir full liste.
+    if request.args.get("include_pending") == "1":
+        return jsonify(_manual_orders)
+    visible = [o for o in _manual_orders if not _is_pending_order_status(o.get("status"))]
+    return jsonify(visible)
 
 
 @app.route("/api/manual-orders/<order_id>", methods=["DELETE"])
