@@ -2986,6 +2986,28 @@ let _AUTH_USER  = (() => { try { return JSON.parse(localStorage.getItem('havoyet
 function _authHeaders() {
   return _AUTH_TOKEN ? { 'Authorization': 'Bearer ' + _AUTH_TOKEN } : {};
 }
+// ─── SIKKERHET: fest admin-token på ALLE Flask-API-kall ────────────────────
+// Kunde-/abonnent-/forlatt-kurv-/varsler-endepunktene krever nå innlogget
+// admin (fail-closed backend). Vi patcher fetch én gang slik at hvert /api/-kall
+// bærer Bearer-tokenet — uten å endre hvert enkelt kallsted.
+(function(){
+  if (window.__hvAuthFetchPatched) return;
+  window.__hvAuthFetchPatched = true;
+  var _origFetch = window.fetch.bind(window);
+  window.fetch = function(input, init){
+    init = init || {};
+    try {
+      var url = (typeof input === 'string') ? input : (input && input.url) || '';
+      var tok = localStorage.getItem('havoyet_auth_token');
+      if (tok && url.indexOf('/api/') !== -1) {
+        var h = new Headers((init && init.headers) || (typeof input !== 'string' && input && input.headers) || {});
+        if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + tok);
+        init.headers = h;
+      }
+    } catch (e) {}
+    return _origFetch(input, init);
+  };
+})();
 function _redirectToLogin() {
   try { localStorage.removeItem('havoyet_auth_token'); localStorage.removeItem('havoyet_auth_user'); } catch(e) {}
   if (location.protocol === 'file:') return; // unngå broken redirect ved lokal testing

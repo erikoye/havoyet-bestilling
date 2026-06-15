@@ -1394,6 +1394,8 @@ def api_checkout_snapshot():
 def api_abandoned_carts():
     """Liste forlatte kasser. Default returnerer alt unntatt 'converted'.
     Bruk ?status=all for alle, ?status=open for kun aktive."""
+    deny = _require_admin_user()
+    if deny: return deny
     status_filter = (request.args.get("status") or "").strip().lower()
     items = list(_abandoned_carts or [])
     if status_filter == "all":
@@ -1409,6 +1411,8 @@ def api_abandoned_carts():
 @app.route("/api/abandoned-carts/<cart_id>", methods=["PATCH", "DELETE"])
 def api_abandoned_cart_item(cart_id):
     """PATCH: oppdater status (open|contacted). DELETE: fjern snapshot."""
+    deny = _require_admin_user()
+    if deny: return deny
     global _abandoned_carts
     idx = next((i for i, c in enumerate(_abandoned_carts) if c.get("id") == cart_id), None)
     if idx is None:
@@ -3059,6 +3063,8 @@ def _find_order(order_id):
 @app.route("/api/customers", methods=["GET", "POST"])
 def api_customers():
     """GET: liste manuelt registrerte kunder. POST: opprett ny."""
+    deny = _require_admin_user()
+    if deny: return deny
     global _customers
     if request.method == "POST":
         data = request.get_json(force=True) or {}
@@ -3097,6 +3103,8 @@ def api_customers():
 @app.route("/api/customers/<customer_id>", methods=["PATCH", "DELETE"])
 def api_customer_one(customer_id):
     """PATCH: oppdater kunde. DELETE: fjern."""
+    deny = _require_admin_user()
+    if deny: return deny
     global _customers
     if request.method == "DELETE":
         before = len(_customers)
@@ -3126,6 +3134,8 @@ def api_customer_one(customer_id):
 @app.route("/api/admin/notifiers", methods=["GET", "POST"])
 def api_admin_notifiers():
     """GET: liste alle admin-mottakere. POST: opprett ny."""
+    deny = _require_admin_user()
+    if deny: return deny
     global _admin_notifiers
     if request.method == "POST":
         data = request.get_json(force=True) or {}
@@ -3201,6 +3211,8 @@ def api_admin_notifiers():
 @app.route("/api/admin/notifiers/<notifier_id>", methods=["PATCH", "DELETE"])
 def api_admin_notifier_one(notifier_id):
     """PATCH: oppdater navn/events. DELETE: fjern."""
+    deny = _require_admin_user()
+    if deny: return deny
     global _admin_notifiers
     if request.method == "DELETE":
         before = len(_admin_notifiers)
@@ -3270,6 +3282,8 @@ def api_admin_notifier_one(notifier_id):
 @app.route("/api/admin/notifiers/test", methods=["POST"])
 def api_admin_notifier_test():
     """Send testvarsel (e-post + SMS) til alle (eller én spesifikk) mottaker."""
+    deny = _require_admin_user()
+    if deny: return deny
     data = request.get_json(force=True) or {}
     target_id = data.get("id")
     targets = _admin_notifiers
@@ -3343,6 +3357,8 @@ def api_admin_notifier_test():
 def api_admin_notifier_status():
     """Hva er konfigurert? Brukes av admin-UI til å vise hvilke kanaler som
     faktisk vil sende noe akkurat nå."""
+    deny = _require_admin_user()
+    if deny: return deny
     return jsonify({
         "email": {
             "resend":    bool(RESEND_API_KEY),
@@ -7218,6 +7234,25 @@ def _user_from_request():
         return None, None
     return user, token
 
+def _require_admin_user():
+    """Fail-closed admin-gate: krever innlogget bruker med rolle 'admin'
+    (Bearer-token) ELLER gyldig X-Admin-Token. I motsetning til
+    _is_admin_request() faller denne ALDRI åpen når ADMIN_API_TOKEN er uset.
+    Returnerer None hvis tilgang OK, ellers (json_response, status) for 403.
+    Brukes på endepunkt som lekker kunde-PII / e-postliste / admin-data."""
+    try:
+        user, _ = _user_from_request()
+        if user and (user.get("role") or "").lower() == "admin":
+            return None
+    except Exception:
+        pass
+    if ADMIN_API_TOKEN:
+        tok = (request.headers.get("X-Admin-Token") or "").strip()
+        if tok and _hmac_mod.compare_digest(tok, ADMIN_API_TOKEN):
+            return None
+    return (jsonify({"error": "Admin-tilgang kreves"}), 403)
+
+
 def _public_user(u):
     email = u.get("email") or ""
     # _is_active_subscriber defineres lenger ned i fila (i NYHETSBREV-ABONNENTER-
@@ -9636,6 +9671,8 @@ def _is_active_subscriber(email):
 @app.route("/api/subscribers", methods=["GET"])
 def api_subscribers_list():
     """Lister abonnenter. Filter: ?status=active|unsubscribed|bounced (default: alle)."""
+    deny = _require_admin_user()
+    if deny: return deny
     status_filter = (request.args.get("status") or "").strip().lower()
     rows = _subscribers
     if status_filter in ("active", "unsubscribed", "bounced"):
