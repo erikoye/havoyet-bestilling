@@ -18,6 +18,10 @@ import os
 import secrets
 from datetime import datetime, timedelta, date, timezone
 try:
+    from pricing_validation import validate_order_payment as _validate_order_payment
+except Exception:
+    _validate_order_payment = None  # best-effort: betaling slippes gjennom hvis modul mangler
+try:
     from zoneinfo import ZoneInfo
     _OSLO_TZ = ZoneInfo("Europe/Oslo")
 except Exception:
@@ -4171,6 +4175,8 @@ def api_vipps_init():
     amount  = int(data.get("amount", 0))            # i ØRE (1 kr = 100 øre)
     if amount <= 0:
         return jsonify({"error": "Ugyldig beløp"}), 400
+    deny = _check_payment_amount(ordrenr, amount)
+    if deny: return deny
     return_url = data.get("returnUrl") or f"{request.host_url.rstrip('/')}/kasse?vipps={ordrenr}"
     phone     = (data.get("phoneNumber") or "").replace(" ", "").lstrip("+")
     # Vipps krever 47XXXXXXXX (landkode + 8 sifre)
@@ -5616,6 +5622,8 @@ def api_checkout_init():
     amount    = int(data.get("amount", 0))      # i øre
     if amount <= 0:
         return jsonify({"error": "Ugyldig beløp"}), 400
+    deny = _check_payment_amount(ordrenr, amount)
+    if deny: return deny
     methods   = data.get("methods") or ["WALLET", "CARD"]
     return_url = _force_https(data.get("returnUrl") or f"{request.host_url.rstrip('/')}/kasse?ordre={ordrenr}")
     callback_url = _force_https(f"{request.host_url.rstrip('/')}/api/vipps/callback")
@@ -6303,6 +6311,11 @@ def api_checkout_card_payment_intent():
     customer = data.get("customer") or {}
     requires_capture  = bool(data.get("requires_capture"))
     reservation_items = data.get("reservation_items") or []
+    # Hopp over beløpsvalidering for reservasjon (hel-fisk): da HOLDES kortet på
+    # estimert MAKS-beløp (> ordrens sum), så amount != sum er forventet og riktig.
+    if not requires_capture:
+        deny = _check_payment_amount(ordrenr, amount)
+        if deny: return deny
     try:
         intent_kwargs = dict(
             amount=amount,
@@ -7252,6 +7265,35 @@ def _require_admin_user():
         if tok and _hmac_mod.compare_digest(tok, ADMIN_API_TOKEN):
             return None
     return (jsonify({"error": "Admin-tilgang kreves"}), 403)
+
+
+def _check_payment_amount(ordrenr, amount_ore):
+    """Validér betalingsbeløp mot den PRE-LAGREDE ordren (checkout lagrer ordren
+    med status AWAITING_PAYMENT via /api/orders/new FØR betaling opprettes).
+    Returnerer (json, 400) ved avvik, ellers None.
+
+    Best-effort: hvis modulen mangler, ordren ikke er pre-lagret, eller noe
+    kaster, logges det og betalingen slippes gjennom — vi vil ALDRI blokkere en
+    legitim betaling pga. en valideringsfeil. Lukker det trivielle «betal 1 kr
+    for en ekte ordre»-angrepet; en angriper som hopper over /api/orders/new får
+    en betaling uten matchende ordre (synlig avvik for admin)."""
+    if not _validate_order_payment or not ordrenr:
+        return None
+    target = str(ordrenr).strip()
+    order = next((o for o in (_manual_orders or [])
+                  if str(o.get("ordrenr") or o.get("id") or "").strip() == target), None)
+    if order is None:
+        print(f"[PAY] kan ikke validere beløp — ordre {target} ikke pre-lagret (slipper gjennom)")
+        return None
+    try:
+        ok, why = _validate_order_payment(order, amount_ore)
+    except Exception as e:
+        print(f"[PAY] valideringsfeil for {target}: {e} (slipper gjennom)")
+        return None
+    if not ok:
+        print(f"[PAY] AVVIST beløp for ordre {target}: {why} (amount={amount_ore} øre)")
+        return jsonify({"error": "Betalingsbeløpet stemmer ikke med ordren. Last siden på nytt og prøv igjen."}), 400
+    return None
 
 
 def _client_ip():
