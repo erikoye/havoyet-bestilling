@@ -94,7 +94,7 @@ VIPPS_SUBSCRIPTION_KEY  = os.environ.get("VIPPS_SUBSCRIPTION_KEY", "")
 VIPPS_MSN               = os.environ.get("VIPPS_MSN", "")             # Merchant Serial Number
 VIPPS_TEST_MODE         = os.environ.get("VIPPS_TEST_MODE", "0") == "1"
 VIPPS_API_BASE          = "https://apitest.vipps.no" if VIPPS_TEST_MODE else "https://api.vipps.no"
-VIPPS_PAYMENTS_FILE     = os.path.join("/tmp", "havoyet_vipps_payments.json")
+VIPPS_PAYMENTS_FILE     = os.path.join(STATE_DIR, "havoyet_vipps_payments.json")  # persistent disk, ikke /tmp (overlevde ikke Render-restart)
 
 # ── STRIPE (kort-betaling, separat fra Vipps) ────────────────────────────────
 STRIPE_SECRET_KEY      = os.environ.get("STRIPE_SECRET_KEY", "")
@@ -105,7 +105,7 @@ STRIPE_PUBLISHABLE_KEY = (os.environ.get("STRIPE_PUBLISHABLE_KEY")
                          or os.environ.get("STRIPE_Publishable_KEY")
                          or os.environ.get("STRIPE_PUBLIC_KEY")
                          or "")
-STRIPE_PAYMENTS_FILE   = os.path.join("/tmp", "havoyet_stripe_payments.json")
+STRIPE_PAYMENTS_FILE   = os.path.join(STATE_DIR, "havoyet_stripe_payments.json")  # persistent disk, ikke /tmp (overlevde ikke Render-restart)
 try:
     import stripe as _stripe
     if STRIPE_SECRET_KEY:
@@ -3563,6 +3563,8 @@ def api_admin_telegram_setup():
 def api_contact():
     """Kontakt-skjema → e-post til erik@havoyet.no."""
     data = request.get_json(force=True) or {}
+    if _rate_limited(f"contact:{_client_ip()}", 6, 600):
+        return jsonify({"error": "For mange meldinger på kort tid. Vent litt før du sender igjen."}), 429
     navn    = (data.get("navn") or "").strip()
     epost   = (data.get("epost") or "").strip()
     melding = (data.get("melding") or "").strip()
@@ -6573,11 +6575,10 @@ def api_webhook_stripe():
         except Exception as e:
             return jsonify({"error": f"Ugyldig signatur: {e}"}), 400
     else:
-        # Uten secret — kun for utvikling/test
-        try:
-            event = json.loads(payload.decode("utf-8") or "{}")
-        except Exception:
-            return jsonify({"error": "Ugyldig payload"}), 400
+        # Fail-closed: uten webhook-secret kan vi ikke stole på payloaden — hvem
+        # som helst kunne ellers POSTe en falsk «checkout.session.completed» og
+        # markere en ordre betalt. Krev at STRIPE_WEBHOOK_SECRET er satt.
+        return jsonify({"error": "Webhook ikke konfigurert (mangler STRIPE_WEBHOOK_SECRET)"}), 503
 
     etype = event.get("type") if isinstance(event, dict) else event["type"]
     obj   = (event.get("data") if isinstance(event, dict) else event["data"]).get("object", {}) or {}
@@ -7253,6 +7254,27 @@ def _require_admin_user():
     return (jsonify({"error": "Admin-tilgang kreves"}), 403)
 
 
+def _client_ip():
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.headers.get("X-Real-IP") or request.remote_addr or "?"
+
+# ── Enkel in-memory rate-limiting (Render kjører 1 gunicorn-worker → eksakt) ──
+_rate_buckets = {}  # key → [timestamps]
+def _rate_limited(key, max_n, window_s):
+    """True hvis `key` har gjort > max_n forsøk innen window_s sekunder.
+    Teller samtidig opp dette forsøket. In-memory (nullstilles ved restart)."""
+    now = time.time()
+    bucket = [t for t in _rate_buckets.get(key, []) if now - t < window_s]
+    bucket.append(now)
+    _rate_buckets[key] = bucket
+    if len(_rate_buckets) > 5000:  # enkel opprydding så dict-en ikke vokser uten grense
+        for k in list(_rate_buckets.keys())[:1000]:
+            _rate_buckets.pop(k, None)
+    return len(bucket) > max_n
+
+
 def _public_user(u):
     email = u.get("email") or ""
     # _is_active_subscriber defineres lenger ned i fila (i NYHETSBREV-ABONNENTER-
@@ -7276,6 +7298,8 @@ def api_auth_login():
     data = request.get_json(force=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
+    if _rate_limited(f"login:{_client_ip()}:{email}", 10, 300):
+        return jsonify({"ok": False, "error": "For mange innloggingsforsøk. Vent noen minutter og prøv igjen."}), 429
     user = _find_user(email)
     if not user:
         return jsonify({"ok": False, "error": "Ugyldig e-post eller passord"}), 401
@@ -7334,6 +7358,8 @@ def api_auth_forgot_password():
     e-posten finnes (returnerer alltid ok=true), for å unngå enumeration."""
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
+    if _rate_limited(f"forgot:{_client_ip()}", 5, 600):
+        return jsonify({"ok": True, "message": "Hvis e-posten er registrert, har vi sendt deg en lenke."}), 429
     if not email or "@" not in email:
         return jsonify({"ok": False, "error": "Ugyldig e-post"}), 400
     user = _find_user(email)
@@ -7375,6 +7401,8 @@ def api_auth_forgot_password():
 def api_auth_reset_password():
     """Bruker reset-token + nytt passord."""
     data = request.get_json(silent=True) or {}
+    if _rate_limited(f"reset:{_client_ip()}", 10, 600):
+        return jsonify({"ok": False, "error": "For mange forsøk. Vent litt og prøv igjen."}), 429
     token = (data.get("token") or "").strip()
     new_pwd = data.get("newPassword") or ""
     if not token: return jsonify({"ok": False, "error": "Mangler token"}), 400
@@ -7406,6 +7434,8 @@ def api_auth_reset_password():
 def api_customer_auth_register():
     """Selvbetjent kunde-registrering med passord. Oppretter ny konto og logger inn."""
     data = request.get_json(force=True) or {}
+    if _rate_limited(f"register:{_client_ip()}", 8, 3600):
+        return jsonify({"ok": False, "error": "For mange registreringer fra denne tilkoblingen. Prøv igjen senere."}), 429
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
     if not email or "@" not in email:
