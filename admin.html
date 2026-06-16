@@ -5834,6 +5834,9 @@ function _renderEditLines(){
     // varene i pakke-flow. Resultat: admin og bestillingsside ble usynkronisert.
     const packingLine = packingForOrder && packingForOrder[i];
     const packingAvail = packingLine && packingLine.avail;
+    // Bekreftet erstatning på en vanlig vare (valgt i pakke.html) — vises også her.
+    const packingRepl = (packingLine && !packingLine.isKasse && packingLine.confirmedReplacement)
+      ? _adminReplObj(packingLine.confirmedReplacement) : null;
     const availRaw = packingAvail || v.avail || 'unsure';
     const avail = availRaw === 'maybe' ? 'unsure' : availRaw;
     // Redigerbart navn for tomme rader OG nylagte manuelle rader (_manual).
@@ -5870,7 +5873,9 @@ function _renderEditLines(){
               placeholder="Navn på vare (skriv 3+ bokstaver)" autocomplete="off"/>
             <div class="ed-prod-dropdown" id="ed-prod-dd-${i}"></div>
           </div>`
-        : `<div class="ed-var-name">${_escAttr(displayName)}</div>`}
+        : `<div class="ed-var-name">${packingRepl
+            ? `<span style="text-decoration:line-through;opacity:.55;">${_escAttr(displayName)}</span> <span style="color:var(--grn,#16794f);">→ ${_escAttr(packingRepl.name)}</span> <span style="font-size:11px;color:var(--hv-fg-3,#8a948f);font-weight:600;">erstatning</span>`
+            : _escAttr(displayName)}</div>`}
       ${(variants.length || weight) ? `
         <div class="ed-var-meta">
           ${variants.length ? `<span class="ed-var-meta-lbl">Valgt</span>` : ''}

@@ -2391,15 +2391,15 @@ function renderItemCard(item, i, s) {
     return `avail-btn active-${val === 'ok' ? 'ok' : val === 'unsure' ? 'unsure' : 'no'}`;
   };
 
-  const selectedChips = s.replacements.map(fid => {
-    const f = FISH_DB.find(x => x.id === fid);
-    if (!f) return '';
-    const isConfirmed = s.confirmedReplacement === fid;
+  const selectedChips = s.replacements.map(r => {
+    const key = _replKey(r); const obj = _replObj(r);
+    if (!obj) return '';
+    const isConfirmed = _replKey(s.confirmedReplacement) === key;
     return `<span class="replacement-chip ${isConfirmed ? 'confirmed' : ''}">
       ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
-      ${f.name}
-      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmReplacement('${currentOrderId}',${i},'${fid}')">Bekreft</button>` : ''}
-      <button class="chip-remove" onclick="removeReplacement('${currentOrderId}',${i},'${fid}')">✕</button>
+      ${escHtml(obj.name)}
+      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmReplacement('${currentOrderId}',${i},'${escHtml(key)}')">Bekreft</button>` : ''}
+      <button class="chip-remove" onclick="removeReplacement('${currentOrderId}',${i},'${escHtml(key)}')">✕</button>
     </span>`;
   }).join('');
 
@@ -2408,7 +2408,7 @@ function renderItemCard(item, i, s) {
   return `
   <div class="item-card ${statusClass}" id="card-${i}">
     <div class="item-top">
-      <div class="item-name" id="item-name-${i}">${s.confirmedReplacement ? (() => { const f=FISH_DB.find(x=>x.id===s.confirmedReplacement); return f ? `<span class="item-name replaced">${formatItemName(item)}</span> <span class="item-name-replacement">${f.name}</span>` : formatItemName(item); })() : formatItemName(item)}${variantOptionBadges(item)}</div>
+      <div class="item-name" id="item-name-${i}">${s.confirmedReplacement ? (() => { const f=_replObj(s.confirmedReplacement); return f ? `<span class="item-name replaced">${formatItemName(item)}</span> <span class="item-name-replacement">${escHtml(f.name)}</span>` : formatItemName(item); })() : formatItemName(item)}${variantOptionBadges(item)}</div>
       ${renderItemQtyEditor(item, i)}
       ${_hasSpec ? `<button class="btn-spec" id="spec-btn-${i}" type="button" onclick="toggleSpec(${i})" title="Vis kundens valg av variant">Spesifikasjoner</button>` : ''}
       <div class="avail-toggle">
@@ -2959,78 +2959,95 @@ function onFieldChange(orderId, i, field, val) {
 }
 
 function onSearch(orderId, i, query) {
-  const q = query.toLowerCase().trim();
+  const q = String(query||'').toLowerCase().trim();
   const resultsEl = document.getElementById('results-'+i);
+  if (!resultsEl) return;
   if (!q) { resultsEl.innerHTML=''; resultsEl.classList.remove('visible'); return; }
-  const matches = FISH_DB.filter(f => f.name.toLowerCase().includes(q) || f.category.toLowerCase().includes(q));
+  // Samme kilde som nettsiden: tilgjengelige produkter (PRODUCT_LIST), samme navn.
+  const matches = _replSearchSource(q);
   if (!matches.length) {
-    resultsEl.innerHTML=`<div style="padding:12px 14px;font-size:13px;color:var(--muted)">Ingen treff på «${query}»</div>`;
+    resultsEl.innerHTML=`<div style="padding:12px 14px;font-size:13px;color:var(--muted)">Ingen treff på «${escHtml(query)}»</div>`;
     resultsEl.classList.add('visible'); return;
   }
-  const selected = STATE[orderId][i].replacements;
-  resultsEl.innerHTML = matches.map(f => {
-    const isSel = selected.includes(f.id);
-    return `<div class="result-item ${isSel?'selected':''}" onclick="toggleReplacement('${orderId}',${i},'${f.id}')">
+  const selected = (STATE[orderId][i].replacements||[]).map(_replKey);
+  resultsEl.innerHTML = matches.map(p => {
+    const key = _replKey(p);
+    const isSel = selected.includes(key);
+    const priceStr = p.price ? `${p.price} kr/${escHtml(p.unitLabel || 'stk')}` : '';
+    return `<div class="result-item ${isSel?'selected':''}" onclick="toggleReplacement('${orderId}',${i},'${escHtml(key)}')">
       <div class="result-check">${isSel?`<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`:''}</div>
-      <span class="result-name">${f.name}</span>
-      <span class="result-detail">${f.category} · ${f.unit}</span>
+      <span class="result-name">${escHtml(p.name)}</span>
+      <span class="result-detail">${escHtml(p.cat || '')}${priceStr ? ' · ' + priceStr : ''}</span>
     </div>`;
   }).join('');
   resultsEl.classList.add('visible');
 }
 
-function toggleReplacement(orderId, i, fishId) {
+function toggleReplacement(orderId, i, key) {
   const s = STATE[orderId][i];
-  s.replacements = s.replacements.includes(fishId)
-    ? s.replacements.filter(id=>id!==fishId)
-    : [...s.replacements, fishId];
+  if (!Array.isArray(s.replacements)) s.replacements = [];
+  const existing = s.replacements.findIndex(r => _replKey(r) === key);
+  if (existing >= 0) {
+    s.replacements.splice(existing, 1);
+    if (_replKey(s.confirmedReplacement) === key) s.confirmedReplacement = null;
+  } else {
+    // Lagre HELE produkt-objektet (slug+navn+pris) så det overlever sync/re-render.
+    const p = PRODUCT_LIST.find(x => _replKey(x) === key) || _replObj(key);
+    s.replacements.push(p);
+  }
   const q = document.getElementById('search-'+i)?.value || '';
   onSearch(orderId, i, q);
   updateChips(orderId, i);
+  saveState();   // FIX: persister valget — uten dette forsvant erstatningen ved neste sync/re-render
 }
 
-function removeReplacement(orderId, i, fishId) {
-  STATE[orderId][i].replacements = STATE[orderId][i].replacements.filter(id=>id!==fishId);
+function removeReplacement(orderId, i, key) {
+  const s = STATE[orderId][i];
+  s.replacements = (s.replacements||[]).filter(r => _replKey(r) !== key);
+  if (_replKey(s.confirmedReplacement) === key) s.confirmedReplacement = null;
   updateChips(orderId, i);
+  saveState();
 }
 
 function updateChips(orderId, i) {
   const chipsEl = document.getElementById('chips-'+i);
   if (!chipsEl) return;
   const s = STATE[orderId][i];
-  chipsEl.innerHTML = s.replacements.map(fid => {
-    const f = FISH_DB.find(x=>x.id===fid);
-    if (!f) return '';
-    const isConfirmed = s.confirmedReplacement === fid;
+  chipsEl.innerHTML = (s.replacements||[]).map(r => {
+    const key = _replKey(r); const obj = _replObj(r);
+    if (!obj) return '';
+    const isConfirmed = _replKey(s.confirmedReplacement) === key;
     return `<span class="replacement-chip ${isConfirmed ? 'confirmed' : ''}">
       ${isConfirmed ? '<svg style="width:12px;height:12px;flex-shrink:0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
-      ${f.name}
-      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmReplacement('${orderId}',${i},'${fid}')">Bekreft</button>` : ''}
-      ${isConfirmed ? `<button class="chip-revert" title="Fjern erstatning og gå tilbake til original" onclick="confirmReplacement('${orderId}',${i},'${fid}')">↶ Tilbake til original</button>` : ''}
-      <button class="chip-remove" onclick="removeReplacement('${orderId}',${i},'${fid}')">✕</button>
+      ${escHtml(obj.name)}
+      ${!isConfirmed ? `<button class="chip-confirm" onclick="confirmReplacement('${orderId}',${i},'${escHtml(key)}')">Bekreft</button>` : ''}
+      ${isConfirmed ? `<button class="chip-revert" title="Fjern erstatning og gå tilbake til original" onclick="confirmReplacement('${orderId}',${i},'${escHtml(key)}')">↶ Tilbake til original</button>` : ''}
+      <button class="chip-remove" onclick="removeReplacement('${orderId}',${i},'${escHtml(key)}')">✕</button>
     </span>`;
   }).join('');
 
   // Oppdater varenavn i kortets header
   const nameEl = document.getElementById('item-name-'+i);
   if (nameEl) {
-    const confirmed = s.confirmedReplacement ? FISH_DB.find(x=>x.id===s.confirmedReplacement) : null;
+    const confirmed = s.confirmedReplacement ? _replObj(s.confirmedReplacement) : null;
     const order = ORDERS.find(x=>x.id===orderId);
     const originalItem = order ? order.items[i] : null;
     const originalName = originalItem ? formatItemName(originalItem) : '';
     const badges = originalItem ? variantOptionBadges(originalItem) : '';
     if (confirmed) {
-      nameEl.innerHTML = `<span class="item-name replaced">${originalName}</span> <span class="item-name-replacement">${confirmed.name}</span>${badges}`;
+      nameEl.innerHTML = `<span class="item-name replaced">${originalName}</span> <span class="item-name-replacement">${escHtml(confirmed.name)}</span>${badges}`;
     } else {
       nameEl.innerHTML = `${originalName}${badges}`;
     }
   }
 }
 
-function confirmReplacement(orderId, i, fishId) {
+function confirmReplacement(orderId, i, key) {
   const s = STATE[orderId][i];
-  // Klikk på allerede bekreftet = angre
-  s.confirmedReplacement = s.confirmedReplacement === fishId ? null : fishId;
+  // Klikk på allerede bekreftet = angre. Lagrer HELE objektet (slug+navn) så
+  // admin.html viser riktig PRODUKTNAVN (ikke bare slug) og det overlever sync.
+  const isCur = _replKey(s.confirmedReplacement) === key;
+  s.confirmedReplacement = isCur ? null : ((s.replacements||[]).find(r => _replKey(r) === key) || _replObj(key));
   updateChips(orderId, i);
   saveState();
 }
