@@ -2226,6 +2226,23 @@ function _guessUnitFromName(name){
   return 'kg';
 }
 
+// Enhet (g/stk) for veiing hentet fra GJELDENDE admin-katalog (PRODUCT_LIST), per slug.
+// kr/kg-produkter (kind != 'unit') veies i gram; kr/stk-produkter (kind 'unit') i stk.
+// Slik følger pakke-visningen alltid produkttypen i admin – endrer du den der, slår
+// den gjennom her. Returnerer null hvis produktet ikke finnes i katalogen (fallback
+// til linjas egen enhet beholdes da).
+function _catUnit(item){
+  if (!item || !Array.isArray(PRODUCT_LIST) || !PRODUCT_LIST.length) return null;
+  let p = null;
+  if (item.slug) p = PRODUCT_LIST.find(x => x.slug === item.slug);
+  if (!p && item.name){
+    const n = String(item.name).toLowerCase().trim().replace(/\s*\([^)]*\)\s*$/, '').trim();
+    p = PRODUCT_LIST.find(x => (x.name || '').toLowerCase().trim() === n);
+  }
+  if (!p) return null;
+  return (p.kind === 'unit' || p.unitLabel === 'stk') ? 'stk' : 'g';
+}
+
 // Trekker ut antall gram fra en tekst som "ca. 500 g", "500 g", "1 kg", "1,2 kg".
 // Returnerer antall gram (integer) eller null hvis ingenting matcher.
 function _extractGramsFromText(text){
@@ -2428,7 +2445,7 @@ function renderItemCard(item, i, s) {
           <input class="field-input${weightOk?' filled':''}" id="weight-${i}" type="number" min="1"
             placeholder="0" value="${s.weight}"
             oninput="onFieldChange('${currentOrderId}',${i},'weight',this.value)"/>
-          <span style="font-size:12px;font-weight:600;color:var(--muted);padding:0 6px;align-self:center">${item && item.unit ? item.unit : (s.weightUnit||'g')}</span>
+          <span style="font-size:12px;font-weight:600;color:var(--muted);padding:0 6px;align-self:center">${_catUnit(item) || (item && item.unit) || (s.weightUnit||'g')}</span>
         </div>
         <div class="field-check ${weightOk?'ok':'empty'}">
           ${weightOk?`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Lagret`:''}
