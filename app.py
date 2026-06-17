@@ -2506,7 +2506,7 @@ def _format_message_email_html(source, navn, epost, melding, *, tlf="", emne="",
     info_rows.append(("E-post", f'<a href="mailto:{esc(epost)}" style="color:#0d9488;text-decoration:none">{esc(epost)}</a>' if epost else "—"))
     if tlf:
         info_rows.append(("Telefon", f'<a href="tel:{esc(tlf)}" style="color:#0d9488;text-decoration:none">{esc(tlf)}</a>'))
-    info_rows.append(("Mottatt", datetime.now().strftime("%Y-%m-%d kl. %H:%M")))
+    info_rows.append(("Mottatt", datetime.now(_OSLO_TZ).strftime("%Y-%m-%d kl. %H:%M")))
     info_rows.append(("Kilde", esc(source)))
     if emne:
         info_rows.append(("Emne", esc(emne)))
@@ -3307,7 +3307,7 @@ def api_admin_notifier_test():
     targets = _admin_notifiers
     if target_id:
         targets = [n for n in _admin_notifiers if n.get("id") == target_id]
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ts = datetime.now(_OSLO_TZ).strftime("%Y-%m-%d %H:%M")
     mail_sent = mail_failed = sms_sent = sms_failed = push_sent = push_failed = 0
     tg_sent = tg_failed = 0
     errors = []  # liste over feildetaljer per kanal/mottaker for diagnostikk
@@ -3597,7 +3597,7 @@ def api_contact():
         f"{'-'*54}\n"
         f"Navn:     {navn}\n"
         f"E-post:   {epost}\n"
-        f"Mottatt:  {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        f"Mottatt:  {datetime.now(_OSLO_TZ).strftime('%Y-%m-%d %H:%M')}\n\n"
         f"Melding:\n{melding}\n\n"
         f"Svar på denne e-posten for å nå {navn} direkte — Reply-To peker til {epost}.\n"
     )
