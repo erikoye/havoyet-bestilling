@@ -1288,6 +1288,102 @@ def _packing_diff_summary(old_state: dict, new_state: dict) -> list[str]:
     return lines
 
 
+@app.route("/api/morning-availability-check")
+def api_morning_availability_check():
+    """Morgen-sjekk på leveringsdagen: hvis ikke ALLE varer i dagens leveringer er
+    markert «Tilgjengelig», send én samle-e-post til alle admin med liste over de
+    uavklarte varene. Trigges av daglig cron (06:30) via Nettsidens newsletter-cron
+    med admin-Bearer. Sender bare når noe faktisk er uavklart (trygt å kalle ofte)."""
+    deny = _require_admin_user()
+    if deny: return deny
+    import html as _h
+    def _esc(s): return _h.escape(str(s or ""))
+    AVAIL_LABELS = {"ok": "Tilgjengelig", "unsure": "Avventer fiskebåt", "no": "Ikke tilgjengelig", "maybe": "Avventer fiskebåt"}
+    today = datetime.now(_OSLO_TZ).strftime("%Y-%m-%d")
+    DONE = {"DONE", "PAID_OUT", "CANCELLED", "CANCELED", "REFUNDED"}
+    try:
+        orders = _all_orders_normalized(only_paid=True)
+    except Exception:
+        orders = []
+    unresolved = []
+    checked = 0
+    for o in orders:
+        if str(o.get("delivery") or "")[:10] != today:
+            continue
+        if str(o.get("status") or "").upper() in DONE:
+            continue
+        checked += 1
+        oid = str(o.get("id"))
+        pstate = (_packing_state or {}).get(oid) or {}
+        if not isinstance(pstate, dict):
+            pstate = {}
+        miss = []
+        for i, it in enumerate(o.get("items") or []):
+            meta = pstate.get(str(i))
+            if meta is None:
+                meta = pstate.get(i)
+            meta = meta if isinstance(meta, dict) else {}
+            name = (it.get("name") or it.get("navn") or f"linje {i}") if isinstance(it, dict) else f"linje {i}"
+            comps = meta.get("components")
+            if isinstance(comps, list) and comps:
+                for c in comps:
+                    if not isinstance(c, dict):
+                        continue
+                    av = str(c.get("avail") or "").lower()
+                    if av != "ok":
+                        miss.append((f"{name} / {c.get('name') or 'komponent'}", AVAIL_LABELS.get(av, "Ikke vurdert")))
+            else:
+                av = str(meta.get("avail") or "").lower()
+                if av != "ok":
+                    miss.append((name, AVAIL_LABELS.get(av, "Ikke vurdert")))
+        if miss:
+            unresolved.append({"order": oid, "customer": o.get("customer") or "Ukjent", "items": miss})
+
+    emailed = 0
+    if unresolved:
+        n_items = sum(len(u["items"]) for u in unresolved)
+        subject = f"⚠️ {n_items} uavklarte vare(r) for dagens levering – {today}"
+        text_lines = [f"Ikke alt er markert «Tilgjengelig» for dagens leveringer ({today}).", ""]
+        html_blocks = []
+        for u in unresolved:
+            text_lines.append(f"#{u['order']} · {u['customer']}:")
+            html_blocks.append(
+                f"<p style='margin:16px 0 4px;font-weight:700;color:#0f172a'>#{_esc(u['order'])} · {_esc(u['customer'])}</p>"
+                "<ul style='margin:0 0 6px 18px;padding:0;color:#334155;line-height:1.6'>")
+            for nm, lbl in u["items"]:
+                text_lines.append(f"   • {nm} — {lbl}")
+                html_blocks.append(f"<li>{_esc(nm)} — <strong>{_esc(lbl)}</strong></li>")
+            html_blocks.append("</ul>")
+            text_lines.append("")
+        body = "\n".join(text_lines)
+        html_body = (
+            "<div style=\"font-family:'Helvetica Neue',Arial,sans-serif;max-width:640px;margin:0 auto;padding:8px\">"
+            "<h2 style='color:#b45309;margin:0 0 6px'>Uavklarte varer – dagens levering</h2>"
+            f"<p style='color:#475569;margin:0 0 8px'>Ikke alt er markert «Tilgjengelig» for {today}. "
+            "Gå gjennom pakke-visningen, finn alternativer eller kontakt kundene.</p>"
+            + "".join(html_blocks) +
+            "<p style='margin-top:18px'><a href='https://bestilling.havoyet.no/pakke.html' "
+            "style='background:#0d9488;color:#fff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:600'>Åpne pakke-visningen</a></p>"
+            "</div>")
+        seen = set()
+        recipients = []
+        for n in (_admin_notifiers or []):
+            e = (n.get("email") or "").strip()
+            if e and e.lower() not in seen:
+                seen.add(e.lower()); recipients.append(e)
+        if "erik@havoyet.no" not in seen:
+            recipients.append("erik@havoyet.no")
+        for em in recipients:
+            try:
+                ok, _d = _send_via_resend("nyhetsbrev@havoyet.no", "Havøyet", subject, body, to_email=em, html_body=html_body)
+                if ok:
+                    emailed += 1
+            except Exception as _e:
+                print(f"[MORNING] send feilet til {em}: {_e}")
+
+    return jsonify({"date": today, "orders_checked": checked, "unresolved_orders": len(unresolved), "emailed": emailed})
+
+
 @app.route("/api/packing-state", methods=["GET", "POST"])
 def api_packing_state():
     global _packing_state
