@@ -3289,6 +3289,9 @@ function normalizeOrder(o){
     free: isFree,
     paid,
     fee: Number(o.fee || 0),
+    // Faktisk betalt beløp (frosset ved siste oppgjør). Mangler på eldre ordre
+    // og helt ferske ordre → 0 = ingen registrert differanse å flagge.
+    paidTotal: Number(o.paidTotal) || 0,
     prods,
     total,
     status: STATUS_RAW_TO_LABEL[statusRaw] || 'Mottatt',
@@ -4460,6 +4463,7 @@ function _renderOrderCatFilter(){
     done:      all.filter(o => o.statusRaw === 'DONE').length,
     cancelled: all.filter(o => o.statusRaw === 'CANCELLED').length,
     refunded:  all.filter(o => o.statusRaw === 'REFUNDED').length,
+    diff:      all.filter(o => _orderPaymentDiff(o) !== 0).length,
     all:       all.length,
   };
   const cats = [
@@ -4467,6 +4471,7 @@ function _renderOrderCatFilter(){
     ['done',      'Levert'],
     ['cancelled', 'Avbrutt'],
     ['refunded',  'Refundert'],
+    ['diff',      '⚠ Ubetalt differanse'],
     ['all',       'Alle'],
   ];
   cf.innerHTML = cats.map(([k, lbl]) =>
@@ -4481,6 +4486,7 @@ function renderOrdrer(){
     case 'done':      orders = all.filter(o => o.statusRaw === 'DONE'); break;
     case 'cancelled': orders = all.filter(o => o.statusRaw === 'CANCELLED'); break;
     case 'refunded':  orders = all.filter(o => o.statusRaw === 'REFUNDED'); break;
+    case 'diff':      orders = all.filter(o => _orderPaymentDiff(o) !== 0); break;
     case 'all':       orders = all; break;
     case 'active':
     default:          orders = all.filter(o => o.statusRaw === 'NEW' || o.statusRaw === 'IN_PROGRESS'); break;
@@ -4514,6 +4520,7 @@ function renderOrdrer(){
       done:      'Ingen leverte ordre.',
       cancelled: 'Ingen avbrutte ordre.',
       refunded:  'Ingen refunderte ordre.',
+      diff:      'Ingen ordre med ubetalt differanse — alt er gjort opp. 🎉',
       all:       'Ingen ordrer.',
     };
     const msg = !all.length ? 'Ingen ordrer ennå' : msgMap[_orderFilter];
@@ -4537,7 +4544,7 @@ function renderOrdrer(){
         }).join('');
         return `<div class="ord-prod-list">${chips}</div>`;
       })()}</td>
-      <td style="font-family:var(--hv-font-display);font-variant-numeric:tabular-nums;font-weight:700;">${o.total} kr</td>
+      <td style="font-family:var(--hv-font-display);font-variant-numeric:tabular-nums;font-weight:700;">${o.total} kr${_diffBadge(o)}</td>
       <td>${o.dato||'—'} ${o.tid||''}</td>
       <td><span class="badge ${STATUS_RAW_TO_BADGE[o.statusRaw]||'gray'}">${o.status}</span></td>
       <td><button class="del-btn" onclick="event.stopPropagation();slettOrdre('${o.nr}')">×</button></td>
@@ -4742,13 +4749,17 @@ function openOrderDrawer(nr){
   };
   // Beholder en peker til raw så _packingForCurrent kan slå opp på id/ordrenr.
   _editingOrder._raw = raw;
-  // Hva kunden FAKTISK betalte, INKL. frakt = linjesum − rabatt + leveringsgebyr,
-  // beregnet fra ordren slik den ble lastet. Robust mot at noen ordre lagrer
-  // total=linjesum og andre total=grand (felt-inkonsistens) — vi regner det selv.
-  _editingOrder.paidBaseline = Math.max(0,
-    _editingOrder.varer.reduce((s,v)=> s + _editLineTotal(v), 0)
-    - Number(_editingOrder.rabattBelop || 0)
-    + Number(_editingOrder.fee || 0));
+  // Hva kunden FAKTISK betalte, INKL. frakt. Bruk det LAGREDE paidTotal når det
+  // finnes — det er det frosne oppgjorte beløpet, og er det som lar +/- differansen
+  // bli stående etter at ordren lukkes og åpnes igjen. Bare for eldre ordre UTEN
+  // paidTotal regner vi baseline fra linjene (robust mot felt-inkonsistens der noen
+  // ordre lagrer total=linjesum og andre total=grand).
+  _editingOrder.paidBaseline = (raw.paidTotal != null)
+    ? (Number(raw.paidTotal) || 0)
+    : Math.max(0,
+        _editingOrder.varer.reduce((s,v)=> s + _editLineTotal(v), 0)
+        - Number(_editingOrder.rabattBelop || 0)
+        + Number(_editingOrder.fee || 0));
   document.getElementById('drTitle').textContent = 'Ordre #'+o.nr;
   document.getElementById('drSub').textContent = `${o.kilde || 'Manuell'} · ${o.dato || 'uten dato'} ${o.tid || ''}`.trim();
   _renderDrawerBody();
@@ -4828,6 +4839,10 @@ function _renderDrawerBody(){
       <div class="pay-row" id="edPaidDiffRow" style="display:none;font-weight:700;">
         <span class="pay-label" id="edPaidDiffLabel"></span>
         <span class="pay-val" id="edPaidDiff"></span>
+      </div>
+      <div id="edSettleRow" style="display:none;margin-top:8px;">
+        <button class="btn-g" id="edSettleBtn" onclick="markOrderSettled('${_editingOrder.nr}')" style="width:100%;background:#eafaf1;color:#1e8e5a;border-color:#bfe6cf;font-weight:700;">Marker som oppgjort</button>
+        <div style="font-size:11px;color:var(--hv-fg-3);margin-top:4px;line-height:1.4;">Setter betalt beløp lik ny total når kunden har betalt differansen. Skal pengene tilbake til kunden, bruk «Refunder…» i stedet.</div>
       </div>
     </div>
 
@@ -5992,6 +6007,8 @@ function _recalcEditTotals(){
   const diffRow = document.getElementById('edPaidDiffRow');
   const diffLbl = document.getElementById('edPaidDiffLabel');
   const diffVal = document.getElementById('edPaidDiff');
+  const settleRow = document.getElementById('edSettleRow');
+  const settleBtn = document.getElementById('edSettleBtn');
   if (diffRow && diffLbl && diffVal) {
     const paid = Number(_editingOrder.paidBaseline || 0);
     const diff = Math.round(total - paid);
@@ -6002,8 +6019,13 @@ function _recalcEditTotals(){
       diffVal.textContent = (more ? '+' : '−') + Math.abs(diff) + ' kr';
       diffVal.style.color = more ? '#c0392b' : '#b9770e';
       diffLbl.style.color = more ? '#c0392b' : '#b9770e';
+      if (settleRow) settleRow.style.display = '';
+      if (settleBtn) settleBtn.textContent = more
+        ? `Marker +${Math.abs(diff)} kr som innkrevd`
+        : `Marker −${Math.abs(diff)} kr som oppgjort`;
     } else {
       diffRow.style.display = 'none';
+      if (settleRow) settleRow.style.display = 'none';
     }
   }
 }
@@ -6198,6 +6220,22 @@ async function saveOrderEdits(nr){
   if (typeof ruteRefresh === 'function') {
     try { await ruteRefresh(); } catch(e) { /* ikke kritisk */ }
   }
+}
+
+// Gjør opp en stående betalingsdifferanse: sett betalt beløp = ny total slik at
+// differansen blir 0 og flagget forsvinner. Brukes når kunden HAR betalt (eller
+// fått) differansen kontant/Vipps utenom systemet. Refusjon går via «Refunder…».
+async function markOrderSettled(nr){
+  if (!_editingOrder || _editingOrder.nr !== nr) return;
+  const sub = _editingOrder.varer.reduce((s,v)=> s + _editLineTotal(v), 0);
+  const fee = Number(document.getElementById('edFee')?.value || 0);
+  const rabatt = Number(_editingOrder.rabattBelop || 0);
+  const total = Math.max(0, Math.round(sub - rabatt + fee));
+  if (!await confirm(`Marker ordre #${nr} som oppgjort?\n\nBetalt beløp settes til ${total} kr, og differansen forsvinner fra lista.`)) return;
+  // paidBaseline persisteres som paidTotal i saveOrderEdits → diff blir 0.
+  _editingOrder.paidBaseline = total;
+  _recalcEditTotals();
+  await saveOrderEdits(nr);
 }
 function closeDrawer(){
   document.getElementById('dr').classList.remove('open');
@@ -6695,6 +6733,26 @@ function _payBadge(o){
   const method = (o.paymentMethod || '').toLowerCase();
   const label = method === 'faktura' ? 'Faktura — ubetalt' : 'Ubetalt';
   return `<span class="badge orange">${label}</span>`;
+}
+
+// Uoppgjort betalingsdifferanse: total etter redigering vs. faktisk betalt beløp.
+//   > 0 → kunden skal betale mer ("kreve inn")
+//   < 0 → kunden skal ha refusjon ("refundere")
+// Gjelder bare betalte, ikke-refunderte/avbrutte ordre med et registrert paidTotal.
+// Flagget blir stående til admin gjør opp (Marker som oppgjort) eller refunderer.
+function _orderPaymentDiff(o){
+  if (!o || !o.paid || o.free) return 0;
+  if (o.statusRaw === 'REFUNDED' || o.statusRaw === 'CANCELLED') return 0;
+  const paidTotal = Number(o.paidTotal || 0);
+  if (paidTotal <= 0) return 0;
+  return Math.round(Number(o.total || 0) - paidTotal);
+}
+function _diffBadge(o){
+  const diff = _orderPaymentDiff(o);
+  if (!diff) return '';
+  const more = diff > 0;
+  const txt = more ? `+${diff} kr å kreve inn` : `−${Math.abs(diff)} kr å refundere`;
+  return `<div><span class="badge orange" title="Differanse mot faktisk betalt beløp — gjør opp i ordren" style="margin-top:4px;font-size:10px;white-space:nowrap;">⚠ ${txt}</span></div>`;
 }
 
 function renderOversiktTable(){
