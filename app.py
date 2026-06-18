@@ -502,6 +502,19 @@ _MND_NAVN = ["januar", "februar", "mars", "april", "mai", "juni",
              "juli", "august", "september", "oktober", "november", "desember"]
 
 
+def _norsk_dato(s):
+    """Formater en ISO-dato (2026-08-10) som «10. august 2026» for visning.
+    Tåler etterfølgende klokkeslett eller annet format — returnerer da
+    originalstrengen uendret (ingen krasj på «—» e.l.)."""
+    m = _re.match(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})", str(s or ""))
+    if not m:
+        return str(s or "")
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not (1 <= mo <= 12):
+        return str(s or "")
+    return f"{d}. {_MND_NAVN[mo - 1]} {y}"
+
+
 def _nice_period_label(pf, pt):
     """Pen periode-etikett. Hvis fra=1. og til=siste dag i SAMME måned,
     vis «Juni 2026» i stedet for «01.06.2026 – 30.06.2026»."""
@@ -2755,7 +2768,17 @@ def _qty_text(item):
     grams = _grams_from_text(variant)
     parens = _amount_from_parens(variant)
     if unit != "stk":
-        # Vekt-vare: bruk eksplisitt gram fra navnet, ellers tallet i parentes.
+        # Eksplisitt vekt-enhet (admin/manuell ordre): qty ER mengden i den
+        # enheten — «10 kg» betyr 10 kg totalt. Vi skal IKKE gange qty med vekt
+        # parset fra variantLabel (det dobbelteller: qty=10 × «10 kg» = 100 kg).
+        # Kanonisk `grams` fra nettside-checkout er allerede returnert over.
+        if unit in ("kg", "g"):
+            grams_total = qty * 1000 if unit == "kg" else qty
+            if grams_total >= 1000:
+                kg_s = f"{grams_total/1000:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+                return f"{kg_s} kg"
+            return f"{int(round(grams_total))} g"
+        # Vekt-vare uten eksplisitt enhet: bruk eksplisitt gram fra navnet, ellers tallet i parentes.
         per = grams if grams else parens
         if per:
             total = qty * per
@@ -2846,7 +2869,7 @@ def _format_order_email_html(order, change_summary="", event=""):
     postnr = raw_kunde.get("postnr") or ""
     poststed = raw_kunde.get("poststed") or ""
     full_adr = ", ".join(p for p in [adr, f"{postnr} {poststed}".strip()] if p) or "—"
-    dag  = raw_kunde.get("leveringsdag") or order.get("delivery") or "—"
+    dag  = _norsk_dato(raw_kunde.get("leveringsdag") or order.get("delivery") or "—")
     tid  = raw_kunde.get("leveringstid") or order.get("slot") or ""
     levering = f"{dag} {tid}".strip()
     merk = raw_kunde.get("kommentar") or order.get("note") or ""
@@ -3032,7 +3055,7 @@ def _send_customer_order_confirmation(order):
     fee = order.get("fee") or 0
     rabatt = order.get("rabattBelop") or 0
     summ = order.get("sum") or total
-    dag = kunde.get("leveringsdag") or "—"
+    dag = _norsk_dato(kunde.get("leveringsdag") or "—")
     tid = kunde.get("leveringstid") or ""
     adr = kunde.get("adresse") or ""
     postnr = kunde.get("postnr") or ""
@@ -3157,7 +3180,7 @@ def _format_order_lines(order):
         f"Kunde:    {navn}\n"
         f"Telefon:  {tlf}\n"
         f"Adresse:  {adr}\n"
-        f"Levering: {dag} {tid}\n"
+        f"Levering: {_norsk_dato(dag)} {tid}\n"
         f"Status:   {status}\n"
         f"Sum:      {sum_tekst}\n"
         f"\nVarer:\n{varer_tekst}\n"
