@@ -1853,6 +1853,135 @@ def api_products_list():
     })
 
 
+# ── PRODUKT-POPULARITET (bestselgere fra ekte ordre) ────────────────────────
+# Driver «mest populært øverst» på nettsidens /butikk. Aggregerer betalte
+# Havøyet-ordre til {slug: antall_ordre_med_produktet} (ordre-frekvens, ikke
+# kvantum — mindre skjevt mot store enkeltkjøp). Cachet 30 min. Returnerer KUN
+# slug→tall (ingen kundedata). NFV-ordre + test-produkter ekskluderes.
+_POPULARITY_CACHE = {"data": None, "ts": 0}
+_POPULARITY_TTL = 1800  # 30 min
+
+
+def _norm_prod_name(s):
+    """Normaliser et (ordrelinje-)navn til base-navn for slug-oppslag.
+    Kutter variant-suffiks («Krabbeskjell - 200 g» → «krabbeskjell») og fjerner
+    etterfølgende vekt-/mengde-tokens («Blåkveitefilet røkt 250g» → «…røkt»)."""
+    import re as _re
+    n = (s or "").strip().lower()
+    for sep in (" - ", " – ", " / ", " (", " ,", ","):
+        k = n.find(sep)
+        if k > 0:
+            n = n[:k]
+    n = _re.sub(r"\b\d+[\.,]?\d*\s*(?:g|gram|kg|stk|pk|pakke|l|cl|ml)\b\.?$", "", n).strip()
+    n = _re.sub(r"\s{2,}", " ", n).strip()
+    return n
+
+
+def _build_name_slug_index():
+    """(exact, prefixes): norm(navn)→slug fra baseline + overrides (inkl.
+    override-only produkter som fiskesuppe). `prefixes` er sortert lengste navn
+    først for trygt prefiks-oppslag («blåskjell levende økologisk»→blaaskjell)."""
+    try:
+        products = _get_products_baseline()
+    except Exception:
+        products = []
+    overrides = _product_overrides or {}
+    merged = []
+    seen = set()
+    for p in products:
+        slug = p.get("slug")
+        if not slug:
+            continue
+        seen.add(slug)
+        ov = overrides.get(slug)
+        nm = ((ov.get("name") if isinstance(ov, dict) and ov.get("name") else p.get("name")) or "").strip()
+        if nm:
+            merged.append((slug, nm))
+    for slug, ov in overrides.items():
+        if slug in seen or not isinstance(ov, dict):
+            continue
+        nm = (ov.get("name") or "").strip()
+        if nm:
+            merged.append((slug, nm))
+    exact = {}
+    pref = {}
+    for slug, nm in merged:
+        k = _norm_prod_name(nm)
+        if not k:
+            continue
+        exact.setdefault(k, slug)
+        if k not in pref:
+            pref[k] = slug
+    prefixes = sorted(pref.items(), key=lambda kv: -len(kv[0]))
+    return exact, prefixes
+
+
+def _line_slug(it, exact, prefixes, valid):
+    slug = (it.get("slug") or "").strip()
+    if slug in valid:
+        return slug
+    nm = (it.get("productName") or it.get("name") or "").strip()
+    if not nm or "test" in nm.lower():
+        return ""
+    key = _norm_prod_name(nm)
+    if key in exact:
+        return exact[key]
+    for pk, ps in prefixes:
+        if pk and key.startswith(pk):
+            return ps
+    return ""
+
+
+def _compute_popularity():
+    exact, prefixes = _build_name_slug_index()
+    valid = set(exact.values()) | set(s for _, s in prefixes)
+    try:
+        orders = _all_orders_normalized(only_paid=True)
+    except Exception:
+        orders = []
+    score = {}
+    n_orders = 0
+    for o in orders:
+        if not isinstance(o, dict):
+            continue
+        store = (o.get("store") or "").lower()
+        if "nesttun" in store or "nfv" in store:
+            continue
+        items = o.get("items") or o.get("varer") or []
+        if not isinstance(items, list) or not items:
+            continue
+        n_orders += 1
+        seen = set()
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            slug = _line_slug(it, exact, prefixes, valid)
+            if slug and slug not in seen:
+                score[slug] = score.get(slug, 0) + 1
+                seen.add(slug)
+    return {"popularity": score, "orders": n_orders, "updated": _now_iso_utc()}
+
+
+@app.route("/api/products/popularity", methods=["GET"])
+def api_products_popularity():
+    """Bestselger-rangering {slug: antall_ordre}. ?refresh=1 tvinger ny beregning."""
+    force = request.args.get("refresh") in ("1", "true", "yes")
+    now = time.time()
+    if not force and _POPULARITY_CACHE["data"] and (now - _POPULARITY_CACHE["ts"] < _POPULARITY_TTL):
+        data = _POPULARITY_CACHE["data"]
+    else:
+        try:
+            data = _compute_popularity()
+            _POPULARITY_CACHE["data"] = data
+            _POPULARITY_CACHE["ts"] = now
+        except Exception as e:
+            print(f"[popularity] feil: {e}")
+            data = _POPULARITY_CACHE["data"] or {"popularity": {}, "orders": 0, "updated": _now_iso_utc()}
+    resp = jsonify({"ok": True, **data})
+    resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
+
+
 # ── KUNDEANMELDELSER ────────────────────────────────────────────────────────
 import uuid as _uuid
 
