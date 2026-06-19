@@ -659,14 +659,20 @@ def _all_orders_normalized(only_paid=True):
             ordrenr  = str(o.get("ordrenr") or o.get("id") or "")
             status   = (o.get("status") or "").upper()
             ps_norm  = (o.get("paymentStatus") or "").lower()
-            # Pre-betalings-ordre (AWAITING_PAYMENT/PENDING/CART) er aldri betalt
-            # og skal aldri vises i den aktive lista — heller ikke når
-            # paymentStatus-feltet mangler (tomt felt tolkes ellers som "betalt"
-            # for legacy-import lenger nede). Mirror filteret i /api/manual-orders
-            # GET så admin (/api/orders) og pakkeliste viser samme sett. Uten dette
-            # lekket forlatte Vipps-checkouts (kunde gikk inn i Vipps, men betalte
-            # aldri) inn som aktive ordre i admin.
-            if _is_pending_order_status(status):
+            # Pre-betalings-ordre (AWAITING_PAYMENT/PENDING/CART) er ikke betalt og
+            # skal ikke vises i den aktive lista — heller ikke når paymentStatus-
+            # feltet mangler (tomt felt tolkes ellers som "betalt" for legacy-import
+            # lenger nede). Uten dette lekket forlatte Vipps-checkouts (kunde gikk inn
+            # i Vipps, men betalte aldri) inn som aktive ordre i admin.
+            #
+            # MEN: `ordrenr in paid` er fasiten på FAKTISK betaling — den leser
+            # Vipps/Stripe-betalingsloggen direkte (CAPTURED/AUTHORIZED/PAID …).
+            # Hvis betalingen er bekreftet der, men status-feltet henger igjen på
+            # AWAITING_PAYMENT (race: Vipps-callback kom før ordren ble lagra via
+            # /api/orders/new, så status-flippen fant ingen ordre å oppdatere),
+            # SKAL ordren vises. Vi skjuler derfor kun pending-ordre som heller
+            # ikke finnes i betalingsloggen — slik leses ekte betalte ordre alltid.
+            if _is_pending_order_status(status) and ordrenr not in paid:
                 continue
             # Match admin-logikken: en ordre regnes som "oppgjort" (synlig for
             # staff/p-touch/pakke-iPad) med mindre paymentStatus eksplisitt sier
@@ -1178,9 +1184,18 @@ def api_manual_orders():
     # ordre-/pakkelista — de er IKKE betalt og skal ikke pakkes. De beholdes i
     # _manual_orders slik at en sen Vipps/Stripe-webhook fortsatt kan flippe dem
     # til PAID (da dukker de opp igjen). ?include_pending=1 gir full liste.
+    # Betalingsloggen (_paid_ordrenrs) er fasiten: er betalingen bekreftet der,
+    # men status-feltet henger på AWAITING_PAYMENT (race der callback kom før
+    # ordren ble lagra), SKAL ordren vises — samme regel som _all_orders_normalized.
     if request.args.get("include_pending") == "1":
         return jsonify(_manual_orders)
-    visible = [o for o in _manual_orders if not _is_pending_order_status(o.get("status"))]
+    paid = _paid_ordrenrs()
+    def _hide_unpaid_pending(o):
+        if not _is_pending_order_status(o.get("status")):
+            return False
+        nr = str(o.get("ordrenr") or o.get("id") or "").strip()
+        return nr not in paid
+    visible = [o for o in _manual_orders if not _hide_unpaid_pending(o)]
     return jsonify(visible)
 
 
