@@ -3463,7 +3463,13 @@ async function refreshOrders(){
     // (den har komplette total-felter; den normaliserte iPad-shapen mangler dem og gir 0 kr).
     const seen = new Set(manual.map(o => String(o.ordrenr || o.id || '')).filter(Boolean));
     const dedupedShopify = shopify.filter(o => !seen.has(String(o.ordrenr || o.id || '')));
-    const all = [...manual, ...dedupedShopify].map(normalizeOrder);
+    // Skjul pre-betalings-ordre (forlatte Vipps/Stripe-checkouts): kunden gikk inn
+    // i betaling, men fullførte aldri. Disse er IKKE betalt og skal aldri vises som
+    // aktive ordre. normalizeOrder mapper ukjent status → NEW («Mottatt»), så de må
+    // filtreres på RÅ status før normalisering. Backend filtrerer også (/api/orders
+    // + /api/manual-orders) — dette er klient-side forsvar mot stale cross-device cache.
+    const _isPrePayment = o => ['AWAITING_PAYMENT','PENDING','CART'].includes(String((o && o.status) || '').toUpperCase());
+    const all = [...manual, ...dedupedShopify].filter(o => !_isPrePayment(o)).map(normalizeOrder);
     all.sort((a,b)=> (b.ts||0) - (a.ts||0));
     _ordersCache = all;
     _ordersLoaded = true;
