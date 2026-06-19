@@ -659,6 +659,15 @@ def _all_orders_normalized(only_paid=True):
             ordrenr  = str(o.get("ordrenr") or o.get("id") or "")
             status   = (o.get("status") or "").upper()
             ps_norm  = (o.get("paymentStatus") or "").lower()
+            # Pre-betalings-ordre (AWAITING_PAYMENT/PENDING/CART) er aldri betalt
+            # og skal aldri vises i den aktive lista — heller ikke når
+            # paymentStatus-feltet mangler (tomt felt tolkes ellers som "betalt"
+            # for legacy-import lenger nede). Mirror filteret i /api/manual-orders
+            # GET så admin (/api/orders) og pakkeliste viser samme sett. Uten dette
+            # lekket forlatte Vipps-checkouts (kunde gikk inn i Vipps, men betalte
+            # aldri) inn som aktive ordre i admin.
+            if _is_pending_order_status(status):
+                continue
             # Match admin-logikken: en ordre regnes som "oppgjort" (synlig for
             # staff/p-touch/pakke-iPad) med mindre paymentStatus eksplisitt sier
             # ubetalt. Tomt felt eller "free" → vises. Det hindrer at admin og
