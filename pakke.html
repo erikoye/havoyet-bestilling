@@ -2314,14 +2314,14 @@ function renderItemQtyEditor(item, i){
   const nameG = _extractGramsFromText(item && item.name);
   if (nameG) return fmtWeight(nameG);
 
-  // 6) Fallback: kasser/stk-hint fra navnet → "N stk". Manuelle admin-linjer
-  //    uten enhet arver admins default (ENHET-selecten viser 'stk' når unit
-  //    er tom) — vis derfor «0,5 stk», ikke et nakent tall. Ellers bare
-  //    antallet (aldri fiktiv vekt-enhet på et kurv-antall).
+  // 6) Fallback: ingen vekt-info i det hele tatt (verken `grams`, selectedOpts.vekt,
+  //    variantLabel eller vekt i navnet). Da KAN ikke tallet representere vekt — det
+  //    er et antall. Vis 'stk', samme default som admin-editorens ENHET-select
+  //    (`v.unit || 'stk'`) og e-postens fallback, slik at admin og bestillingssiden
+  //    ALLTID matcher når en linje er merket/igjenstår som stk. (Tidligere ble
+  //    ikke-manuelle ordre vist som et nakent tall uten enhet → mismatch mot admin.)
   const qtyDisp = String(qty).replace('.', ',');
-  if (_guessUnitFromName(item && item.name) === 'stk') return pill(qtyDisp, 'stk');
-  if (_orderIsManual(currentOrderId)) return pill(qtyDisp, 'stk');
-  return pill(qtyDisp, '');
+  return pill(qtyDisp, 'stk');
 }
 
 let _qtySaveTimers = {};
