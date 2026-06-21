@@ -2892,19 +2892,27 @@ def _qty_text(item):
     except (TypeError, ValueError):
         qty = 1
     unit = (item.get("unit") or "").lower()
-    # Produkt som VISES per stk (unitLabel="stk") skal vises i stk i e-posten
-    # også — selv om det er kr/kg-priset (kind="fish") og checkout sendte
-    # vekt/`grams`. Admin bruker samme unitLabel; dette holder e-post i synk med
-    # admin (f.eks. «Fiskekaker 2 stk», ikke «500 g»).
-    if unit != "stk":
-        _ul = str(item.get("unitLabel") or "").lower()          # linjens eget felt (som admin bruker)
-        if _ul != "stk":
-            _slug = (item.get("slug") or "").strip()            # reserve: slå opp i overrides
-            _prod = _overrides.get(_slug) if _slug else None
-            if _prod:
-                _ul = str(_prod.get("unitLabel") or "").lower()
-        if _ul == "stk":
-            unit = "stk"
+    # Telle-enheter: produkter som SELGES per stykk/beger/pakke skal vises i
+    # ANTALL i e-posten — aldri i vekt — selv om de er kr/kg-priset (kind="fish")
+    # eller har gram i navnet/variantLabel. Eksempler: «Fiskekaker 2 stk» (ikke
+    # «500 g»), «Fiskesuppe 1 beger» (ikke «75 g», som ble parset fra
+    # variantLabel «Torsk + Kveite (75 g hver)»). Holder e-post i synk med admin.
+    COUNT_UNITS = ("stk", "beger", "pk", "pakke", "boks", "glass", "stykk")
+    _ul = str(item.get("unitLabel") or "").lower()              # linjens eget felt (som admin bruker)
+    if _ul not in COUNT_UNITS:
+        _slug = (item.get("slug") or "").strip()               # reserve: slå opp i overrides
+        _prod = _overrides.get(_slug) if _slug else None
+        if _prod:
+            _ul = str(_prod.get("unitLabel") or "").lower()
+    is_count = (unit in COUNT_UNITS) or (_ul in COUNT_UNITS) \
+        or (str(item.get("kind") or "").lower() == "unit")
+    if is_count:
+        # Telle-vare: tallet i parentes er antallet («Sjøkreps (2)» → 2), ellers qty.
+        _p = _amount_from_parens(item.get("variantLabel") or item.get("variant") or item.get("name") or "")
+        count = _p if _p else qty
+        count_int = int(count) if count == int(count) else count
+        disp = _ul if _ul in COUNT_UNITS else (unit if unit in COUNT_UNITS else "stk")
+        return f"{count_int} {disp}"
     # Kanonisk totalvekt fra checkout (`grams` = vekt × antall, satt av
     # havoyet.no) — autoritativ når den finnes. Allerede total, skal ikke
     # skaleres med qty.
@@ -3002,6 +3010,20 @@ def _innhold_linjer(v):
         except (TypeError, ValueError):
             tot = 0
         linjer.append(f"{it['label']} — {_fmt_mengde(tot * line_qty, it.get('unit') or 'g')}" if tot > 0 else it["label"])
+    # Fiskesuppe: hvilken fisk (1–2 arter) som er valgt, med gram per art
+    # (150 g totalt, delt likt ved 2). Slik ser kjøkkenet/kunden hva som er i
+    # suppen — antallet supper står i mengde-kolonnen («1 beger»).
+    for f in (v.get("fiskesuppeValg") or []):
+        if not isinstance(f, dict):
+            continue
+        navn_f = f.get("navn") or f.get("name") or f.get("slug") or ""
+        if not navn_f:
+            continue
+        try:
+            g = float(f.get("gram") or 0)
+        except (TypeError, ValueError):
+            g = 0
+        linjer.append(f"{navn_f} — {_fmt_mengde(g * line_qty, 'g')}" if g > 0 else navn_f)
     tilbehor = [str(t) for t in (v.get("tilbehorValgt") or []) if t]
     if tilbehor:
         linjer.append("Tilbehør: " + ", ".join(tilbehor))
