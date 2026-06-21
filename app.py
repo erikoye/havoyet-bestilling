@@ -2012,8 +2012,12 @@ def api_reviews():
         _save_sync_state()
         return jsonify({"ok": True, "review": review})
     # GET
+    # ?slug= kan være én slug ELLER en kommaseparert liste. Skalldyrkasser sender
+    # kassens egen slug + slug-ene til produktene i kassen, slik at deres
+    # anmeldelser også vises på kassen.
     slug = request.args.get("slug")
-    items = [r for r in _reviews if not slug or r.get("slug") == slug]
+    slugs = [s.strip() for s in (slug or "").split(",") if s.strip()]
+    items = [r for r in _reviews if not slugs or r.get("slug") in slugs]
     avg = (sum(r["rating"] for r in items) / len(items)) if items else 0
     return jsonify({"reviews": list(reversed(items)), "count": len(items), "avg": round(avg, 2)})
 
