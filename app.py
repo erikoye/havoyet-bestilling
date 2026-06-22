@@ -10395,8 +10395,8 @@ def api_discounts_root():
     except (TypeError, ValueError):
         return jsonify({"error": "Ugyldig prosent"}), 400
     free_shipping = bool(data.get("free_shipping", False))
-    if prosent < 0 or prosent >= 100:
-        return jsonify({"error": "Prosent må være mellom 1 og 99"}), 400
+    if prosent < 0 or prosent > 100:
+        return jsonify({"error": "Prosent må være mellom 1 og 100"}), 400
     # 0 % er kun lov når koden gir gratis frakt (ren frakt-kode)
     if prosent <= 0 and not free_shipping:
         return jsonify({"error": "Prosent må være mellom 1 og 99"}), 400
@@ -10490,7 +10490,7 @@ def api_discounts_modify(discount_id):
     if "prosent" in data:
         try:
             p = float(data["prosent"])
-            if 0 < p < 100:
+            if 0 < p <= 100:
                 d["prosent"] = p
         except (TypeError, ValueError):
             pass
