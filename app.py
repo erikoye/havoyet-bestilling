@@ -11573,8 +11573,12 @@ def _print_lp_print(raw_png, job_id):
 # kø) skal printe i NØYAKTIG fysisk størrelse — og aldri en lang strimmel — må
 # PNG-en bære dpi-info (pHYs-chunk), noe html2canvas ikke setter.
 LABEL_DPI          = 300
-LABEL_ASPECT       = 85.0 / 103.0   # høyde/bredde = 0.83 (liggende)
-LABEL_ASPECT_SLACK = 0.30           # godta 0.53–1.13 (avrundingsslakk + litt høyde-variasjon)
+# To gyldige format godtas: liggende 103×85 mm (h/b≈0.83 — fyller hele 103 mm-
+# rullen, brukt av etikett.html) og den eldre stående 50×103 mm (h/b≈2.06 — brukt
+# av P-touch-designeren ptouch.html). Alt midt imellom (f.eks. en hel A4-side,
+# h/b≈1.41) eller ekstreme strimler faller utenfor begge bånd og avvises.
+LABEL_ASPECTS      = (85.0 / 103.0, 103.0 / 50.0)   # 0.83 (liggende), 2.06 (stående)
+LABEL_ASPECT_SLACK = 0.30           # liggende godtar 0.53–1.13, stående 1.76–2.36
 
 def _png_dimensions(raw):
     """Les bredde/høyde fra IHDR. Returner (w, h) eller (None, None)."""
@@ -11676,11 +11680,12 @@ def api_print_label():
     w, h = _png_dimensions(raw)
     if w and h:
         ratio = h / w
-        if abs(ratio - LABEL_ASPECT) > LABEL_ASPECT_SLACK:
+        if all(abs(ratio - a) > LABEL_ASPECT_SLACK for a in LABEL_ASPECTS):
             return jsonify({
                 "ok": False,
                 "error": (f"Feil etikett-proporsjoner ({w}×{h} px, h/b={ratio:.2f}). "
-                          "Forventet ~103×85 mm liggende — bruk «Skriv ut denne»-knappen per etikett."),
+                          "Forventet ~103×85 mm liggende eller 50×103 mm stående — "
+                          "bruk «Skriv ut denne»-knappen per etikett."),
             }), 400
 
     # Stemple 300 dpi inn i PNG-en → CUPS printer nøyaktig 50×103 mm
