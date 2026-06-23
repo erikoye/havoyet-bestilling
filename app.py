@@ -3926,6 +3926,77 @@ def api_contact():
     return jsonify({"ok": ok, "detail": detail})
 
 
+def _fire_capi_purchase(order):
+    """Server-side Meta CAPI Purchase når en ordre blir betalt.
+
+    Dekker det vanligste hullet: kunden fullfører i Vipps-appen på mobil og
+    kommer ALDRI tilbake til nettleseren → klient-Purchase (browser-pixel +
+    fetch til /api/meta-event) fyrer aldri, og Meta får null konvertering selv
+    om ordren er betalt. Her fyrer vi den fra betalt-callbacken i stedet.
+
+    - Idempotent: `_capi_purchase_sent`-flagg + event_id="purchase_<ordrenr>"
+      gjør at Meta deduper mot en ev. browser-Purchase med samme id (ingen
+      dobbelttelling om kunden likevel returnerte).
+    - GDPR: fyrer KUN hvis kunden ga markedsførings-samtykke (`_mkt` lagret på
+      ordren ved checkout). Uten samtykke gjør den ingenting.
+    - Token bor kun i Vercel: vi POST-er til Vercel-forwarderen, ikke Meta
+      direkte, så CAPI-tokenet trenger ikke ligge på Render.
+    """
+    try:
+        if not isinstance(order, dict):
+            return
+        if order.get("_capi_purchase_sent"):
+            return
+        if not order.get("_mkt"):
+            return  # ingen markedsførings-samtykke → ikke spor
+        if order.get("manual"):
+            return
+        if (order.get("source") or "").lower() in ("admin", "shopify"):
+            return
+        store = order.get("store")
+        if store and store != "Havøyet":
+            return
+        ordrenr = str(order.get("ordrenr") or order.get("id") or "").strip()
+        if not ordrenr:
+            return
+        kunde = order.get("kunde") or {}
+        varer = [v for v in (order.get("varer") or []) if isinstance(v, dict)]
+        payload = {
+            "event_name":       "Purchase",
+            "event_id":         "purchase_" + ordrenr,
+            "event_time":       int(time.time()),
+            "action_source":    "website",
+            "event_source_url": "https://havoyet.no/kasse",
+            "server_event":     True,
+            "user_data": {
+                "em":                (kunde.get("epost") or order.get("email") or "").strip(),
+                "ph":                (kunde.get("tlf") or order.get("phone") or "").strip(),
+                "fbp":               order.get("_fbp") or "",
+                "fbc":               order.get("_fbc") or "",
+                "client_ip_address": order.get("_client_ip") or "",
+                "client_user_agent": order.get("_client_ua") or "",
+            },
+            "custom_data": {
+                "currency":    "NOK",
+                "value":       float(order.get("sum") or order.get("total") or 0),
+                "content_ids": [v.get("slug") for v in varer if v.get("slug")],
+                "contents":    [{"id": v.get("slug"), "quantity": v.get("qty") or 1} for v in varer if v.get("slug")],
+                "num_items":   sum(int(v.get("qty") or 0) for v in varer),
+            },
+        }
+        r = requests.post("https://havoyet.no/api/meta-event", json=payload, timeout=6)
+        if r.ok:
+            order["_capi_purchase_sent"] = True
+            try:
+                _save_sync_state()
+            except Exception:
+                pass
+        else:
+            print(f"[CAPI-PURCHASE] ordre {ordrenr} avvist: {r.status_code} {r.text[:200]}")
+    except Exception as e:
+        print(f"[CAPI-PURCHASE] unntak: {e}")
+
+
 @app.route("/api/orders/new", methods=["POST"])
 def api_orders_new():
     """Ny kundebestilling fra checkout → lagres + e-post til Erik."""
@@ -3957,6 +4028,15 @@ def api_orders_new():
         data["dato"] = datetime.now().strftime("%Y-%m-%d")
     if not data.get("status"):
         data["status"] = "NEW"
+
+    # Fang kundens ekte IP/UA ved checkout (kommer fra nettleseren her). Brukes
+    # av _fire_capi_purchase hvis ordren senere blir betalt via Vipps-app uten
+    # at kunden returnerer — da har vi ikke lenger tilgang til kundens IP/UA.
+    if not data.get("_client_ip"):
+        _xff = request.headers.get("X-Forwarded-For", "")
+        data["_client_ip"] = (_xff.split(",")[0].strip() if _xff else (request.remote_addr or ""))
+    if not data.get("_client_ua"):
+        data["_client_ua"] = request.headers.get("User-Agent", "")
 
     # Idempotent: hvis samme ordrenr er postet før (f.eks. AWAITING_PAYMENT
     # pre-lagring fulgt av PAID-oppdatering), slå sammen i stedet for å
@@ -4579,6 +4659,7 @@ def api_vipps_status(reference):
                             o["paid_at"] = datetime.now().isoformat()
                             o["vipps_reference"] = reference
                             _save_sync_state()
+                            _fire_capi_purchase(o)   # Meta CAPI Purchase (deduppes m/ browser via event_id)
                             if was_pending:
                                 try:
                                     navn_n = ((o.get("kunde") or {}).get("navn") or "?").strip()
@@ -4652,6 +4733,7 @@ def api_vipps_status_by_order(ordrenr):
                     o["paid_at"] = datetime.now().isoformat()
                     o["vipps_reference"] = reference
                     _save_sync_state()
+                    _fire_capi_purchase(o)   # Meta CAPI Purchase (deduppes m/ browser via event_id)
                     if was_pending:
                         try:
                             navn_n = ((o.get("kunde") or {}).get("navn") or "?").strip()
@@ -5893,6 +5975,7 @@ def api_vipps_callback():
                         o["paid_at"] = datetime.now().isoformat()
                         o["vipps_reference"] = reference
                         _save_sync_state()
+                        _fire_capi_purchase(o)   # Meta CAPI Purchase — KRITISK her: callback fyrer når kunden IKKE returnerte til nettleseren
                         _notify_admins(
                             "payment_received",
                             f"[Havøyet] Vipps-betaling mottatt #{ordrenr}",
@@ -6974,6 +7057,7 @@ def api_webhook_stripe():
                     break
             if order_found:
                 _save_sync_state()
+                _fire_capi_purchase(target_order)   # Meta CAPI Purchase — Stripe-webhook dekker kort uten retur til nettleser
                 _notify_admins(
                     "payment_received",
                     f"[Havøyet] Kortbetaling mottatt #{ordrenr}",
