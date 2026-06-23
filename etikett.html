@@ -107,12 +107,14 @@
     .cap-btn:hover:not(.active) { background: #f1f5f9; color: #64748b; }
 
     /* ═══════════════════════════════════════
-       ETIKETT — 50 mm × 103 mm
-       Hvit, minimalistisk, svart/hvitt
+       ETIKETT — 103 mm × 85 mm (LIGGENDE)
+       Fyller hele 103 mm-rullens bredde. Full-bredde topp
+       (logo + produktnavn), to kolonner under, full-bredde bunn.
+       Hvit, minimalistisk, svart/hvitt.
     ═══════════════════════════════════════ */
     .label {
-      width: 50mm;
-      height: 103mm;
+      width: 103mm;
+      height: 85mm;
       overflow: hidden;
       background: #fff;
       font-family: 'DM Sans', Arial, sans-serif;
@@ -122,153 +124,105 @@
       padding: 0;
     }
 
-    /* Logo: ~20mm høy */
-    .lbl-logo-section {
+    /* Topp: logo til venstre + produktnavn/fangst til høyre, full bredde */
+    .lbl-head {
       display: flex;
       align-items: center;
-      justify-content: center;
-      padding: 2.5mm 4mm 2mm;
+      gap: 4mm;
+      padding: 2.5mm 5mm 1.5mm;
       flex-shrink: 0;
     }
+    .lbl-logo-section { flex-shrink: 0; }
     .lbl-logo-section img {
-      width: 36mm;
+      width: 30mm;
       height: auto;
       display: block;
     }
     .lbl-logo-section img.havoyet { filter: brightness(0); }
-    .lbl-logo-section img.nesttun { width: 32mm; }
+    .lbl-logo-section img.nesttun { width: 26mm; }
+    .lbl-head-main { flex: 1; min-width: 0; }
+    .lbl-product {
+      font-family: 'DM Sans', Arial, sans-serif;
+      font-size: 17pt;
+      font-weight: 700;
+      color: #000;
+      line-height: 1.1;
+    }
+    .lbl-sub {
+      font-size: 7pt;
+      color: #555;
+      font-style: italic;
+      margin-top: 0.8mm;
+      line-height: 1.3;
+    }
 
     .lbl-hr {
       border: none;
       border-top: 0.5pt solid #000;
-      margin: 0 3mm;
+      margin: 0 5mm;
       flex-shrink: 0;
     }
+    .lbl-hr.soft { border-top: 0.4pt solid #ccc; margin: 1.2mm 0; }
 
-    /* Produktnavn: stort, bold, sentrert */
-    .lbl-product {
-      font-family: 'DM Sans', Arial, sans-serif;
-      font-size: 15pt;
-      font-weight: 700;
-      color: #000;
-      line-height: 1.2;
-      padding: 2mm 3.5mm 1mm;
-      flex-shrink: 0;
-      text-align: center;
-    }
+    /* To kolonner under toppen */
+    .lbl-cols { display: flex; flex: 1; min-height: 0; }
+    .lbl-col { padding: 2mm 5mm; }
+    .lbl-col-l { flex: 1.15; border-right: 0.5pt solid #000; }
+    .lbl-col-r { flex: 1; }
 
-    /* Bestillingsinfo: sentrert */
+    /* Bestillingsinfo */
     .lbl-order-block {
-      text-align: center;
-      font-size: 6pt;
-      line-height: 1.6;
-      padding: 1.5mm 3mm 1.5mm;
-      flex-shrink: 0;
+      font-size: 7pt;
+      line-height: 1.4;
     }
-    .lbl-order-num {
-      font-size: 6pt;
-      font-weight: 600;
-    }
-    .lbl-order-name {
-      font-size: 6.5pt;
-      font-weight: 400;
-    }
-    .lbl-order-addr {
-      font-size: 5.5pt;
-      color: #555;
-    }
+    .lbl-order-num { font-weight: 600; }
+    .lbl-order-name { font-weight: 400; }
+    .lbl-order-addr { font-size: 6.5pt; color: #555; }
 
     /* Ingredienser */
     .lbl-ing {
-      padding: 0 3.5mm 1mm;
-      font-size: 5.2pt;
-      line-height: 1.5;
-      flex-shrink: 0;
+      font-size: 6.3pt;
+      line-height: 1.45;
     }
     .lbl-ing strong { font-weight: 700; }
 
-    /* Tre info-blokker: Vekt / Holdbarhetsdato / Oppbevaring */
-    .lbl-trio {
-      display: flex;
-      flex-direction: column;
-      padding: 0.5mm 3.5mm 0;
-      gap: 0;
-      flex-shrink: 0;
-    }
-    .lbl-trio-row {
-      text-align: center;
-      padding: 1mm 0 0.3mm;
-    }
-    .lbl-trio-label {
-      font-size: 5.5pt;
-      font-weight: 700;
-      display: block;
-    }
-    .lbl-trio-val {
-      font-size: 5.5pt;
-      font-weight: 400;
-      display: block;
-    }
+    /* Vekt / Holdbarhetsdato / Oppbevaring — etikett + verdi på linje */
+    .lbl-trio { font-size: 6.6pt; line-height: 1.5; }
+    .lbl-trio-row { padding: 0.4mm 0; }
+    .lbl-trio-label { font-weight: 700; }
+    .lbl-trio-val { font-weight: 400; }
 
-    /* Fangstmetode + område */
-    .lbl-capture {
-      font-size: 6.5pt;
-      color: #555;
-      font-style: italic;
-      padding: 0 3.5mm 0.5mm;
-      flex-shrink: 0;
-      text-align: center;
-    }
-    .lbl-fao {
-      font-size: 5.5pt;
-      color: #333;
-      padding: 0 3.5mm 1.5mm;
-      flex-shrink: 0;
-      text-align: center;
-      line-height: 1.35;
-    }
-
-    /* Næringsinnhold-tabell */
-    .lbl-nutr {
-      padding: 0.8mm 3.5mm 0.5mm;
-      flex-shrink: 0;
-    }
+    /* Næringsinnhold-tabell (høyre kolonne) */
     .lbl-nutr-title {
-      font-size: 5.5pt;
+      font-size: 7pt;
       font-weight: 700;
       text-align: center;
-      padding-top: 0.5mm;
-      padding-bottom: 0.4mm;
+      padding-bottom: 1mm;
       letter-spacing: 0.02em;
     }
     .lbl-nutr-tbl {
       width: 100%;
-      font-size: 5pt;
+      font-size: 6.4pt;
       border-collapse: collapse;
-      line-height: 1.35;
+      line-height: 1.5;
     }
-    .lbl-nutr-tbl td { padding: 0.15mm 0; }
+    .lbl-nutr-tbl td { padding: 0.3mm 0; }
     .lbl-nutr-tbl td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
-    .lbl-nutr-tbl td.n-indent { padding-left: 1.6mm; color: #333; font-size: 4.7pt; }
+    .lbl-nutr-tbl td.n-indent { padding-left: 2mm; color: #333; font-size: 5.9pt; }
 
-    .lbl-packed {
-      font-size: 5pt;
-      color: #333;
-      text-align: center;
-      padding: 0.6mm 3.5mm 0.4mm;
-      flex-shrink: 0;
-      letter-spacing: 0.02em;
-    }
-
-    .lbl-footer {
-      font-size: 4.5pt;
-      color: #555;
-      margin-top: auto;
-      padding: 1mm 3.5mm 2mm;
+    /* Bunn: pakket-dato + produsent, full bredde */
+    .lbl-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 4mm;
       border-top: 0.4pt solid #ccc;
-      margin-left: 3mm;
-      margin-right: 3mm;
+      margin: 0 5mm;
+      padding: 1.2mm 0 2mm;
+      flex-shrink: 0;
     }
+    .lbl-packed { font-size: 6pt; color: #333; letter-spacing: 0.02em; flex-shrink: 0; }
+    .lbl-footer { font-size: 5.5pt; color: #555; text-align: right; }
 
     /* ── PRINT ── */
     .label-print-btn {
@@ -280,14 +234,14 @@
     .label-print-btn:hover { background: #0f766e; }
     .label-print-btn:disabled { opacity: .6; cursor: default; }
     @media print {
-      @page { size: 50mm 103mm; margin: 0; }
+      @page { size: 103mm 85mm; margin: 0; }
       body { background: none !important; }
       header, .screen-toolbar { display: none !important; }
       .labels-area { padding: 0 !important; margin: 0 !important; gap: 0 !important; display: block !important; }
       .label-card { box-shadow: none !important; border-radius: 0 !important; page-break-after: always; break-after: page; }
       .label-card-header { display: none !important; }
       .capture-toggle { display: none !important; }
-      .label { width: 50mm !important; height: 103mm !important; }
+      .label { width: 103mm !important; height: 85mm !important; }
       .label-print-btn { display: none !important; }
     }
   </style>
@@ -331,7 +285,7 @@
   </div>
   <div class="printer-info">
     <strong>Brother QL-1110NWB</strong><br>
-    Etikett: 50 mm × 103 mm<br>
+    Etikett: 103 mm × 85 mm<br>
     Koblingsmodus: Bluetooth / WiFi
   </div>
 </div>
@@ -363,13 +317,13 @@ const NUTR_DB = [
   { kw:['ørret','regnbueørret'],
     ing:'Ørret (Oncorhynchus mykiss)', all:'FISK',
     kj:607, kcal:145, fett:7.5, mf:1.5, ko:0.0, prot:20.0, salt:0.1, opb:'0–4 °C' },
-  { kw:['torsk, røkt','røkt torsk'],
+  { kw:['torsk, røkt','røkt torsk','torsk røkt'],
     ing:'Torsk 96 %, salt, røyk', all:'FISK',
     kj:490, kcal:117, fett:1.5, mf:0.3, ko:0.0, prot:27.0, salt:2.5, opb:'0–4 °C' },
   { kw:['torsk'],
     ing:'Torsk (Gadus morhua)', all:'FISK',
     kj:340, kcal:81, fett:0.7, mf:0.1, ko:0.0, prot:18.0, salt:0.1, opb:'0–4 °C' },
-  { kw:['sei, røkt','røkt sei'],
+  { kw:['sei, røkt','røkt sei','sei røkt'],
     ing:'Sei 96 %, salt, røyk', all:'FISK',
     kj:480, kcal:115, fett:1.2, mf:0.2, ko:0.0, prot:27.0, salt:2.4, opb:'0–4 °C' },
   { kw:['sei'],
@@ -409,7 +363,10 @@ const FALLBACK = {
 function lookupNutr(name) {
   const n = name.toLowerCase().replace(/\s*\([^)]*\)/g,'').trim();
   for (const e of NUTR_DB) {
-    if (e.kw.some(k => n.includes(k) || k.includes(n))) return e;
+    // Produktnavnet må INNEHOLDE nøkkelordet. IKKE omvendt (k.includes(n)):
+    // ellers matcher «torsk» den røkte «torsk, røkt»-oppføringen, og «krabbe»
+    // matcher «kongekrabbe» — fersk fisk fikk da røkt fisks innhold/salt.
+    if (e.kw.some(k => n.includes(k))) return e;
   }
   return FALLBACK;
 }
@@ -481,19 +438,24 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
   const logoCls   = isNesttun ? 'nesttun' : 'havoyet';
   const logoAlt   = isNesttun ? 'Nesttun Fisk &amp; Vilt' : 'Havøyet';
 
+  const subLine = [capLabel, faoLine].filter(Boolean).join(' · ');
+
   return `<div class="label">
 
-  <div class="lbl-logo-section">
-    <img src="${logoSrc}" alt="${logoAlt}" class="${logoCls}">
+  <div class="lbl-head">
+    <div class="lbl-logo-section">
+      <img src="${logoSrc}" alt="${logoAlt}" class="${logoCls}">
+    </div>
+    <div class="lbl-head-main">
+      <div class="lbl-product">${cleanName}</div>
+      ${subLine ? `<div class="lbl-sub">${subLine}</div>` : ''}
+    </div>
   </div>
 
   <div class="lbl-hr"></div>
 
-  <div class="lbl-product">${cleanName}</div>
-  ${capLabel ? `<div class="lbl-capture">${capLabel}</div>` : ''}
-  <div class="lbl-fao">${faoLine}</div>
-
-  <div class="lbl-hr"></div>
+  <div class="lbl-cols">
+    <div class="lbl-col lbl-col-l">
 
   <div class="lbl-order-block">
     <div class="lbl-order-num">Bestilling ${ordNum}</div>
@@ -502,12 +464,14 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
     ${phoneLine}
   </div>
 
-  <div class="lbl-hr"></div>
+  <div class="lbl-hr soft"></div>
 
   <div class="lbl-ing">
     <strong>INGREDIENSER:</strong> ${n.ing}<br>
     <strong>Allergener:</strong> ${n.all}
   </div>
+
+  <div class="lbl-hr soft"></div>
 
   <div class="lbl-trio">
     <div class="lbl-trio-row">
@@ -524,8 +488,9 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
     </div>
   </div>
 
-  <div class="lbl-hr"></div>
+    </div>
 
+    <div class="lbl-col lbl-col-r">
   <div class="lbl-nutr">
     <div class="lbl-nutr-title">NÆRINGSINNHOLD PER 100 g</div>
     <table class="lbl-nutr-tbl">
@@ -537,10 +502,13 @@ function buildLabel(order, name, weight, expiry, capture, weightUnit) {
       <tr><td>Salt</td><td>${fmtN(n.salt)} g</td></tr>
     </table>
   </div>
+    </div>
+  </div>
 
-  <div class="lbl-packed">Pakket: ${todayFmt()}</div>
-
-  <div class="lbl-footer">Havøyet AS, Nesttunvegen 96, 5221 Nesttun · havoyet.no</div>
+  <div class="lbl-foot">
+    <span class="lbl-packed">Pakket: ${todayFmt()}</span>
+    <span class="lbl-footer">Havøyet AS, Nesttunvegen 96, 5221 Nesttun · havoyet.no</span>
+  </div>
 
 </div>`;
 }
@@ -727,7 +695,7 @@ async function printOne(idx) {
   }
 }
 
-// «Skriv ut etiketter» sender hver etikett som egen 50×103mm-jobb gjennom
+// «Skriv ut etiketter» sender hver etikett som egen 103×85mm-jobb gjennom
 // print-køen (samme vei som «Skriv ut denne»). ALDRI window.print() her —
 // AirPrint av hele siden til QL-1110NWB gir én lang strimmel med all teksten.
 async function printAll() {
