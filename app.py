@@ -11615,9 +11615,21 @@ def _driver_set_order_status(order_id, new_status):
 
 try:
     from tracking_routes import register_tracking
+    def _order_visible_to_admin(o):
+        """True hvis ordren skal vises i admin/rute. Skjuler ubetalte pending-ordre
+        (AWAITING_PAYMENT/PENDING/CART) som ikke er i betalingsloggen — SAMME regel
+        som GET /api/manual-orders, så rute og kalender er konsistente."""
+        try:
+            if not _is_pending_order_status(o.get("status")):
+                return True
+            nr = str(o.get("ordrenr") or o.get("id") or "").strip()
+            return nr in _paid_ordrenrs()
+        except Exception:
+            return True
     register_tracking(
         app,
         manual_orders_ref=lambda: _manual_orders,
+        order_visible=_order_visible_to_admin,
         save_state=_save_sync_state,
         state_dir=STATE_DIR,
         admin_check=_user_from_request,
