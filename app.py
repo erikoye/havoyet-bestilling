@@ -12213,6 +12213,133 @@ def api_passkey_login_verify():
 
 
 
+# ─── Vipps Login (OIDC) — passordfri innlogging med Vipps ────────────────────
+# Aktiveres når VIPPS_LOGIN_CLIENT_ID/SECRET er satt (Render env). Inert ellers.
+# Standard authorization-code-flyt: frontend → /start → Vipps → /callback →
+# finn/opprett bruker på e-post → utsteder vanlig sesjons-token → redirect til
+# forsiden med token i URL-fragment (#auth=). Passord/passkeys virker uendret.
+VIPPS_LOGIN_CLIENT_ID = os.environ.get("VIPPS_LOGIN_CLIENT_ID", "")
+VIPPS_LOGIN_CLIENT_SECRET = os.environ.get("VIPPS_LOGIN_CLIENT_SECRET", "")
+VIPPS_LOGIN_BASE = os.environ.get("VIPPS_LOGIN_BASE", "https://api.vipps.no").rstrip("/")
+VIPPS_LOGIN_REDIRECT = os.environ.get("VIPPS_LOGIN_REDIRECT", "https://bestilling.havoyet.no/api/auth/vipps/callback")
+OAUTH_RETURN_ORIGINS = [o.strip() for o in os.environ.get(
+    "OAUTH_RETURN_ORIGINS",
+    "https://havoyet.no,https://www.havoyet.no,https://xn--havyet-dya.no").split(",") if o.strip()]
+
+def _vipps_login_configured():
+    return bool(VIPPS_LOGIN_CLIENT_ID and VIPPS_LOGIN_CLIENT_SECRET)
+
+def _oauth_sign_state(payload):
+    raw = _json_mod.dumps(payload, separators=(",", ":"), sort_keys=True)
+    b = _base64.urlsafe_b64encode(raw.encode()).rstrip(b"=").decode()
+    sig = _hmac_mod.new(_AUTH_SECRET.encode(), b.encode(), "sha256").hexdigest()[:32]
+    return b + "." + sig
+
+def _oauth_verify_state(state, max_age=600):
+    try:
+        b, sig = (state or "").split(".", 1)
+        exp = _hmac_mod.new(_AUTH_SECRET.encode(), b.encode(), "sha256").hexdigest()[:32]
+        if not _hmac_mod.compare_digest(sig, exp):
+            return None
+        pad = "=" * (-len(b) % 4)
+        payload = _json_mod.loads(_base64.urlsafe_b64decode(b + pad).decode())
+        if int(time.time()) - int(payload.get("iat", 0)) > max_age:
+            return None
+        return payload
+    except Exception:
+        return None
+
+def _oauth_safe_return(url):
+    try:
+        from urllib.parse import urlparse
+        u = urlparse(url or "")
+        if ("%s://%s" % (u.scheme, u.netloc)) in OAUTH_RETURN_ORIGINS:
+            return url
+    except Exception:
+        pass
+    return "https://havoyet.no/konto"
+
+def _oauth_finish(email, return_url, provider):
+    from flask import redirect
+    from urllib.parse import quote
+    email = (email or "").strip().lower()
+    user = _find_user(email)
+    if not user:
+        user = {"email": email, "role": "customer", "password_hash": None,
+                "must_set_password": False, "created_at": int(time.time()), "oauth": [provider]}
+        _auth_users.append(user)
+    else:
+        oa = user.get("oauth")
+        if not isinstance(oa, list):
+            oa = []
+        if provider not in oa:
+            oa.append(provider)
+        user["oauth"] = oa
+    _save_sync_state()
+    token = _make_stateless_token(user["email"], user.get("role") or "customer")
+    sep = "&" if "#" in return_url else "#"
+    return redirect("%s%sauth=%s&email=%s" % (return_url, sep, quote(token), quote(user["email"])))
+
+@app.route("/api/auth/oauth/providers", methods=["GET"])
+def api_oauth_providers():
+    return jsonify({"ok": True, "vipps": _vipps_login_configured(),
+                    "google": bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))})
+
+@app.route("/api/auth/vipps/start", methods=["GET"])
+def api_vipps_login_start():
+    from flask import redirect
+    from urllib.parse import urlencode
+    if not _vipps_login_configured():
+        return jsonify({"ok": False, "error": "Vipps-innlogging er ikke konfigurert ennå."}), 503
+    ret = _oauth_safe_return(request.args.get("return") or "https://havoyet.no/konto")
+    state = _oauth_sign_state({"p": "vipps", "r": ret, "iat": int(time.time())})
+    params = {
+        "client_id": VIPPS_LOGIN_CLIENT_ID,
+        "response_type": "code",
+        "scope": "openid name email",
+        "redirect_uri": VIPPS_LOGIN_REDIRECT,
+        "state": state,
+    }
+    return redirect("%s/access-management-1.0/access/oauth2/auth?%s" % (VIPPS_LOGIN_BASE, urlencode(params)))
+
+@app.route("/api/auth/vipps/callback", methods=["GET"])
+def api_vipps_login_callback():
+    from flask import redirect
+    st = _oauth_verify_state(request.args.get("state") or "")
+    ret = _oauth_safe_return((st or {}).get("r"))
+    if request.args.get("error") or not st:
+        return redirect("%s#auth_error=%s" % (ret, request.args.get("error") or "state"))
+    code = request.args.get("code")
+    if not code:
+        return redirect("%s#auth_error=nocode" % ret)
+    try:
+        import requests as _rqlib
+        tok_r = _rqlib.post(
+            "%s/access-management-1.0/access/oauth2/token" % VIPPS_LOGIN_BASE,
+            data={"grant_type": "authorization_code", "code": code, "redirect_uri": VIPPS_LOGIN_REDIRECT},
+            auth=(VIPPS_LOGIN_CLIENT_ID, VIPPS_LOGIN_CLIENT_SECRET),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+        tok = tok_r.json() if tok_r.content else {}
+        access = tok.get("access_token")
+        if not access:
+            print("[VIPPS] token-feil: %s %s" % (tok_r.status_code, tok))
+            return redirect("%s#auth_error=token" % ret)
+        ui_r = _rqlib.get("%s/vipps-userinfo-api/userinfo" % VIPPS_LOGIN_BASE,
+                          headers={"Authorization": "Bearer " + access}, timeout=15)
+        ui = ui_r.json() if ui_r.content else {}
+        email = (ui.get("email") or "").strip().lower()
+        if not email:
+            print("[VIPPS] userinfo uten e-post: %s" % ui)
+            return redirect("%s#auth_error=noemail" % ret)
+        return _oauth_finish(email, ret, "vipps")
+    except Exception as e:
+        print("[VIPPS] callback-feil: %s" % e)
+        return redirect("%s#auth_error=server" % ret)
+
+
+
 if __name__ == "__main__":
     # Last sync-state (pakkingstilstand, manuelle ordre, etc.)
     _load_sync_state()
