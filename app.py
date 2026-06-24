@@ -12340,6 +12340,74 @@ def api_vipps_login_callback():
 
 
 
+# ─── Google Login (OIDC) — passordfri innlogging med Google ──────────────────
+# Aktiveres når GOOGLE_CLIENT_ID/SECRET er satt (Render env). Inert ellers.
+# Gjenbruker _oauth_sign_state / _oauth_verify_state / _oauth_safe_return /
+# _oauth_finish fra Vipps-blokken. Krever verifisert e-post (email_verified).
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT = os.environ.get("GOOGLE_REDIRECT", "https://bestilling.havoyet.no/api/auth/google/callback")
+
+def _google_login_configured():
+    return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+@app.route("/api/auth/google/start", methods=["GET"])
+def api_google_login_start():
+    from flask import redirect
+    from urllib.parse import urlencode
+    if not _google_login_configured():
+        return jsonify({"ok": False, "error": "Google-innlogging er ikke konfigurert ennå."}), 503
+    ret = _oauth_safe_return(request.args.get("return") or "https://havoyet.no/konto")
+    state = _oauth_sign_state({"p": "google", "r": ret, "iat": int(time.time())})
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "redirect_uri": GOOGLE_REDIRECT,
+        "state": state,
+        "access_type": "online",
+        "prompt": "select_account",
+    }
+    return redirect("https://accounts.google.com/o/oauth2/v2/auth?%s" % urlencode(params))
+
+@app.route("/api/auth/google/callback", methods=["GET"])
+def api_google_login_callback():
+    from flask import redirect
+    st = _oauth_verify_state(request.args.get("state") or "")
+    ret = _oauth_safe_return((st or {}).get("r"))
+    if request.args.get("error") or not st:
+        return redirect("%s#auth_error=%s" % (ret, request.args.get("error") or "state"))
+    code = request.args.get("code")
+    if not code:
+        return redirect("%s#auth_error=nocode" % ret)
+    try:
+        import requests as _rqlib
+        tok_r = _rqlib.post(
+            "https://oauth2.googleapis.com/token",
+            data={"grant_type": "authorization_code", "code": code,
+                  "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET,
+                  "redirect_uri": GOOGLE_REDIRECT},
+            timeout=15,
+        )
+        tok = tok_r.json() if tok_r.content else {}
+        access = tok.get("access_token")
+        if not access:
+            print("[GOOGLE] token-feil: %s %s" % (tok_r.status_code, tok))
+            return redirect("%s#auth_error=token" % ret)
+        ui_r = _rqlib.get("https://openidconnect.googleapis.com/v1/userinfo",
+                          headers={"Authorization": "Bearer " + access}, timeout=15)
+        ui = ui_r.json() if ui_r.content else {}
+        email = (ui.get("email") or "").strip().lower()
+        if not email or not ui.get("email_verified", False):
+            print("[GOOGLE] mangler verifisert e-post: %s" % ui)
+            return redirect("%s#auth_error=noemail" % ret)
+        return _oauth_finish(email, ret, "google")
+    except Exception as e:
+        print("[GOOGLE] callback-feil: %s" % e)
+        return redirect("%s#auth_error=server" % ret)
+
+
+
 if __name__ == "__main__":
     # Last sync-state (pakkingstilstand, manuelle ordre, etc.)
     _load_sync_state()
