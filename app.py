@@ -12346,13 +12346,25 @@ def api_vipps_login_callback():
         if not access:
             print("[VIPPS] token-feil: %s %s" % (tok_r.status_code, tok))
             return redirect("%s#auth_error=token" % ret)
-        _ui_hdrs = {"Authorization": "Bearer " + access}
-        if VIPPS_SUBSCRIPTION_KEY: _ui_hdrs["Ocp-Apim-Subscription-Key"] = VIPPS_SUBSCRIPTION_KEY
-        if VIPPS_MSN: _ui_hdrs["Merchant-Serial-Number"] = VIPPS_MSN
-        ui_r = _rqlib.get("%s/vipps-userinfo-api/userinfo" % VIPPS_LOGIN_BASE,
-                          headers=_ui_hdrs, timeout=15)
-        ui = ui_r.json() if ui_r.content else {}
-        email = (ui.get("email") or "").strip().lower()
+        # «Id-token with user info» (valgt i Vipps-portalen) legger e-post/navn rett
+        # i id_token. Les claims derfra først; fall tilbake til userinfo-API ellers.
+        email = ""
+        _idt = tok.get("id_token") or ""
+        if _idt.count(".") >= 2:
+            try:
+                _pl = _idt.split(".")[1]; _pl += "=" * (-len(_pl) % 4)
+                _claims = json.loads(_base64.urlsafe_b64decode(_pl).decode("utf-8", "ignore"))
+                email = (_claims.get("email") or "").strip().lower()
+            except Exception:
+                pass
+        if not email:
+            _ui_hdrs = {"Authorization": "Bearer " + access}
+            if VIPPS_SUBSCRIPTION_KEY: _ui_hdrs["Ocp-Apim-Subscription-Key"] = VIPPS_SUBSCRIPTION_KEY
+            if VIPPS_MSN: _ui_hdrs["Merchant-Serial-Number"] = VIPPS_MSN
+            ui_r = _rqlib.get("%s/vipps-userinfo-api/userinfo" % VIPPS_LOGIN_BASE,
+                              headers=_ui_hdrs, timeout=15)
+            ui = ui_r.json() if ui_r.content else {}
+            email = (ui.get("email") or "").strip().lower()
         if not email:
             print("[VIPPS] userinfo uten e-post: %s" % ui)
             return redirect("%s#auth_error=noemail" % ret)
