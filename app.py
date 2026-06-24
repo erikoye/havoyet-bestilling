@@ -12042,6 +12042,177 @@ def api_print_template_delete(tmpl_id):
     return jsonify({"ok": True, "count": len(new_items)})
 
 
+# ─── Passkeys (WebAuthn) — passordfri innlogging (Face ID / fingeravtrykk) ────
+# Tillegg til passord-innlogging; passord fortsetter å virke parallelt. Lagrer
+# KUN offentlig nøkkel per bruker (aldri hemmeligheter). Bygger på _auth_users.
+try:
+    from webauthn import (
+        generate_registration_options as _wa_reg_opts,
+        verify_registration_response as _wa_reg_verify,
+        generate_authentication_options as _wa_auth_opts,
+        verify_authentication_response as _wa_auth_verify,
+        options_to_json as _wa_options_to_json,
+    )
+    from webauthn.helpers.structs import (
+        AuthenticatorSelectionCriteria as _WaSel,
+        ResidentKeyRequirement as _WaRK,
+        UserVerificationRequirement as _WaUV,
+        PublicKeyCredentialDescriptor as _WaDesc,
+    )
+    from webauthn.helpers import bytes_to_base64url as _wa_b2b64, base64url_to_bytes as _wa_b642b
+    _WEBAUTHN_OK = True
+except Exception as _wa_e:
+    _WEBAUTHN_OK = False
+    print(f"[PASSKEY] webauthn-lib utilgjengelig: {_wa_e}")
+
+PASSKEY_RP_ID = os.environ.get("PASSKEY_RP_ID", "havoyet.no")
+PASSKEY_RP_NAME = "Havøyet"
+PASSKEY_ORIGINS = [o.strip() for o in os.environ.get(
+    "PASSKEY_ORIGINS",
+    "https://havoyet.no,https://www.havoyet.no,https://xn--havyet-dya.no"
+).split(",") if o.strip()]
+PASSKEY_CHALLENGE_TTL = 300  # 5 min
+
+_passkey_challenges = {}  # email → {"challenge": bytes, "expires_at": int}
+
+def _passkey_user_id(email):
+    return _hashlib_mod.sha256(("hv-passkey:" + email).encode("utf-8")).digest()[:16]
+
+def _user_passkeys(user):
+    pk = user.get("passkeys") if user else None
+    return pk if isinstance(pk, list) else []
+
+def _passkey_put_challenge(email, challenge_bytes):
+    _passkey_challenges[email] = {"challenge": challenge_bytes,
+                                  "expires_at": int(time.time()) + PASSKEY_CHALLENGE_TTL}
+
+def _passkey_take_challenge(email):
+    rec = _passkey_challenges.pop(email, None)
+    if not rec or rec.get("expires_at", 0) < int(time.time()):
+        return None
+    return rec.get("challenge")
+
+@app.route("/api/auth/passkey/status", methods=["GET"])
+def api_passkey_status():
+    user, _ = _user_from_request()
+    return jsonify({"ok": True, "enabled": _WEBAUTHN_OK,
+                    "count": len(_user_passkeys(user)) if user else 0})
+
+@app.route("/api/auth/passkey/register-options", methods=["POST"])
+def api_passkey_register_options():
+    if not _WEBAUTHN_OK:
+        return jsonify({"ok": False, "error": "Passkeys er ikke aktivert på serveren ennå."}), 503
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Du må være innlogget for å legge til en passkey."}), 401
+    email = user["email"]
+    existing = [_WaDesc(id=_wa_b642b(p["id"])) for p in _user_passkeys(user) if p.get("id")]
+    opts = _wa_reg_opts(
+        rp_id=PASSKEY_RP_ID, rp_name=PASSKEY_RP_NAME,
+        user_id=_passkey_user_id(email), user_name=email, user_display_name=email,
+        exclude_credentials=existing,
+        authenticator_selection=_WaSel(resident_key=_WaRK.PREFERRED,
+                                       user_verification=_WaUV.PREFERRED),
+    )
+    _passkey_put_challenge(email, opts.challenge)
+    return app.response_class(_wa_options_to_json(opts), mimetype="application/json")
+
+@app.route("/api/auth/passkey/register-verify", methods=["POST"])
+def api_passkey_register_verify():
+    if not _WEBAUTHN_OK:
+        return jsonify({"ok": False, "error": "Passkeys ikke aktivert."}), 503
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Ikke innlogget."}), 401
+    data = request.get_json(silent=True) or {}
+    cred = data.get("credential")
+    if not cred:
+        return jsonify({"ok": False, "error": "Mangler credential."}), 400
+    challenge = _passkey_take_challenge(user["email"])
+    if not challenge:
+        return jsonify({"ok": False, "error": "Forespørselen utløp. Prøv igjen."}), 400
+    try:
+        ver = _wa_reg_verify(
+            credential=json.dumps(cred) if isinstance(cred, dict) else cred,
+            expected_challenge=challenge,
+            expected_rp_id=PASSKEY_RP_ID,
+            expected_origin=PASSKEY_ORIGINS,
+        )
+    except Exception as e:
+        print(f"[PASSKEY] reg-verify feil: {e}")
+        return jsonify({"ok": False, "error": "Kunne ikke registrere passkey."}), 400
+    pk = _user_passkeys(user)
+    cid = _wa_b2b64(ver.credential_id)
+    if not any(p.get("id") == cid for p in pk):
+        pk.append({"id": cid, "public_key": _wa_b2b64(ver.credential_public_key),
+                   "sign_count": int(getattr(ver, "sign_count", 0) or 0),
+                   "created_at": int(time.time())})
+    user["passkeys"] = pk
+    _save_sync_state()
+    return jsonify({"ok": True, "count": len(pk)})
+
+@app.route("/api/auth/passkey/login-options", methods=["POST"])
+def api_passkey_login_options():
+    if not _WEBAUTHN_OK:
+        return jsonify({"ok": False, "error": "Passkeys ikke aktivert."}), 503
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return jsonify({"ok": False, "error": "Oppgi e-posten din."}), 400
+    if _rate_limited(f"pk-login:{_client_ip()}:{email}", 10, 300):
+        return jsonify({"ok": False, "error": "For mange forsøk. Vent litt."}), 429
+    user = _find_user(email)
+    pk = _user_passkeys(user) if user else []
+    if not pk:
+        return jsonify({"ok": False, "error": "Ingen passkey registrert for denne e-posten."}), 404
+    opts = _wa_auth_opts(
+        rp_id=PASSKEY_RP_ID,
+        allow_credentials=[_WaDesc(id=_wa_b642b(p["id"])) for p in pk if p.get("id")],
+        user_verification=_WaUV.PREFERRED,
+    )
+    _passkey_put_challenge(email, opts.challenge)
+    return app.response_class(_wa_options_to_json(opts), mimetype="application/json")
+
+@app.route("/api/auth/passkey/login-verify", methods=["POST"])
+def api_passkey_login_verify():
+    if not _WEBAUTHN_OK:
+        return jsonify({"ok": False, "error": "Passkeys ikke aktivert."}), 503
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    cred = data.get("credential")
+    if not email or not cred:
+        return jsonify({"ok": False, "error": "Mangler data."}), 400
+    user = _find_user(email)
+    if not user:
+        return jsonify({"ok": False, "error": "Ukjent bruker."}), 404
+    challenge = _passkey_take_challenge(email)
+    if not challenge:
+        return jsonify({"ok": False, "error": "Forespørselen utløp. Prøv igjen."}), 400
+    cred_id = cred.get("id") if isinstance(cred, dict) else None
+    pk = _user_passkeys(user)
+    match = next((p for p in pk if p.get("id") == cred_id), None)
+    if not match:
+        return jsonify({"ok": False, "error": "Ukjent passkey."}), 400
+    try:
+        ver = _wa_auth_verify(
+            credential=json.dumps(cred) if isinstance(cred, dict) else cred,
+            expected_challenge=challenge,
+            expected_rp_id=PASSKEY_RP_ID,
+            expected_origin=PASSKEY_ORIGINS,
+            credential_public_key=_wa_b642b(match["public_key"]),
+            credential_current_sign_count=int(match.get("sign_count", 0) or 0),
+            require_user_verification=False,
+        )
+    except Exception as e:
+        print(f"[PASSKEY] login-verify feil: {e}")
+        return jsonify({"ok": False, "error": "Innlogging feilet. Prøv igjen."}), 400
+    match["sign_count"] = int(getattr(ver, "new_sign_count", match.get("sign_count", 0)) or 0)
+    _save_sync_state()
+    token = _make_stateless_token(user["email"], user["role"])
+    return jsonify({"ok": True, "token": token, "user": _public_user(user)})
+
+
+
 if __name__ == "__main__":
     # Last sync-state (pakkingstilstand, manuelle ordre, etc.)
     _load_sync_state()
