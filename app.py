@@ -3997,6 +3997,45 @@ def _fire_capi_purchase(order):
         print(f"[CAPI-PURCHASE] unntak: {e}")
 
 
+def _norm_slot(t):
+    """Normaliser tidsrom-streng (bindestrek/tankestrek + mellomrom) for matching."""
+    return (t or "").replace("-", "–").replace(" ", "").strip()
+
+@app.route("/api/delivery/slot-count", methods=["GET"])
+def api_delivery_slot_count():
+    """Antall ikke-avbrutte Havøyet-ordre for en gitt leveringsdag + tidsrom.
+    Brukes til dynamisk frakt: jo flere som deler leveringsvindu, jo lavere frakt
+    («samkjøring»). Ekskluderer forespørrende kunde (email) så egen ventende
+    ordre ikke teller. Teller betalte OG bestilte (kun avbrutt/refundert hoppes)."""
+    dato = (request.args.get("dato") or "").strip()
+    tid  = _norm_slot(request.args.get("tid") or "")
+    email = _normalize_email(request.args.get("email") or "")
+    if not dato or not tid:
+        return jsonify({"count": 0})
+    cancelled = {"CANCELLED", "AVBRUTT", "AVBESTILT", "REFUNDED", "CART"}
+    n = 0
+    for o in (_manual_orders or []):
+        if not isinstance(o, dict):
+            continue
+        store = o.get("store")
+        if store and store != "Havøyet":          # NFV o.l. har egne ruter
+            continue
+        k = o.get("kunde") or {}
+        if (k.get("leveringsdag") or "").strip() != dato:
+            continue
+        if _norm_slot(k.get("leveringstid")) != tid:
+            continue
+        st = (o.get("status") or "").strip().upper()
+        if st in cancelled:
+            continue
+        if (o.get("paymentStatus") or "").strip().lower() in ("refunded", "cancelled"):
+            continue
+        if email and (k.get("epost") or "").strip().lower() == email:
+            continue
+        n += 1
+    return jsonify({"count": n})
+
+
 @app.route("/api/orders/new", methods=["POST"])
 def api_orders_new():
     """Ny kundebestilling fra checkout → lagres + e-post til Erik."""
