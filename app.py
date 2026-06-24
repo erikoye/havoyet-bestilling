@@ -10381,6 +10381,53 @@ def _discount_applies_to_user(d, email):
     return False
 
 
+# ── Velkomstrabatt: 10 % på skalldyrkasser for nye, innloggede kunder ────────
+# Gjelder kunder som har REGISTRERT seg / er innlogget, men ENNÅ ikke har et
+# betalt kjøp. Syntetiseres her (ikke lagret i _discounts) så den alltid finnes
+# uten admin-styring, og forsvinner automatisk så snart kunden har kjøpt.
+WELCOME_DISCOUNT_HANDLES = [
+    "klassisk-skalldyrkasse", "premium-skalldyrkasse",
+    "eksklusiv-skalldyrkasse", "din-skalldyrkasse",
+]
+WELCOME_DISCOUNT_PCT = 10
+
+def _has_paid_order(email):
+    """True hvis e-posten har minst én betalt/fullført ordre."""
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    for o in _manual_orders:
+        if ((o.get("kunde") or {}).get("epost") or "").strip().lower() != email:
+            continue
+        ps = (o.get("paymentStatus") or "").strip().lower()
+        st = (o.get("status") or "").strip().upper()
+        if ps == "paid" or st in ("PAID", "PAID_OUT", "DONE"):
+            return True
+    return False
+
+def _welcome_discount_for(user_email):
+    """Returnerer velkomstrabatt-objektet hvis brukeren kvalifiserer (registrert
+    konto + ingen betalt ordre), ellers None."""
+    email = (user_email or "").strip().lower()
+    if not email or "@" not in email:
+        return None
+    if not _find_user(email):          # må være en registrert konto
+        return None
+    if _has_paid_order(email):         # mister rabatten etter første kjøp
+        return None
+    return {
+        "id":              "welcome-skalldyr-10",
+        "code":            "VELKOMST10",
+        "prosent":         WELCOME_DISCOUNT_PCT,
+        "applies_to":      "products",
+        "product_handles": list(WELCOME_DISCOUNT_HANDLES),
+        "target_type":     "first_purchase",
+        "beskrivelse":     "Velkomstrabatt – 10 % på skalldyrkasser (nye kunder)",
+        "free_shipping":   False,
+        "synthetic":       True,
+    }
+
+
 def _active_discounts_for(user_email=None):
     """Returnerer rabatter som faktisk gjelder akkurat nå for den gitte brukeren.
     Tar hensyn til target_type (anyone/email/bsf_member/newsletter)."""
@@ -10391,6 +10438,10 @@ def _active_discounts_for(user_email=None):
         if not _discount_applies_to_user(d, user_email):
             continue
         out.append(d)
+    # Syntetisk velkomstrabatt (10 % skalldyrkasser for nye, innloggede kunder)
+    welcome = _welcome_discount_for(user_email)
+    if welcome:
+        out.append(welcome)
     return out
 
 
