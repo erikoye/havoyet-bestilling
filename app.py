@@ -4036,6 +4036,44 @@ def api_delivery_slot_count():
     return jsonify({"count": n})
 
 
+@app.route("/api/delivery/slot-counts", methods=["GET"])
+def api_delivery_slot_counts():
+    """Batch-versjon: antall ordre for FLERE dager × tidsrom i ett kall, så
+    kassen kan vise frakt-pris per rute i tidsvelger-rutenettet.
+    ?dates=d1,d2,…&tids=t1,t2&email=  →  {"<dato>|<tid>": count, …}"""
+    dates = [d.strip() for d in (request.args.get("dates") or "").split(",") if d.strip()]
+    tids  = [_norm_slot(t) for t in (request.args.get("tids") or "").split(",") if t.strip()]
+    email = _normalize_email(request.args.get("email") or "")
+    out = {}
+    if not dates or not tids:
+        return jsonify(out)
+    date_set, tid_set = set(dates), set(tids)
+    cancelled = {"CANCELLED", "AVBRUTT", "AVBESTILT", "REFUNDED", "CART"}
+    for o in (_manual_orders or []):
+        if not isinstance(o, dict):
+            continue
+        store = o.get("store")
+        if store and store != "Havøyet":
+            continue
+        k = o.get("kunde") or {}
+        dato = (k.get("leveringsdag") or "").strip()
+        if dato not in date_set:
+            continue
+        tid = _norm_slot(k.get("leveringstid"))
+        if tid not in tid_set:
+            continue
+        st = (o.get("status") or "").strip().upper()
+        if st in cancelled:
+            continue
+        if (o.get("paymentStatus") or "").strip().lower() in ("refunded", "cancelled"):
+            continue
+        if email and (k.get("epost") or "").strip().lower() == email:
+            continue
+        key = dato + "|" + tid
+        out[key] = out.get(key, 0) + 1
+    return jsonify(out)
+
+
 @app.route("/api/orders/new", methods=["POST"])
 def api_orders_new():
     """Ny kundebestilling fra checkout → lagres + e-post til Erik."""
