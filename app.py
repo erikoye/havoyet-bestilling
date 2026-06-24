@@ -12218,16 +12218,21 @@ def api_passkey_login_verify():
 # Standard authorization-code-flyt: frontend → /start → Vipps → /callback →
 # finn/opprett bruker på e-post → utsteder vanlig sesjons-token → redirect til
 # forsiden med token i URL-fragment (#auth=). Passord/passkeys virker uendret.
-VIPPS_LOGIN_CLIENT_ID = os.environ.get("VIPPS_LOGIN_CLIENT_ID", "")
-VIPPS_LOGIN_CLIENT_SECRET = os.environ.get("VIPPS_LOGIN_CLIENT_SECRET", "")
-VIPPS_LOGIN_BASE = os.environ.get("VIPPS_LOGIN_BASE", "https://api.vipps.no").rstrip("/")
+# Gjenbruker betalings-Vipps-nøklene som standard (samme klient). Overstyr med
+# egne VIPPS_LOGIN_*-vars kun hvis Vipps ga deg separate Login-nøkler.
+VIPPS_LOGIN_CLIENT_ID = os.environ.get("VIPPS_LOGIN_CLIENT_ID", "") or VIPPS_CLIENT_ID
+VIPPS_LOGIN_CLIENT_SECRET = os.environ.get("VIPPS_LOGIN_CLIENT_SECRET", "") or VIPPS_CLIENT_SECRET
+VIPPS_LOGIN_BASE = (os.environ.get("VIPPS_LOGIN_BASE", "") or VIPPS_API_BASE).rstrip("/")
+# Eksplisitt på-bryter: settes til 1 FØRST når «Logg inn med Vipps» er aktivert i
+# Vipps-portalen og redirect-URI er registrert (ellers blir knappen ødelagt).
+VIPPS_LOGIN_ENABLED = os.environ.get("VIPPS_LOGIN_ENABLED", "0") == "1"
 VIPPS_LOGIN_REDIRECT = os.environ.get("VIPPS_LOGIN_REDIRECT", "https://bestilling.havoyet.no/api/auth/vipps/callback")
 OAUTH_RETURN_ORIGINS = [o.strip() for o in os.environ.get(
     "OAUTH_RETURN_ORIGINS",
     "https://havoyet.no,https://www.havoyet.no,https://xn--havyet-dya.no").split(",") if o.strip()]
 
 def _vipps_login_configured():
-    return bool(VIPPS_LOGIN_CLIENT_ID and VIPPS_LOGIN_CLIENT_SECRET)
+    return bool(VIPPS_LOGIN_ENABLED and VIPPS_LOGIN_CLIENT_ID and VIPPS_LOGIN_CLIENT_SECRET)
 
 def _oauth_sign_state(payload):
     raw = _json_mod.dumps(payload, separators=(",", ":"), sort_keys=True)
@@ -12314,11 +12319,14 @@ def api_vipps_login_callback():
         return redirect("%s#auth_error=nocode" % ret)
     try:
         import requests as _rqlib
+        _vipps_hdrs = {"Content-Type": "application/x-www-form-urlencoded"}
+        if VIPPS_SUBSCRIPTION_KEY: _vipps_hdrs["Ocp-Apim-Subscription-Key"] = VIPPS_SUBSCRIPTION_KEY
+        if VIPPS_MSN: _vipps_hdrs["Merchant-Serial-Number"] = VIPPS_MSN
         tok_r = _rqlib.post(
             "%s/access-management-1.0/access/oauth2/token" % VIPPS_LOGIN_BASE,
             data={"grant_type": "authorization_code", "code": code, "redirect_uri": VIPPS_LOGIN_REDIRECT},
             auth=(VIPPS_LOGIN_CLIENT_ID, VIPPS_LOGIN_CLIENT_SECRET),
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            headers=_vipps_hdrs,
             timeout=15,
         )
         tok = tok_r.json() if tok_r.content else {}
@@ -12326,8 +12334,11 @@ def api_vipps_login_callback():
         if not access:
             print("[VIPPS] token-feil: %s %s" % (tok_r.status_code, tok))
             return redirect("%s#auth_error=token" % ret)
+        _ui_hdrs = {"Authorization": "Bearer " + access}
+        if VIPPS_SUBSCRIPTION_KEY: _ui_hdrs["Ocp-Apim-Subscription-Key"] = VIPPS_SUBSCRIPTION_KEY
+        if VIPPS_MSN: _ui_hdrs["Merchant-Serial-Number"] = VIPPS_MSN
         ui_r = _rqlib.get("%s/vipps-userinfo-api/userinfo" % VIPPS_LOGIN_BASE,
-                          headers={"Authorization": "Bearer " + access}, timeout=15)
+                          headers=_ui_hdrs, timeout=15)
         ui = ui_r.json() if ui_r.content else {}
         email = (ui.get("email") or "").strip().lower()
         if not email:
