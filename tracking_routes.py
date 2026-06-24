@@ -37,6 +37,7 @@ bp = Blueprint("tracking", __name__)
 _state: dict = {
     "client": None,            # AbaxClient
     "orders_ref": None,        # Callable -> list[dict]
+    "order_visible": None,     # Callable(order)->bool — skjul ubetalte/pending fra rute
     "save_state": None,        # Callable -> None
     "admin_check": None,       # Callable returns (user|None, errResp|None)
     "active_vehicle_id": None, # str — satt av admin: hvilken bil leverer i dag?
@@ -57,6 +58,7 @@ def register_tracking(
     save_state: Callable[[], None],
     state_dir: str,
     admin_check: Callable[[], tuple],
+    order_visible: Optional[Callable[[dict], bool]] = None,
     depot_coords: tuple[float, float] | None = None,
     sms_sender: Optional[Callable[[str, str], tuple]] = None,
     route_eta_sender: Optional[Callable[[dict, str, str], tuple]] = None,
@@ -68,6 +70,7 @@ def register_tracking(
     _state["orders_ref"] = manual_orders_ref
     _state["save_state"] = save_state
     _state["admin_check"] = admin_check
+    _state["order_visible"] = order_visible
     _state["active_vehicle_id"] = os.environ.get("ABAX_DEFAULT_VEHICLE_ID")
     _state["depot"] = depot_coords or _parse_depot()
     _state["sms_sender"] = sms_sender
@@ -1210,9 +1213,12 @@ def _today_iso() -> str:
 def _orders_for_date(date_iso: str) -> list[dict]:
     """Filtrer ut ordrer som skal leveres på gitt dato og ikke er ferdige."""
     out = []
+    _vis = _state.get("order_visible")
     for o in (_state["orders_ref"]() or []):
         if not isinstance(o, dict):
             continue
+        if _vis and not _vis(o):
+            continue  # ubetalt/pending — skjules i admin, skal heller ikke i rute
         if _is_delivered(o):
             continue
         if _delivery_date(o) != date_iso:
