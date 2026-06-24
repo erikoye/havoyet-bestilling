@@ -4321,10 +4321,19 @@ def _orders_for_email(email):
     orders = []
     # Manuelle ordre lagret via checkout-skjema. Speil packing-state-avail inn
     # på varelinjene så kundesiden viser samme tilgjengelighet som admin/pakke.
+    _paid = _paid_ordrenrs()
     for o in _manual_orders:
         kunde_epost = ((o.get("kunde") or {}).get("epost") or "").lower()
-        if kunde_epost == email:
-            orders.append(_overlay_packing_avail(o))
+        if kunde_epost != email:
+            continue
+        # Skjul ufullførte/ubetalte ordre (AWAITING_PAYMENT/PENDING/CART) som ikke
+        # er bekreftet betalt — kunden skal ikke se en bestilling de aldri fullførte
+        # (f.eks. som «neste levering»). Samme regel som admin-kalender + rute.
+        if _is_pending_order_status(o.get("status")):
+            _nr = str(o.get("ordrenr") or o.get("id") or "").strip()
+            if _nr not in _paid:
+                continue
+        orders.append(_overlay_packing_avail(o))
     # Sorter nyeste først
     def _key(o):
         return o.get("dato") or o.get("created_at") or ""
