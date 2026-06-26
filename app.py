@@ -8062,8 +8062,11 @@ def api_customer_auth_register():
         return jsonify({"ok": False, "error": "Passordet må være minst 8 tegn"}), 400
     if _find_user(email):
         return jsonify({"ok": False, "error": "E-posten er allerede registrert. Logg inn i stedet."}), 409
-    # BSF-medlemskap: selvrapportert ved registrering → status 'pending'
-    # til admin godkjenner. Standardverdi 'none' hvis ikke huket av.
+    # BSF-medlemskap: selvrapportert ved registrering → AUTO-GODKJENT (honnør,
+    # samme prinsipp som BSF20-koden). Medlemmet får 20 %-medlemspris automatisk
+    # med en gang, uten å vente på admin. Admin kan fjerne misbruk i ettertid
+    # (sette status 'rejected'/'none' via PATCH /bsf-status). Varsel sendes
+    # fortsatt til admin så de kan følge med.
     bsf_member = bool(data.get("bsf_member"))
     new_user = {
         "email": email,
@@ -8071,7 +8074,7 @@ def api_customer_auth_register():
         "password_hash": generate_password_hash(password),
         "must_set_password": False,
         "created_at": int(time.time()),
-        "bsf_member_status": "pending" if bsf_member else "none",
+        "bsf_member_status": "approved" if bsf_member else "none",
     }
     _auth_users.append(new_user)
     token = secrets.token_urlsafe(32)
