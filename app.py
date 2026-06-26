@@ -4036,6 +4036,61 @@ def api_delivery_slot_count():
     return jsonify({"count": n})
 
 
+# ── Samkjøringsdager (admin-bestemte datoer der frakt-samkjøring alltid vises) ──
+# Normalt vises «samkjørt levering / −15 kr» bare når det finnes en AKTIV (betalt/
+# bekreftet) ordre samme dag + tidsrom. Admin kan i tillegg merke enkeltdatoer der
+# det er naturlig (faste rutedager) så rabatten vises selv før første nabo bestiller.
+SAMKJORING_FILE  = os.path.join(STATE_DIR, "havoyet_samkjoring.json")
+_samkjoring      = None
+_samkjoring_lock = threading.Lock()
+
+def _ensure_samkjoring_loaded():
+    global _samkjoring
+    if _samkjoring is not None:
+        return
+    data = {"dates": []}
+    try:
+        if os.path.exists(SAMKJORING_FILE):
+            with open(SAMKJORING_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f) or {}
+            if isinstance(d, dict) and isinstance(d.get("dates"), list):
+                data["dates"] = sorted({str(x).strip() for x in d["dates"] if str(x).strip()})
+    except Exception as e:
+        print(f"[SAMKJORING] Kunne ikke laste: {e}")
+    _samkjoring = data
+
+def _save_samkjoring():
+    try:
+        tmp = SAMKJORING_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_samkjoring, f, ensure_ascii=False)
+        os.replace(tmp, SAMKJORING_FILE)
+    except Exception as e:
+        print(f"[SAMKJORING] Lagring feilet: {e}")
+
+@app.route("/api/admin/samkjoring", methods=["GET", "POST"])
+def api_admin_samkjoring():
+    """Admin-bestemte samkjøringsdager (YYYY-MM-DD).
+       GET  → {ok, dates:[...]}
+       POST {dates:[...]} → lagrer og returnerer rensket liste (kun admin)."""
+    user, _ = _user_from_request()
+    if not user:
+        return jsonify({"ok": False, "error": "Auth påkrevd"}), 401
+    import re as _re
+    with _samkjoring_lock:
+        _ensure_samkjoring_loaded()
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            raw = data.get("dates")
+            if not isinstance(raw, list):
+                return jsonify({"ok": False, "error": "dates må være en liste"}), 400
+            clean = sorted({d for d in (str(x).strip() for x in raw)
+                            if _re.match(r"^\d{4}-\d{2}-\d{2}$", d)})
+            _samkjoring["dates"] = clean
+            _save_samkjoring()
+        return jsonify({"ok": True, "dates": list(_samkjoring.get("dates") or [])})
+
+
 @app.route("/api/delivery/slot-counts", methods=["GET"])
 def api_delivery_slot_counts():
     """Batch-versjon: antall ordre for FLERE dager × tidsrom i ett kall, så
@@ -4049,6 +4104,30 @@ def api_delivery_slot_counts():
         return jsonify(out)
     date_set, tid_set = set(dates), set(tids)
     cancelled = {"CANCELLED", "AVBRUTT", "AVBESTILT", "REFUNDED", "CART"}
+    try:
+        paid = _paid_ordrenrs()
+    except Exception:
+        paid = set()
+
+    def _is_active_order(o):
+        """Bare ordre som faktisk blir levert (betalt/bekreftet) teller som «nabo».
+        Ubetalte/forlatte web-checkouts og test-ordre skal ikke gi samkjørings-
+        rabatt — speiler den aktive ordrelista i admin/rute."""
+        ordrenr = str(o.get("ordrenr") or o.get("id") or "").strip()
+        st      = (o.get("status") or "").strip().upper()
+        ps_norm = (o.get("paymentStatus") or "").strip().lower()
+        if st in cancelled or ps_norm in ("refunded", "cancelled"):
+            return False
+        try:
+            pending = _is_pending_order_status(st)
+        except Exception:
+            pending = st in ("AWAITING_PAYMENT", "PENDING", "CART")
+        if pending and ordrenr not in paid:
+            return False
+        is_unpaid_explicit = ps_norm in ("unpaid", "pending", "awaiting_payment")
+        return (ordrenr in paid or st in ("PAID", "PAID_OUT")
+                or (not is_unpaid_explicit and ps_norm in ("paid", "free", "")))
+
     for o in (_manual_orders or []):
         if not isinstance(o, dict):
             continue
@@ -4062,15 +4141,26 @@ def api_delivery_slot_counts():
         tid = _norm_slot(k.get("leveringstid"))
         if tid not in tid_set:
             continue
-        st = (o.get("status") or "").strip().upper()
-        if st in cancelled:
-            continue
-        if (o.get("paymentStatus") or "").strip().lower() in ("refunded", "cancelled"):
+        if not _is_active_order(o):
             continue
         if email and (k.get("epost") or "").strip().lower() == email:
             continue
         key = dato + "|" + tid
         out[key] = out.get(key, 0) + 1
+
+    # Admin-bestemte samkjøringsdager: garanter at samkjøring vises (min 1) på alle
+    # forespurte tidsrom de dagene – selv før første nabo har bestilt.
+    try:
+        with _samkjoring_lock:
+            _ensure_samkjoring_loaded()
+            forced = set(_samkjoring.get("dates") or [])
+        for dato in dates:
+            if dato in forced:
+                for tid in tids:
+                    key = dato + "|" + tid
+                    out[key] = max(out.get(key, 0), 1)
+    except Exception:
+        pass
     return jsonify(out)
 
 
