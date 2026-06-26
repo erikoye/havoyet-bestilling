@@ -10448,9 +10448,13 @@ def _is_bsf_approved(email):
     return bool(u and u.get("bsf_member_status") == "approved")
 
 
-def _discount_applies_to_user(d, email):
+def _discount_applies_to_user(d, email, via_code=False):
     """Sjekker om rabatten gjelder for denne brukeren basert på target_type.
-    target_type: 'anyone' (default) | 'email' (en bestemt bruker) | 'bsf_member' (godkjent BSF-medlem) | 'newsletter' (legacy = kun_nyhetsbrev)."""
+    target_type: 'anyone' (default) | 'email' (en bestemt bruker) | 'bsf_member' (godkjent BSF-medlem) | 'newsletter' (legacy = kun_nyhetsbrev).
+    via_code=True betyr at koden er skrevet inn MANUELT i kassen. bsf_member-
+    koder er da honnør-baserte: koden deles offentlig til Bergen Seilforening-
+    medlemmer (medlemssiden), så enhver som skriver den får rabatten. Auto-
+    visning (via_code=False) krever fortsatt godkjent medlemskap."""
     tt = d.get("target_type")
     # Backward-compat: gamle rabatter har kun_nyhetsbrev-flagg
     if not tt:
@@ -10460,6 +10464,8 @@ def _discount_applies_to_user(d, email):
     if tt == "newsletter":
         return bool(email and _is_active_subscriber(email))
     if tt == "bsf_member":
+        if via_code:
+            return True
         return _is_bsf_approved(email)
     if tt == "email":
         target = (d.get("target_email") or "").strip().lower()
@@ -10560,16 +10566,20 @@ def api_discounts_validate():
         return jsonify({"ok": False, "error": "Ukjent rabattkode"}), 404
     if not _is_discount_currently_active(d):
         return jsonify({"ok": False, "error": "Rabattkoden er utløpt eller ikke aktiv"}), 410
-    if not _discount_applies_to_user(d, email):
+    # via_code=True: koden er skrevet inn manuelt → bsf_member blir honnør-basert
+    # (alle medlemmer deler koden fra medlemssiden).
+    if not _discount_applies_to_user(d, email, via_code=True):
         return jsonify({"ok": False, "error": "Denne koden gjelder ikke for kontoen din"}), 403
-    # Filtrer hvilke handles fra ordren rabatten gjelder for
+    # Filtrer hvilke handles fra ordren rabatten gjelder for. exclude_handles
+    # (f.eks. villaks) trekkes alltid ut – rabatten gjelder aldri disse.
     cart_handles = data.get("product_handles") or []
     applies_to = (d.get("applies_to") or "all").lower()
+    exclude = set([(h or "").strip().lower() for h in (d.get("exclude_handles") or [])])
     if applies_to == "products":
         allowed = set([(h or "").strip().lower() for h in (d.get("product_handles") or [])])
-        matching = [h for h in cart_handles if (h or "").strip().lower() in allowed]
+        matching = [h for h in cart_handles if (h or "").strip().lower() in allowed and (h or "").strip().lower() not in exclude]
     else:
-        matching = list(cart_handles)
+        matching = [h for h in cart_handles if (h or "").strip().lower() not in exclude]
     return jsonify({"ok": True, "discount": d, "applies_to_handles": matching})
 
 
@@ -10677,6 +10687,9 @@ def api_discounts_root():
         "handle": single_handle or (product_handles[0] if product_handles else ""),
         "applies_to": applies_to,
         "product_handles": product_handles,
+        # exclude_handles: produkter rabatten ALDRI gjelder for (f.eks. villaks),
+        # uavhengig av applies_to. Trekkes ut både i validate og i frontend.
+        "exclude_handles": [str(h).strip() for h in (data.get("exclude_handles") or []) if str(h).strip()],
         "code": code or None,
         "target_type": target_type,
         "target_email": target_email or None,
@@ -10737,6 +10750,8 @@ def api_discounts_modify(discount_id):
             d["applies_to"] = v
     if "product_handles" in data and isinstance(data["product_handles"], list):
         d["product_handles"] = [str(h).strip() for h in data["product_handles"] if str(h).strip()]
+    if "exclude_handles" in data and isinstance(data["exclude_handles"], list):
+        d["exclude_handles"] = [str(h).strip() for h in data["exclude_handles"] if str(h).strip()]
     if "code" in data:
         new_code = _normalize_code(data["code"]) or None
         if new_code and new_code != _normalize_code(d.get("code")):
