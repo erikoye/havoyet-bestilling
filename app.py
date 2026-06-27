@@ -3879,8 +3879,13 @@ def api_admin_telegram_setup():
 def api_contact():
     """Kontakt-skjema → e-post til erik@havoyet.no."""
     data = request.get_json(force=True) or {}
+    # Honningfelle: skjult felt ekte folk aldri fyller → stille suksess for bot.
+    if (data.get("_hp") or "").strip():
+        return jsonify({"ok": True}), 200
     if _rate_limited(f"contact:{_client_ip()}", 6, 600):
         return jsonify({"error": "For mange meldinger på kort tid. Vent litt før du sender igjen."}), 429
+    if not _verify_turnstile(data.get("_ts") or "", _client_ip()):
+        return jsonify({"ok": False, "error": "Kunne ikke bekrefte at du er et menneske. Prøv igjen."}), 403
     navn    = (data.get("navn") or "").strip()
     epost   = (data.get("epost") or "").strip()
     melding = (data.get("melding") or "").strip()
@@ -4174,8 +4179,32 @@ def api_orders_new():
     navn  = (kunde.get("navn") or "").strip()
     epost = (kunde.get("epost") or "").strip()
 
+    # ── Anti-misbruk (mot bot-/spam-føringer) ──────────────────────────────
+    # 1) Honningfelle: skjult felt som ekte kunder aldri fyller ut. Boter som
+    #    fyller alt avsløres her. Returner 200 så boten ikke skjønner at den
+    #    ble stoppet (ingen ordre opprettes).
+    if (data.get("_hp") or kunde.get("_hp") or "").strip():
+        return jsonify({"ok": True, "ordrenr": "H000000"}), 200
+    # 2) Rate-limit per IP (idempotente re-poster ved betaling er tillatt – derfor
+    #    relativt romslig, og kun for HELT nye ordrenr under).
+    if _rate_limited(f"order:{_client_ip()}", 12, 600):
+        return jsonify({"ok": False, "error": "For mange forsøk på kort tid. Vent litt og prøv igjen."}), 429
+    # 3) Cloudflare Turnstile (fail-open til TURNSTILE_SECRET er satt).
+    if not _verify_turnstile(data.get("_ts") or "", _client_ip()):
+        return jsonify({"ok": False, "error": "Kunne ikke bekrefte at du er et menneske. Last siden på nytt og prøv igjen."}), 403
+
     if not navn or not epost or not varer:
         return jsonify({"ok": False, "error": "Mangler kundenavn, e-post eller varer"}), 400
+
+    # ── Serverside datavalidering (klientsjekkene kan omgås ved direkte API-kall) ──
+    if not _looks_like_email(epost):
+        return jsonify({"ok": False, "error": "Ugyldig e-postadresse"}), 400
+    _tlf = (kunde.get("tlf") or "").strip()
+    if _digit_count(_tlf) < 8:
+        return jsonify({"ok": False, "error": "Ugyldig telefonnummer"}), 400
+    _postnr = (kunde.get("postnr") or "").strip()
+    if _postnr and not _re_mod.match(r"^\d{4}$", _postnr):
+        return jsonify({"ok": False, "error": "Ugyldig postnummer"}), 400
 
     # Krev gyldig ISO-leveringsdato (YYYY-MM-DD) og leveringstid. Eldre flyter sendte
     # ukedag-navn ("torsdag") som ikke kan plottes på en kalender — det blokkeres her
@@ -6121,16 +6150,38 @@ def api_vipps_callback():
     global _manual_orders
     body = request.get_json(silent=True) or {}
     reference = body.get("reference") or (body.get("data") or {}).get("reference")
-    state     = body.get("name") or body.get("state") or "UNKNOWN"
+    claimed_state = body.get("name") or body.get("state") or "UNKNOWN"
     if reference:
         payments = _vipps_load_payments()
+        # SIKKERHET: stol ALDRI på status i callback-bodyen (den er uautentisert
+        # og kan forfalskes med en gjettet reference). Aksepter kun referanser VI
+        # selv opprettet ved betalingsstart, og hent autoritativ status direkte
+        # fra Vipps-API-et før vi flagger noe som betalt.
         if reference not in payments:
-            payments[reference] = {"created_at": time.time()}
+            print(f"vipps callback: ukjent reference {reference} – ignorert (ikke opprettet av oss)")
+            return jsonify({"ok": True}), 200
+        verified_state = None
+        if _vipps_configured():
+            try:
+                vr = requests.get(f"{VIPPS_API_BASE}/epayment/v1/payments/{reference}",
+                                  headers=_vipps_headers(), timeout=10)
+                if vr.status_code < 400:
+                    verified_state = (vr.json() or {}).get("state")
+            except Exception as e:
+                print(f"vipps callback: kunne ikke verifisere {reference} mot Vipps: {e}")
+        # Bruk Vipps' egen status når vi fikk den; ellers fall tilbake til claimed
+        # KUN for logging (ikke for PAID-beslutningen under).
+        state = verified_state or claimed_state
         payments[reference]["state"] = state
         payments[reference]["callback_at"] = time.time()
         payments[reference]["last_callback"] = body
+        payments[reference]["verified_state"] = verified_state
         _vipps_save_payments(payments)
-        print(f"vipps callback: {reference} → {state}")
+        print(f"vipps callback: {reference} → claimed={claimed_state} verified={verified_state}")
+        # Dersom Vipps var utilgjengelig for verifisering: ikke flagg som betalt
+        # på et uverifisert callback. api_vipps_status (polling) tar det senere.
+        if verified_state is None and _vipps_configured():
+            return jsonify({"ok": True, "note": "uverifisert – venter på poll"}), 200
 
         # Auto-capture ved AUTHORIZED
         if state == "AUTHORIZED":
@@ -7891,6 +7942,40 @@ def _rate_limited(key, max_n, window_s):
         for k in list(_rate_buckets.keys())[:1000]:
             _rate_buckets.pop(k, None)
     return len(bucket) > max_n
+
+
+def _verify_turnstile(token, ip=""):
+    """Verifiser Cloudflare Turnstile-token mot Cloudflare.
+    Fail-open hvis TURNSTILE_SECRET ikke er satt (Turnstile av → vi blokkerer
+    ikke legitime kunder før nøklene er på plass) eller ved nettverksfeil mot
+    Cloudflare. Returnerer False kun når Turnstile ER konfigurert og tokenet
+    mangler/avvises."""
+    secret = (os.environ.get("TURNSTILE_SECRET") or "").strip()
+    if not secret:
+        return True  # ikke konfigurert ennå
+    if not token:
+        return False
+    try:
+        r = requests.post(
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            data={"secret": secret, "response": token, "remoteip": ip or ""},
+            timeout=8,
+        )
+        return bool((r.json() or {}).get("success"))
+    except Exception:
+        return True  # Cloudflare utilgjengelig → ikke blokker betalende kunde
+
+
+def _looks_like_email(s):
+    s = (s or "").strip()
+    if "@" not in s:
+        return False
+    local, _, domain = s.partition("@")
+    return bool(local) and "." in domain and not domain.endswith(".")
+
+
+def _digit_count(s):
+    return sum(c.isdigit() for c in (s or ""))
 
 
 def _public_user(u):
@@ -10300,8 +10385,12 @@ def _is_admin_request():
         if auth and _hmac_mod.compare_digest(auth, ADMIN_API_TOKEN):
             return True
         return False
-    # 3) Hvis verken auth eller ADMIN_API_TOKEN er satt — åpen (dev-modus)
-    return True
+    # 3) ADMIN_API_TOKEN ikke satt: FAIL-CLOSED. Innloggede admin-brukere (rolle
+    #    "admin", branch 1 over) slipper fortsatt inn – men token-baserte kall
+    #    avvises i stedet for å åpne admin-API-et for alle. Sett ADMIN_API_TOKEN
+    #    i miljøet for å aktivere X-Admin-Token-tilgang for scripts/cron.
+    print("[SECURITY] _is_admin_request: ADMIN_API_TOKEN ikke satt – token-tilgang nektet (fail-closed)")
+    return False
 
 
 def _find_subscriber(email):

@@ -14,3 +14,9 @@ ukens_fisk_state.json
 .mcp.json
 CLAUDE.md
 admin_notifications.jsonl
+
+# Kundedata / betalings-snapshots (PII) – skal ALDRI ligge i git (GDPR).
+# Holdes lokalt + på Render sin persistente disk; er kun cold-start-seed.
+data/customers_baseline.json
+data/vipps_baseline.json
+data/card_payments_baseline.json
