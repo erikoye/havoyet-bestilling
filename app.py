@@ -1201,7 +1201,11 @@ def api_manual_orders():
 
 @app.route("/api/manual-orders/<order_id>", methods=["DELETE"])
 def api_delete_manual_order(order_id):
-    """Slett ordre + opprett tombstone så stale iPad-cache ikke kan re-skape den."""
+    """Slett ordre + opprett tombstone så stale iPad-cache ikke kan re-skape den.
+    Krever admin (innlogget rolle=admin via Bearer, eller X-Admin-Token) – ellers
+    kunne hvem som helst slette ordrer anonymt."""
+    if not _is_admin_request():
+        return jsonify({"ok": False, "error": "Ikke autorisert"}), 403
     global _manual_orders, _order_tombstones
     target = str(order_id).strip()
     if not target:
