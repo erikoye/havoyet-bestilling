@@ -4,6 +4,12 @@ Opprettet 2026-06-27. Alt det rent tekniske er gjort og deployet. Disse tre
 krever en handling fra deg fordi de trenger nøkler/tilgang jeg ikke har.
 Kryss av (`[x]`) etter hvert.
 
+> **Merk om Render-tjenesten:** backend-tjenesten heter **`havoyet-nettside`** i
+> Render (Python 3, Oregon) — det er denne ene Python-tjenesten. GitHub-repoet
+> bak den heter `havoyet-bestilling`, og URL-en er `havoyet-bestilling.onrender.com`.
+> (React-frontenden ligger på Vercel, ikke Render.) Alle env-variabler under
+> legges på **`havoyet-nettside`**.
+
 ---
 
 ## 1. Cloudflare Turnstile – ekte bot-beskyttelse  ⏳
@@ -14,7 +20,7 @@ gir den «ekte» Cloudflare-utfordringen, men venter på nøkler. Den er gratis.
 - [ ] Gå til https://dash.cloudflare.com → **Turnstile** (lag gratis konto om du ikke har).
 - [ ] **Add site**: navn «Havøyet», domene `havoyet.no` (legg gjerne til `bestilling.havoyet.no` også), widget-modus **Managed**.
 - [ ] Kopiér de to nøklene du får: **Site Key** (offentlig) og **Secret Key** (hemmelig).
-- [ ] I **Render** → tjenesten `havoyet-bestilling` → **Environment** → **Add Environment Variable**:
+- [ ] I **Render** → tjenesten `havoyet-nettside` (backend) → **Environment** → **Add Environment Variable**:
       - Key: `TURNSTILE_SECRET`  · Value: *(Secret Key)* → **Save** (Render redeployer automatisk).
 - [ ] Send **Site Key** til meg her i chatten → jeg legger inn widgeten i kassen + kontaktskjema og deployer frontend.
 
@@ -28,7 +34,7 @@ Jeg endret admin-sjekken til «fail-closed»: hvis tokenet mangler, nektes
 token-basert tilgang (script/cron). Admin-innlogging i nettleseren fungerer
 uansett. Vi bør likевel bekrefte at tokenet er satt.
 
-- [ ] **Render** → `havoyet-bestilling` → **Environment** → se etter `ADMIN_API_TOKEN`.
+- [ ] **Render** → `havoyet-nettside` → **Environment** → se etter `ADMIN_API_TOKEN`.
 - [ ] Hvis den finnes med en verdi → ✅ ingenting mer å gjøre.
 - [ ] Hvis den mangler/er tom → lag en lang tilfeldig verdi og legg den inn:
       - Terminal: `openssl rand -hex 32` → kopier resultatet inn som verdi → **Save**.
