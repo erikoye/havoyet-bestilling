@@ -4205,6 +4205,10 @@ def api_orders_new():
     _postnr = (kunde.get("postnr") or "").strip()
     if _postnr and not _re_mod.match(r"^\d{4}$", _postnr):
         return jsonify({"ok": False, "error": "Ugyldig postnummer"}), 400
+    # Leveringssone håndheves serverside (klienten blokkerer allerede). Hindrer
+    # direkte API-ordre utenfor området. Tomt postnr slipper gjennom (eldre flyt).
+    if _postnr and not _postnr_in_delivery_zone(_postnr):
+        return jsonify({"ok": False, "error": "Vi leverer dessverre ikke til dette postnummeret ennå"}), 400
 
     # Krev gyldig ISO-leveringsdato (YYYY-MM-DD) og leveringstid. Eldre flyter sendte
     # ukedag-navn ("torsdag") som ikke kan plottes på en kalender — det blokkeres her
@@ -7929,15 +7933,48 @@ def _client_ip():
         return xff.split(",")[0].strip()
     return request.headers.get("X-Real-IP") or request.remote_addr or "?"
 
-# ── Enkel in-memory rate-limiting (Render kjører 1 gunicorn-worker → eksakt) ──
-_rate_buckets = {}  # key → [timestamps]
+# ── Rate-limiting (durabel: overlever Render-restart via disk-persistens) ──
+# Render kjører 1 gunicorn-worker → in-memory teller er eksakt. Vi persisterer
+# bøttene til disk (debounced, maks ~hvert 20s) og laster dem ved oppstart, så
+# en restart ikke nullstiller rate-limit-vinduene (mot bot-/spam-bølger).
+_RATE_FILE = os.path.join(STATE_DIR, "rate_buckets.json")
+_rate_last_save = 0.0
+
+def _load_rate_buckets():
+    try:
+        if os.path.exists(_RATE_FILE):
+            with open(_RATE_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                return {k: [float(t) for t in v] for k, v in d.items() if isinstance(v, list)}
+    except Exception as e:
+        print(f"[RATE] kunne ikke lese {_RATE_FILE}: {e}")
+    return {}
+
+_rate_buckets = _load_rate_buckets()  # key → [timestamps]
+
+def _persist_rate_buckets(now):
+    global _rate_last_save
+    if now - _rate_last_save < 20:   # debounce: maks én skriving per 20s
+        return
+    _rate_last_save = now
+    try:
+        tmp = _RATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_rate_buckets, f)
+        os.replace(tmp, _RATE_FILE)
+    except Exception as e:
+        print(f"[RATE] kunne ikke skrive {_RATE_FILE}: {e}")
+
 def _rate_limited(key, max_n, window_s):
     """True hvis `key` har gjort > max_n forsøk innen window_s sekunder.
-    Teller samtidig opp dette forsøket. In-memory (nullstilles ved restart)."""
+    Teller samtidig opp dette forsøket. Persisteres til disk (debounced) så
+    vinduet overlever Render-restart."""
     now = time.time()
     bucket = [t for t in _rate_buckets.get(key, []) if now - t < window_s]
     bucket.append(now)
     _rate_buckets[key] = bucket
+    _persist_rate_buckets(now)
     if len(_rate_buckets) > 5000:  # enkel opprydding så dict-en ikke vokser uten grense
         for k in list(_rate_buckets.keys())[:1000]:
             _rate_buckets.pop(k, None)
@@ -7976,6 +8013,47 @@ def _looks_like_email(s):
 
 def _digit_count(s):
     return sum(c.isdigit() for c in (s or ""))
+
+
+# Leveringssoner (postnummer) — EKSAKT speil av DELIVERY_ZONES i
+# Nettside/components/pages.jsx. Brukes til serverside-håndheving så et direkte
+# API-kall ikke kan legge inn ordre utenfor leveringsområdet (klienten blokkerer
+# allerede). VIKTIG: hold i synk med frontend hvis nye postnr legges til.
+_DELIVERY_POSTNR = set([
+    # Bergen sentrum
+    5003,5004,5005,5006,5007,5008,5009,5010,5011,5012,5013,5014,5015,
+    5016,5017,5018,5019,5022,5031,5032,5033,5034,5035,5036,5037,5038,
+    5039,5041,5042,5043,5045,5052,5053,5054,5055,5056,5057,5058,5059,
+    5063,5067,5068,5072,5073,5075,5081,5082,5089,5093,5094,5096,5097,
+    5098,5099,5160,5161,5162,5163,5164,5165,5170,5171,
+    # Åsane
+    5101,5104,5105,5109,5111,5113,5114,5115,5116,5117,
+    5118,5119,5121,5122,5124,5130,5131,5132,5134,5135,5136,5137,
+    # Fana
+    5172,5173,5174,5176,5178,5179,5183,5184,
+    5221,5222,5223,5224,5225,5226,5227,5228,5229,5230,5231,5232,5243,5244,
+    # Fyllingsdalen
+    5141,5142,5143,5144,5145,5146,5147,5148,5151,5152,5153,5154,5155,
+    # Sotra
+    5346,5347,5350,5353,5354,5355,5360,5365,5366,5379,
+    # Hjellestad
+    5235,5237,5251,5252,5253,5254,5257,5258,5259,
+    # Os
+    5200,5201,5202,5203,5204,5205,5206,5207,5208,5209,5210,5211,5212,5215,5216,5217,5218,
+    # Sædalen
+    5236,5238,
+    # Arna
+    5260,5261,5262,5265,5266,5267,5268,
+    # Askøy
+    5300,5301,5302,5303,5304,5305,5306,5308,5314,5315,5316,5317,5318,
+])
+
+
+def _postnr_in_delivery_zone(postnr):
+    try:
+        return int(str(postnr).strip()) in _DELIVERY_POSTNR
+    except (ValueError, TypeError):
+        return False
 
 
 def _public_user(u):
